@@ -1,0 +1,51 @@
+/* CampusMarket ธีมหลัก: ส้ม (brand-500 #F97316) / ขาว / ดำ (ink-900) / เทา (surface-muted) */
+
+:root {
+  --cm-gradient: linear-gradient(110deg, #fff8f0 0%, #ffd08a 35%, #ff9a2e 65%, #ff5f00 100%);
+  --cm-gradient-dark: linear-gradient(110deg, #ffd08a 0%, #ff9a2e 50%, #e05500 100%);
+  --cm-shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04);
+  --cm-shadow-md: 0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04);
+  --cm-shadow-lg: 0 8px 32px rgba(0,0,0,0.1), 0 2px 8px rgba(0,0,0,0.06);
+  --cm-shadow-brand: 0 4px 16px rgba(255,95,0,0.28);
+}
+
+.cm-hero-gradient {
+  background: var(--cm-gradient);
+}
+
+.cm-card {
+  background: #fff;
+  border: 1px solid #eaeaec;
+  border-radius: 16px;
+  box-shadow: var(--cm-shadow-sm);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.cm-card:hover {
+  box-shadow: var(--cm-shadow-md);
+}
+
+.cm-card--elevated {
+  background: #fff;
+  border: 1px solid #eaeaec;
+  border-radius: 16px;
+  box-shadow: var(--cm-shadow-md);
+}
+
+/* sticker badge — สติกเกอร์มุมการ์ดสินค้า */
+.cm-sticker {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #1a1a1a;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+}
+.cm-sticker--new {
+  background: linear-gradient(135deg, #f97316, #fb923c);
+}
+
