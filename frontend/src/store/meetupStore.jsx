@@ -60,16 +60,38 @@ export function haversineDistanceMeters(lat1, lng1, lat2, lng2) {
   return R * c;
 }
 
-// สถานะ Check-in: อนุญาตให้ Check-in ได้ตลอดเมื่อผู้ขายยืนยันนัดหมายแล้ว
+// สถานะ Check-in: เปิดให้ Check-in ได้ช่วง +- 45 นาที จากเวลานัดหมาย
 export function getCheckInWindow(meetup) {
   const start = toDateTime(meetup?.date, meetup?.startTime || meetup?.time);
   const now = new Date();
+  if (!start) {
+    return {
+      status: 'open',
+      opensAt: now,
+      normalUntil: addMinutes(now, 45),
+      closesAt: addMinutes(now, 45),
+      meetupStart: now,
+    };
+  }
+
+  const opensAt = addMinutes(start, -45);
+  const closesAt = addMinutes(start, 45);
+
+  let status = 'open';
+  if (now < opensAt) {
+    status = 'waiting';
+  } else if (now > closesAt) {
+    status = 'closed';
+  } else {
+    status = 'open';
+  }
+
   return {
-    status: 'open',
-    opensAt: start || now,
-    normalUntil: addMinutes(start || now, 120),
-    closesAt: addMinutes(start || now, 240),
-    meetupStart: start || now,
+    status,
+    opensAt,
+    normalUntil: closesAt,
+    closesAt,
+    meetupStart: start,
   };
 }
 
@@ -389,7 +411,11 @@ export const useMeetupStore = create()(
           if (existing) {
             const preserved = {};
             LOCAL_ONLY_FIELDS.forEach((key) => {
-              if (existing[key] !== undefined) preserved[key] = existing[key];
+              if (data[key] !== undefined && data[key] !== null && data[key] !== false) {
+                preserved[key] = data[key];
+              } else if (existing[key] !== undefined) {
+                preserved[key] = existing[key];
+              }
             });
             return {
               meetups: state.meetups.map((m) =>

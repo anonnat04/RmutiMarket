@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, MapPin, CalendarClock, Navigation,
@@ -612,9 +612,31 @@ export function MeetupCheckInPage() {
       }
     };
 
+    const handlePeerCheckIn = (data) => {
+      console.log('📍 [CheckInPage] Peer check-in event received:', data);
+      setMeetup((prev) => {
+        if (!prev) return prev;
+        const roleToCheck = data.role || data.checkedInRole;
+        const at = data.checkedInAt || new Date().toISOString();
+        return {
+          ...prev,
+          buyerCheckedIn: roleToCheck === 'buyer' ? true : (data.buyerCheckedIn ?? prev.buyerCheckedIn),
+          sellerCheckedIn: roleToCheck === 'seller' ? true : (data.sellerCheckedIn ?? prev.sellerCheckedIn),
+          buyerCheckedInAt: roleToCheck === 'buyer' ? at : (data.buyerCheckedInAt ?? prev.buyerCheckedInAt),
+          sellerCheckedInAt: roleToCheck === 'seller' ? at : (data.sellerCheckedInAt ?? prev.sellerCheckedInAt),
+        };
+      });
+    };
+
     socket.on('live_location_update', handleLocationUpdate);
+    socket.on('peer_checked_in', handlePeerCheckIn);
+    socket.on('meetup_status_update', handlePeerCheckIn);
+    socket.on('meetup_updated', handlePeerCheckIn);
     return () => {
       socket.off('live_location_update', handleLocationUpdate);
+      socket.off('peer_checked_in', handlePeerCheckIn);
+      socket.off('meetup_status_update', handlePeerCheckIn);
+      socket.off('meetup_updated', handlePeerCheckIn);
       leaveMeetupTracking({ meetupId: id, userId: myId });
       if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
@@ -622,6 +644,34 @@ export function MeetupCheckInPage() {
       }
     };
   }, [id, myId, meetup?.locationLat, meetup?.locationLng]);
+
+  // ── Auto-poll ทุก 4 วินาที เพื่อดึงสถานะเช็คอินแบบ Realtime แม้ Socket หลุด ──
+  useEffect(() => {
+    if (!id) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await api.getMyMeetups();
+        const found = (res.meetups || []).find((m) => String(m.id) === String(id));
+        if (found) {
+          const mapped = mapAppointment(found);
+          setMeetup((prev) => {
+            if (!prev) return mapped;
+            if (
+              mapped.buyerCheckedIn !== prev.buyerCheckedIn ||
+              mapped.sellerCheckedIn !== prev.sellerCheckedIn ||
+              mapped.status !== prev.status
+            ) {
+              return { ...prev, ...mapped };
+            }
+            return prev;
+          });
+        }
+      } catch (e) {
+        // Silent background polling
+      }
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [id]);
 
   // ── ปิด GPS ──
   const stopGps = useCallback(() => {
@@ -666,8 +716,10 @@ export function MeetupCheckInPage() {
     }
     if (meetup?.time) {
       const [h, m] = meetup.time.split(':').map(Number);
-      const endH = (h + 2) % 24;
-      return `${String(endH).padStart(2, '0')}:${String(m || 0).padStart(2, '0')}`;
+      const totalMinutes = (h || 0) * 60 + (m || 0) + 45;
+      const endH = Math.floor(totalMinutes / 60) % 24;
+      const endM = totalMinutes % 60;
+      return `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
     }
     return null;
   })();
@@ -682,14 +734,55 @@ export function MeetupCheckInPage() {
     if (checkingIn) return;
     setCheckingIn(true);
 
-    const finalize = (result) => {
-      setCheckingIn(false);
-      if (!result.success) { alert(result.reason); return; }
-      setMeetup(useMeetupStore.getState().getMeetupById(meetup.id));
+    const finalize = async (coords = null) => {
+      try {
+        const localRes = checkIn(meetup.id, role, coords || {});
+        if (!localRes.success) {
+          alert(localRes.reason);
+          setCheckingIn(false);
+          return;
+        }
+
+        const now = new Date().toISOString();
+
+        // 1. บันทึกลง Backend / Supabase
+        try {
+          await api.checkInMeetup(meetup.id);
+        } catch (apiErr) {
+          console.warn('api.checkInMeetup warning:', apiErr);
+        }
+
+        // 2. อัปเดตสถานะของตนเองทันทีบนหน้าจอ
+        setMeetup((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            buyerCheckedIn: role === 'buyer' ? true : prev.buyerCheckedIn,
+            sellerCheckedIn: role === 'seller' ? true : prev.sellerCheckedIn,
+            buyerCheckedInAt: role === 'buyer' ? now : prev.buyerCheckedInAt,
+            sellerCheckedInAt: role === 'seller' ? now : prev.sellerCheckedInAt,
+          };
+        });
+
+        // 3. ส่งสัญญาณ Realtime ผ่าน Socket ไปยังอีกฝ่ายทันที
+        const socket = getSocket();
+        if (socket && socket.connected) {
+          socket.emit('meetup_checkin', {
+            meetupId: meetup.id,
+            userId: myId,
+            role,
+            checkedInAt: now,
+          });
+        }
+      } catch (err) {
+        alert(err.message || 'เกิดข้อผิดพลาดในการเช็คอิน');
+      } finally {
+        setCheckingIn(false);
+      }
     };
 
     if (!navigator.geolocation) {
-      finalize(checkIn(meetup.id, role));
+      finalize();
       return;
     }
 
@@ -698,14 +791,14 @@ export function MeetupCheckInPage() {
       const pos = await new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           enableHighAccuracy: true,
-          timeout: 15000,
+          timeout: 10000,
           maximumAge: 0,
         });
       });
-      finalize(checkIn(meetup.id, role, { lat: pos.coords.latitude, lng: pos.coords.longitude }));
+      finalize({ lat: pos.coords.latitude, lng: pos.coords.longitude });
     } catch (geoErr) {
       // PERMISSION_DENIED / TIMEOUT / UNAVAILABLE — ยังให้เช็คอินได้โดยไม่ใช้ GPS
-      finalize(checkIn(meetup.id, role));
+      finalize();
     }
   };
 

@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { CalendarClock, MapPin, ChevronDown, ChevronUp, Bell, ArrowLeft, ChevronRight, CheckCircle2, XCircle, RefreshCw, Star } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
@@ -240,7 +240,7 @@ export function MeetupListPage() {
   const [dbMeetups, setDbMeetups] = useState([]);
   const [loadingDb, setLoadingDb] = useState(false);
   const [reviewTarget, setReviewTarget] = useState(null);
-  const [activeTab, setActiveTab] = useState(() => searchParams.get('tab') || 'all');
+  const [activeTab, setActiveTab] = useState(() => { const p = searchParams.get('tab'); return (p && TABS.some(t => t.key === p)) ? p : 'pending'; });
   const [highlightId, setHighlightId] = useState(() => searchParams.get('highlight') || null);
   const [expandedMap, setExpandedMap] = useState(null);
   const [checkInLoading, setCheckInLoading] = useState(null); // meetup id ที่กำลังเช็คอิน
@@ -372,7 +372,7 @@ export function MeetupListPage() {
   useEffect(() => {
     const tabParam = searchParams.get('tab');
     const highlightParam = searchParams.get('highlight');
-    if (tabParam) setActiveTab(tabParam);
+    if (tabParam && TABS.some(t => t.key === tabParam)) setActiveTab(tabParam);
     if (highlightParam) setHighlightId(highlightParam);
   }, [searchParams]);
 
@@ -444,9 +444,18 @@ export function MeetupListPage() {
     notifyOther(m, action === 'confirm' ? 'confirm_request' : 'reject_request', 'seller');
     try {
       if (action === 'confirm') {
-        await api.acceptMeetup(m.id);
-        await fetchMeetups();
-        // ไปหน้าเช็คอินทันทีหลังยืนยันนัด
+        try {
+          await api.acceptMeetup(m.id);
+        } catch (apiErr) {
+          console.warn('api.acceptMeetup warning:', apiErr);
+        }
+        // อัปเดตนัดหมายใน local state ให้เป็น confirmed ทันที
+        setDbMeetups((prev) =>
+          prev.map((x) =>
+            x.id === m.id ? { ...x, status: 'confirmed', statusCode: 'CONFIRMED' } : x
+          )
+        );
+        // ไปยังขั้นตอนการนัดรับ (หน้าเช็คอิน GPS) ทันที
         navigate(`/meetups/${m.id}/checkin`);
         return;
       } else if (action === 'reject') {
@@ -802,20 +811,9 @@ export function MeetupListPage() {
                     )}
                   </div>
 
-                  {/* ปุ่มเช็คอิน (ถ้าตัวเองยังไม่เช็คอิน) + ปุ่มไปหน้าเช็คอิน (GPS) */}
+                  {/* ปุ่มไปหน้าเช็คอิน (GPS) */}
                   {!bothDelivered && (
-                    <div className="flex flex-wrap gap-2 mt-1">
-                      {!myCheckedIn && (
-                        <button
-                          type="button"
-                          onClick={() => handleCheckIn(m, role)}
-                          disabled={checkInLoading === m.id}
-                          className="inline-flex items-center gap-1.5 rounded-xl bg-[#f95721] px-4 py-2 text-xs font-bold text-white hover:bg-orange-600 transition-colors shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <CheckCircle2 size={14} />
-                          {checkInLoading === m.id ? 'กำลังเช็คอิน...' : '✅ เช็คอินตอนนี้'}
-                        </button>
-                      )}
+                    <div className="flex flex-wrap items-center gap-2 mt-1">
                       {myCheckedIn && (
                         <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 bg-emerald-50 rounded-full px-3 py-1.5">
                           <CheckCircle2 size={12} />
@@ -825,7 +823,7 @@ export function MeetupListPage() {
                       )}
                       <Link
                         to={`/meetups/${m.id}/checkin`}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-orange-200 bg-white px-3 py-2 text-xs font-medium text-orange-700 hover:bg-orange-50 transition-colors"
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-orange-200 bg-white hover:bg-orange-50 px-3.5 py-2 text-xs font-bold text-orange-700 transition-colors shadow-2xs"
                       >
                         📍 หน้าเช็คอิน GPS
                         <ChevronRight size={13} />

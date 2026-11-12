@@ -1,5 +1,5 @@
-﻿const { supabase } = require("../config/db");
-const { sendNotificationToUser } = require("../services/chatSocket");
+const { supabase } = require("../config/db");
+const { sendNotificationToUser, emitMeetupUpdate } = require("../services/chatSocket");
 const { formatUser, formatStatus, getStatusId } = require("../utils/statusHelper");
 
 // ----------------------------------------------------------------
@@ -502,15 +502,30 @@ async function acceptMeetup(req, res, next) {
       : appt.transactions?.buyer_id;
 
     if (partnerId) {
-      await supabase.from("notifications").insert({
-        user_id: partnerId,
-        type: "meetup_confirmed",
-        title: "คู่ค้ายืนยันการนัดรับเรียบร้อยแล้ว 🎉",
-        message: "การนัดหมายได้รับการยืนยันแล้ว สามารถไปตามจุดนัดหมายได้เลย",
-        reference_type: "meetup",
-        reference_id: id,
-      });
+      try {
+        const notifData = {
+          user_id: partnerId,
+          type: "meetup_confirmed",
+          title: "คู่ค้ายืนยันการนัดรับเรียบร้อยแล้ว 🎉",
+          message: "การนัดหมายได้รับการยืนยันแล้ว สามารถไปตามจุดนัดหมายได้เลย",
+          reference_type: "meetup",
+          reference_id: id,
+        };
+        const { data: insertedNotif } = await supabase.from("notifications").insert(notifData).select("*").single();
+        sendNotificationToUser(partnerId, insertedNotif || notifData);
+      } catch (nErr) {
+        console.warn("[acceptMeetup] notification warning:", nErr.message);
+      }
     }
+
+    // Realtime broadcast update
+    emitMeetupUpdate(id, {
+      meetupId: Number(id),
+      status: 'confirmed',
+      statusCode: 'CONFIRMED',
+      buyerId: appt.transactions?.buyer_id,
+      sellerId: appt.transactions?.seller_id,
+    });
 
     res.json({ message: "ยืนยันการนัดรับเรียบร้อยแล้ว" });
   } catch (err) {
@@ -526,7 +541,7 @@ async function checkInMeetup(req, res, next) {
     const { id } = req.params;
     const { data: appt } = await supabase
       .from("appointments")
-      .select("id, transaction_id, buyer_checked_in, seller_checked_in, transactions(buyer_id, seller_id)")
+      .select("id, transaction_id, buyer_checked_in, seller_checked_in, buyer_checked_in_at, seller_checked_in_at, transactions(buyer_id, seller_id)")
       .eq("id", id)
       .single();
 
@@ -542,14 +557,46 @@ async function checkInMeetup(req, res, next) {
       ? { buyer_checked_in: true, buyer_checked_in_at: now }
       : { seller_checked_in: true, seller_checked_in_at: now };
 
-    const otherCheckedIn = isBuyer ? appt.seller_checked_in : appt.buyer_checked_in;
-    if (otherCheckedIn) {
-      updateData.status_id = 3; // 3 = นัดรับเสร็จ (COMPLETED)
-    }
-
+    // คงสถานะให้อยู่ในขั้นตอนนัดหมาย (CONFIRMED) เพื่อให้ดำเนินการตรวจรับส่งมอบตามลำดับขั้นตอน
     await supabase.from("appointments").update(updateData).eq("id", id);
 
-    res.json({ message: "เช็คอินจุดนัดรับสำเร็จ", bothCheckedIn: !!otherCheckedIn });
+    const otherCheckedIn = isBuyer ? appt.seller_checked_in : appt.buyer_checked_in;
+    const partnerId = isBuyer ? appt.transactions?.seller_id : appt.transactions?.buyer_id;
+
+    const checkInData = {
+      meetupId: Number(id),
+      userId: req.user.id,
+      role: isBuyer ? 'buyer' : 'seller',
+      checkedInRole: isBuyer ? 'buyer' : 'seller',
+      buyerCheckedIn: isBuyer ? true : !!appt.buyer_checked_in,
+      sellerCheckedIn: isSeller ? true : !!appt.seller_checked_in,
+      buyerCheckedInAt: isBuyer ? now : appt.buyer_checked_in_at,
+      sellerCheckedInAt: isSeller ? now : appt.seller_checked_in_at,
+      buyerId: appt.transactions?.buyer_id,
+      sellerId: appt.transactions?.seller_id,
+    };
+
+    // ส่ง realtime event ทันทีทั้งสองฝ่าย
+    emitMeetupUpdate(id, checkInData);
+
+    if (partnerId) {
+      try {
+        const notifData = {
+          user_id: partnerId,
+          type: "meetup_checkin",
+          title: "คู่ค้านัดรับเดินทางมาถึงแล้ว 📍",
+          message: `${isBuyer ? "ผู้ซื้อ" : "ผู้ขาย"} เช็คอินที่จุดนัดรับแล้ว`,
+          reference_type: "meetup",
+          reference_id: id,
+        };
+        const { data: insertedNotif } = await supabase.from("notifications").insert(notifData).select("*").single();
+        sendNotificationToUser(partnerId, insertedNotif || notifData);
+      } catch (nErr) {
+        console.warn("[checkInMeetup] notification warning:", nErr.message);
+      }
+    }
+
+    res.json({ message: "เช็คอินจุดนัดรับสำเร็จ", bothCheckedIn: !!otherCheckedIn, checkInData });
   } catch (err) {
     next(err);
   }

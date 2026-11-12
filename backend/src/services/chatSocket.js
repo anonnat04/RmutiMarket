@@ -63,6 +63,24 @@ function emitMessagesRead(conversationId, readerId, readAt) {
   });
 }
 
+/**
+ * บรอดแคสต์สถานะการนัดหมายและการเช็คอิน Realtime ไปยังทั้งสองฝ่าย
+ */
+function emitMeetupUpdate(meetupId, payload) {
+  if (!globalIo || !meetupId) return;
+  const room = `meetup_${meetupId}`;
+  globalIo.to(room).emit("meetup_updated", payload);
+  globalIo.to(room).emit("meetup_status_update", payload);
+  globalIo.to(room).emit("peer_checked_in", payload);
+  if (payload.buyerId) {
+    globalIo.to(`user_${payload.buyerId}`).emit("meetup_updated", payload);
+  }
+  if (payload.sellerId) {
+    globalIo.to(`user_${payload.sellerId}`).emit("meetup_updated", payload);
+  }
+  console.log(`📍 [Socket.IO] Realtime meetup update emitted for ${room}`);
+}
+
 function setupChatSocket(httpServer, allowedOrigin) {
   const io = new Server(httpServer, {
     cors: {
@@ -156,6 +174,23 @@ function setupChatSocket(httpServer, allowedOrigin) {
         delete currentLocs[userId];
         io.to(room).emit("user_stopped_sharing_location", { userId });
       }
+    });
+
+    // ── Live Check-in Broadcast ──
+    socket.on("meetup_checkin", ({ meetupId, userId, role, checkedInAt }) => {
+      if (!meetupId) return;
+      const room = `meetup_${meetupId}`;
+      const payload = {
+        meetupId,
+        userId,
+        role,
+        checkedInRole: role,
+        checkedInAt: checkedInAt || new Date().toISOString(),
+      };
+      socket.to(room).emit("peer_checked_in", payload);
+      io.to(room).emit("meetup_status_update", payload);
+      io.to(room).emit("meetup_updated", payload);
+      console.log(`📍 [Realtime CheckIn] Meetup ${meetupId} checked in by ${role} (${userId})`);
     });
 
     socket.on("send_live_location", ({ meetupId, userId, userName, role, lat, lng, accuracy, targetPoint }) => {
@@ -368,4 +403,5 @@ module.exports = {
   sendNotificationToUsers,
   emitNewMessage,
   emitMessagesRead,
+  emitMeetupUpdate,
 };
