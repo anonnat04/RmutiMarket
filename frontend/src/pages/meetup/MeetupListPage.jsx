@@ -103,6 +103,7 @@ function mapAppointmentFromApi(m) {
     buyerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
     sellerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
     note: m.note || m.location_detail || m.locationDetail || '',
+    reviews: m.reviews || txn.reviews || [],
     isDb: true,
   };
 }
@@ -289,6 +290,7 @@ export function MeetupListPage() {
   // ── ส่ง Notification จำลองให้อีกฝ่าย ──────────────────────────────
   const notifyOther = (meetup, actionType, role) => {
     const targetUserId = role === 'buyer' ? meetup.sellerId : meetup.buyerId;
+    if (!targetUserId || String(targetUserId) === String(myId)) return;
     const messages = {
       confirm_request: {
         title: 'ผู้ขายยืนยันนัดรับแล้ว',
@@ -543,7 +545,13 @@ export function MeetupListPage() {
           {filteredMeetups.map((m) => {
             const role = String(m.buyerId) === String(myId) ? 'buyer' : (String(m.sellerId) === String(myId) ? 'seller' : 'buyer');
             const otherName = role === 'buyer' ? (m.sellerName || 'ผู้ขาย') : (m.buyerName || 'ผู้ซื้อ');
-            const myReview = role === 'buyer' ? m.buyerReview : m.sellerReview;
+            const userReviewFromDb = Array.isArray(m.reviews)
+              ? m.reviews.find((r) => String(r.reviewer_id) === String(myId))
+              : null;
+            const myReview =
+              (role === 'buyer' ? m.buyerReview : m.sellerReview) ||
+              m.myReview ||
+              userReviewFromDb;
 
             const hasAction =
               (m.status === 'pending' && role === 'seller') ||
@@ -564,7 +572,13 @@ export function MeetupListPage() {
                   <p className="text-sm font-semibold text-ink-900">{m.productTitle}</p>
                   <p className="text-xs text-ink-500">{role === 'buyer' ? 'ผู้ขาย' : 'ผู้ซื้อ'}: {otherName}</p>
                 </div>
-                <MeetupStatusBadge status={m.status} />
+                {m.status === 'completed' && myReview ? (
+                  <span className="inline-block rounded-full px-3 py-1 text-xs font-bold bg-emerald-100 text-emerald-800">
+                    ✅ เสร็จสิ้นแล้ว
+                  </span>
+                ) : (
+                  <MeetupStatusBadge status={m.status} />
+                )}
               </div>
 
               <div className="flex flex-wrap gap-4 text-sm text-ink-700">
@@ -713,15 +727,31 @@ export function MeetupListPage() {
 
               {/* ─── Completed: Review Logic ─────────────────── */}
               {m.status === 'completed' && (
-                <div className="flex flex-col gap-3">
-                  <div className="flex flex-wrap gap-2 items-center">
+                <div className="flex flex-col gap-2 pt-1 border-t border-gray-100">
+                  <div className="flex flex-wrap items-center gap-2">
                     {myReview ? (
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-sm">{'⭐'.repeat(myReview.rating)}</span>
-                        <p className="text-xs text-ink-500">คุณให้คะแนนแล้ว</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 font-bold text-xs border border-emerald-200">
+                          <CheckCircle2 size={14} className="text-emerald-600" />
+                          เสร็จสิ้นแล้ว (ให้คะแนนแล้ว)
+                          <span className="ml-1 text-amber-500 font-bold">
+                            {'★'.repeat(myReview.rating || 5)}
+                          </span>
+                        </span>
+                        {myReview.comment && (
+                          <span className="text-xs text-gray-500 italic">
+                            "{myReview.comment}"
+                          </span>
+                        )}
                       </div>
                     ) : (
-                      <Button size="sm" onClick={() => setReviewTarget({ meetup: m, role })}>⭐ ให้คะแนน</Button>
+                      <Button
+                        size="sm"
+                        onClick={() => setReviewTarget({ meetup: m, role })}
+                        className="bg-[#f95721] hover:bg-orange-600 text-white font-bold text-xs shadow-xs"
+                      >
+                        ⭐ ให้คะแนน
+                      </Button>
                     )}
                   </div>
                 </div>

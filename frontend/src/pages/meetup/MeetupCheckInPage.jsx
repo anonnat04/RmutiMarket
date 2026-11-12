@@ -3,12 +3,13 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, MapPin, CalendarClock, Navigation,
   PackageCheck, ShieldCheck, Radio, XCircle, Clock,
-  Maximize2, Minimize2, ZoomIn, ZoomOut, X
+  Maximize2, Minimize2, ZoomIn, ZoomOut, X, CheckCircle2, Star
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useMeetupStore, getCheckInWindow, haversineDistanceMeters } from '@/store/meetupStore';
 import { Button } from '@/components/common/Button';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
+import { ReviewModal } from '@/components/meetup/ReviewModal';
 import { CAMPUS_CENTER, meetupPoints } from '@/constants/meetupPoints';
 import { api } from '@/lib/api';
 import { getSocket, joinMeetupTracking, leaveMeetupTracking, emitLiveLocation } from '@/services/socket';
@@ -101,6 +102,7 @@ function mapAppointment(m) {
     buyerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
     sellerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
     note: m.note || m.location_detail || m.locationDetail || '',
+    reviews: m.reviews || txn.reviews || [],
     isDb: true,
   };
 }
@@ -517,6 +519,7 @@ export function MeetupCheckInPage() {
   const [cancelling, setCancelling] = useState(false);
   const [showDeliveryConfirm, setShowDeliveryConfirm] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [showReviewModal, setShowReviewModal] = useState(false);
   const [, forceTick] = useState(0);
 
   // ── GPS & ระยะห่าง ──
@@ -655,6 +658,17 @@ export function MeetupCheckInPage() {
   const otherName = role === 'buyer' ? meetup.sellerName : meetup.buyerName;
   const myName = role === 'buyer' ? meetup.buyerName : meetup.sellerName;
   const checkInWindow = getCheckInWindow(meetup);
+  const checkInDeadline = (() => {
+    if (checkInWindow?.normalUntil) {
+      return formatTime(checkInWindow.normalUntil);
+    }
+    if (meetup?.time) {
+      const [h, m] = meetup.time.split(':').map(Number);
+      const endH = (h + 2) % 24;
+      return `${String(endH).padStart(2, '0')}:${String(m || 0).padStart(2, '0')}`;
+    }
+    return null;
+  })();
   const myCheckedIn = role === 'buyer' ? meetup.buyerCheckedIn : meetup.sellerCheckedIn;
   const myCheckedInAt = role === 'buyer' ? meetup.buyerCheckedInAt : meetup.sellerCheckedInAt;
   const otherCheckedIn = role === 'buyer' ? meetup.sellerCheckedIn : meetup.buyerCheckedIn;
@@ -691,13 +705,58 @@ export function MeetupCheckInPage() {
       await api.completeMeetup(meetup.id);
       useMeetupStore.getState().markDelivered(meetup.id, 'buyer');
       useMeetupStore.getState().markDelivered(meetup.id, 'seller');
+      setMeetup((prev) => prev ? { ...prev, status: 'completed', statusCode: 'COMPLETED' } : null);
       setShowDeliveryConfirm(false);
-      navigate('/meetups');
+      // เด้งหน้ารีวิวทันทีตามที่ผู้ใช้ร้องขอ
+      setShowReviewModal(true);
     } catch (err) {
       alert(err.message || 'เกิดข้อผิดพลาดในการยืนยันรับสินค้า');
     } finally {
       setCompleting(false);
     }
+  };
+
+  // ── บันทึกรีวิวหลังส่งมอบ ──
+  const handleReviewSubmit = async ({ rating, comment, images = [] }) => {
+    const isBuyer = role === 'buyer';
+    const targetUserId = isBuyer ? meetup.sellerId : meetup.buyerId;
+    const reviewerName = isBuyer ? meetup.buyerName : meetup.sellerName;
+
+    useMeetupStore.getState().submitReview(meetup.id, role, { rating, comment, images });
+
+    try {
+      const { useReviewStore } = await import('@/store/reviewStore');
+      useReviewStore.getState().addReview({
+        targetUserId,
+        reviewerId: isBuyer ? meetup.buyerId : meetup.sellerId,
+        reviewerName,
+        reviewerRole: isBuyer ? 'ผู้ซื้อ' : 'ผู้ขาย',
+        rating,
+        comment,
+        images,
+        productTitle: meetup.productTitle,
+        meetupId: meetup.id,
+      });
+    } catch (e) {
+      console.warn('Could not update reviewStore:', e);
+    }
+
+    if (meetup.transactionId) {
+      try {
+        await api.createReview({
+          transactionId: meetup.transactionId,
+          revieweeId: targetUserId,
+          rating,
+          comment,
+          images,
+        });
+      } catch (err) {
+        console.error('API createReview error:', err);
+      }
+    }
+
+    setShowReviewModal(false);
+    navigate('/meetups', { state: { reviewedMeetupId: meetup.id } });
   };
 
   // ── ยกเลิกนัด (ผ่าน ConfirmDialog) ──
@@ -829,67 +888,152 @@ export function MeetupCheckInPage() {
       </div>
 
       {/* ─── สถานะเช็คอิน ─── */}
-      <div className="cm-card p-4 mb-4 space-y-3">
-        <p className="text-sm font-bold text-ink-900">สถานะเช็คอิน</p>
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className={`font-semibold ${meetup.buyerCheckedIn ? 'text-emerald-600' : 'text-slate-400'}`}>
-            {meetup.buyerCheckedIn
-              ? `✓ ผู้ซื้อถึงแล้ว${meetup.buyerCheckedInAt ? ` (${formatTime(meetup.buyerCheckedInAt)} น.)` : ''}`
-              : '○ ผู้ซื้อยังไม่ถึง'}
-          </span>
-          <span>·</span>
-          <span className={`font-semibold ${meetup.sellerCheckedIn ? 'text-emerald-600' : 'text-slate-400'}`}>
-            {meetup.sellerCheckedIn
-              ? `✓ ผู้ขายถึงแล้ว${meetup.sellerCheckedInAt ? ` (${formatTime(meetup.sellerCheckedInAt)} น.)` : ''}`
-              : '○ ผู้ขายยังไม่ถึง'}
-          </span>
+      <div className="cm-card p-4 mb-4 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-3">
+          <div>
+            <h3 className="text-sm font-extrabold text-ink-900 flex items-center gap-1.5">
+              <span>📍</span> สถานะการเช็คอินจุดนัดพบ
+            </h3>
+            <p className="text-[11px] text-gray-500 mt-0.5">
+              ระบบตรวจสอบการเดินทางและเวลาถึงจุดนัดหมายของทั้งสองฝ่าย
+            </p>
+          </div>
+          <CheckInWindowBadge status={checkInWindow.status} />
         </div>
 
-        {myCheckedIn ? (
-          <div className="inline-flex flex-col gap-1">
-            <span className="inline-block text-xs font-bold text-emerald-600 bg-emerald-100/70 px-3 py-1.5 rounded-lg">
-              ✅ คุณเช็คอินถึงจุดนัดแล้ว {otherCheckedIn ? '' : '· รออีกฝ่ายมาถึง'}
+        {/* ข้อมูลเวลาและกำหนดเส้นตายเช็คอิน */}
+        <div className="flex flex-wrap items-center gap-2 rounded-xl bg-orange-50/70 border border-orange-100 px-3.5 py-2.5 text-xs">
+          <Clock size={15} className="text-[#f95721] shrink-0" />
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="font-bold text-orange-950">
+              เวลานัดหมาย: {meetup.startTime || meetup.time} น.
             </span>
-            {myCheckedInAt && (
-              <span className="flex items-center gap-1 text-[11px] text-ink-500 px-1">
-                <Clock size={11} className="text-ink-400" />
-                เวลาเช็คอิน: {formatTime(myCheckedInAt)} น.
-                {meetup[`${role}CheckedInLate`] && (
-                  <span className="text-amber-600 font-semibold ml-1">⚠️ มาสาย</span>
+            <span className="text-orange-400">·</span>
+            <span className="font-semibold text-orange-800">
+              ⏰ สามารถเช็คอินได้ถึงเวลา: <span className="underline decoration-orange-400 font-extrabold">{checkInDeadline ? `${checkInDeadline} น.` : 'สิ้นสุดวันนัดหมาย'}</span>
+            </span>
+          </div>
+        </div>
+
+        {/* แสดงสถานะแยก 2 ฝั่งชัดเจน (ผู้ซื้อ vs ผู้ขาย) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* ฝั่งผู้ซื้อ */}
+          <div className={`p-3.5 rounded-2xl border transition-all ${
+            meetup.buyerCheckedIn
+              ? 'bg-emerald-50/60 border-emerald-200'
+              : 'bg-gray-50/60 border-gray-200'
+          }`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-ink-800 flex items-center gap-1.5">
+                🛒 ฝั่งผู้ซื้อ ({meetup.buyerName || 'ผู้ซื้อ'})
+                {role === 'buyer' && (
+                  <span className="bg-blue-100 text-blue-700 text-[10px] font-extrabold px-1.5 py-0.2 rounded-full">
+                    คุณ
+                  </span>
                 )}
               </span>
-            )}
+              {meetup.buyerCheckedIn ? (
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                  <CheckCircle2 size={12} /> ถึงแล้ว
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 bg-gray-200/80 px-2 py-0.5 rounded-full">
+                  <Clock size={11} /> รอเดินทาง
+                </span>
+              )}
+            </div>
+
+            <div className="text-xs">
+              {meetup.buyerCheckedIn ? (
+                <div className="space-y-0.5">
+                  <p className="font-semibold text-emerald-800">✅ เช็คอินถึงจุดนัดพบแล้ว</p>
+                  <p className="text-[11px] text-emerald-600">
+                    เวลาที่เช็คอิน: {formatTime(meetup.buyerCheckedInAt)} น.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-0.5">
+                  <p className="text-gray-500 font-medium">⏳ ยังไม่ได้เช็คอิน</p>
+                  <p className="text-[11px] text-gray-400">กรุณาไปยังจุดนัดพบเพื่อกดเช็คอิน</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ฝั่งผู้ขาย */}
+          <div className={`p-3.5 rounded-2xl border transition-all ${
+            meetup.sellerCheckedIn
+              ? 'bg-emerald-50/60 border-emerald-200'
+              : 'bg-gray-50/60 border-gray-200'
+          }`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-ink-800 flex items-center gap-1.5">
+                🏷️ ฝั่งผู้ขาย ({meetup.sellerName || 'ผู้ขาย'})
+                {role === 'seller' && (
+                  <span className="bg-blue-100 text-blue-700 text-[10px] font-extrabold px-1.5 py-0.2 rounded-full">
+                    คุณ
+                  </span>
+                )}
+              </span>
+              {meetup.sellerCheckedIn ? (
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                  <CheckCircle2 size={12} /> ถึงแล้ว
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 bg-gray-200/80 px-2 py-0.5 rounded-full">
+                  <Clock size={11} /> รอเดินทาง
+                </span>
+              )}
+            </div>
+
+            <div className="text-xs">
+              {meetup.sellerCheckedIn ? (
+                <div className="space-y-0.5">
+                  <p className="font-semibold text-emerald-800">✅ เช็คอินถึงจุดนัดพบแล้ว</p>
+                  <p className="text-[11px] text-emerald-600">
+                    เวลาที่เช็คอิน: {formatTime(meetup.sellerCheckedInAt)} น.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-0.5">
+                  <p className="text-gray-500 font-medium">⏳ ยังไม่ได้เช็คอิน</p>
+                  <p className="text-[11px] text-gray-400">กรุณาไปยังจุดนัดพบเพื่อกดเช็คอิน</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ปุ่มเช็คอินสำหรับตนเอง */}
+        {myCheckedIn ? (
+          <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center gap-2">
+            <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+            <div className="text-xs text-emerald-800">
+              <span className="font-bold">คุณเช็คอินถึงจุดนัดพบเรียบร้อยแล้ว</span>
+              <span className="ml-1 text-[11px] text-emerald-700 font-medium">
+                ({formatTime(myCheckedInAt)} น.) {otherCheckedIn ? '— ตอนนี้ทั้งสองฝ่ายพร้อมพบกันแล้ว' : '— รออีกฝ่ายเดินทางมาถึง'}
+              </span>
+            </div>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-2 pt-1">
             <Button
               size="sm"
-              className="w-full sm:w-auto text-white transition-all bg-emerald-600 hover:bg-emerald-700 shadow-xs"
+              className="w-full text-white transition-all bg-emerald-600 hover:bg-emerald-700 shadow-xs py-2.5"
               onClick={handleCheckIn}
               disabled={checkingIn}
             >
-              <span className="flex items-center gap-1.5">
-                <Navigation size={14} className={checkingIn ? 'animate-spin' : 'animate-pulse'} />
-                {checkingIn
-                  ? 'กำลังตรวจสอบตำแหน่ง...'
-                  : 'เช็คอินยืนยันว่าถึงจุดนัดพบแล้ว'}
+              <span className="flex items-center justify-center gap-1.5">
+                <Navigation size={15} className={checkingIn ? 'animate-spin' : 'animate-pulse'} />
+                {checkingIn ? 'กำลังตรวจสอบพิกัด GPS...' : '📍 กดเช็คอินยืนยันว่าฉันถึงจุดนัดพบแล้ว'}
               </span>
             </Button>
-
-            {/* แสดงเวลานัดหมาย */}
-            <div className="flex items-center gap-1.5 text-[11px] text-ink-500 bg-gray-50 border border-gray-100 px-3 py-1.5 rounded-xl w-fit">
-              <Clock size={12} className="text-[#f95721] shrink-0" />
-              <span>
-                เวลานัดหมาย: <b>{meetup.startTime || meetup.time} น.</b>
-                <span className="text-emerald-600 ml-1.5 font-medium">(สามารถเช็คอินได้ทันทีเมื่อตกลงกันแล้ว)</span>
-              </span>
-            </div>
           </div>
         )}
 
         {!bothCheckedIn && (
           <p className="text-[11px] text-ink-400">
-            💡 ต้องรอทั้งสองฝ่ายเช็คอินก่อน ถึงจะแนะนำให้กดยืนยันรับสินค้าด้านล่าง (แต่ถ้าเจอกันแล้วจริงๆ กดยืนยันได้เลยไม่บังคับรอ)
+            💡 แนะนำให้ทั้งสองฝ่ายเช็คอินให้เรียบร้อยก่อนทำการตรวจสอบสินค้าและยืนยันรับของ
           </p>
         )}
       </div>
@@ -936,11 +1080,22 @@ export function MeetupCheckInPage() {
         onClose={() => setShowDeliveryConfirm(false)}
         onConfirm={executeConfirmDelivery}
         title={role === 'buyer' ? 'ยืนยันว่าได้รับสินค้าเรียบร้อยแล้ว?' : 'ยืนยันว่าส่งมอบสินค้าเรียบร้อยแล้ว?'}
-        description="เมื่อยืนยันแล้ว รายการนี้จะปิดสมบูรณ์ทันทีทั้งสองฝ่าย และไม่สามารถย้อนกลับได้"
+        description="เมื่อยืนยันแล้ว รายการนี้จะปิดสมบูรณ์ทันทีทั้งสองฝ่าย และจะเปิดหน้าต่างให้คะแนนรีวิวคู่ค้าของคุณ"
         confirmLabel="ยืนยันสำเร็จดีล"
         cancelLabel="ย้อนกลับ"
         variant="info"
         loading={completing}
+      />
+
+      {/* ─── Review Modal (เด้งขึ้นมาทันทีหลังกดยืนยันรับสินค้า) ─── */}
+      <ReviewModal
+        open={showReviewModal}
+        onClose={() => {
+          setShowReviewModal(false);
+          navigate('/meetups');
+        }}
+        revieweeName={role === 'buyer' ? meetup.sellerName : meetup.buyerName}
+        onSubmit={handleReviewSubmit}
       />
 
       {/* ─── Confirm Cancel Dialog ─── */}

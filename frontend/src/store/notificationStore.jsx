@@ -5,22 +5,45 @@ import { getSocket } from '@/services/socket';
 import { useAuthStore } from '@/store/authStore';
 
 // แปลง type/reference ของแจ้งเตือนจาก backend ให้เป็นลิงก์ที่กดแล้วพาไปหน้าที่เกี่ยวข้อง
-// ปรับ mapping ตรงนี้ได้ตามเส้นทาง route จริงของโปรเจกต์
 function buildNotificationLink(n) {
-  switch (n.type) {
-    case 'message':
-    case 'chat_message': // ← เพิ่ม: backend (chatController.js/chatSocket.js) ส่ง type เป็น "chat_message" จริง
-                          //    เดิมมีแค่เคส "message" ทำให้ไม่ match เคสไหนเลย ตกไป default ('#') กดแล้วไม่ไปไหน
-      return '/chat';
-    case 'meetup':
-      return '/meetups';
-    case 'return':
-      return '/returns';
-    case 'product':
-      return n.reference_id ? `/products/${n.reference_id}` : '/products';
-    default:
-      return '#';
+  if (n.link && n.link !== '#' && n.link !== '') return n.link;
+  const type = String(n.type || '').toLowerCase();
+  const refType = String(n.reference_type || '').toLowerCase();
+  const refId = n.reference_id || n.referenceId;
+
+  if (type.includes('chat') || type.includes('message')) {
+    return '/chat';
   }
+  if (type.includes('meetup') || type.includes('appointment') || type.includes('deal') || refType === 'meetup' || refType === 'appointment') {
+    return '/meetups';
+  }
+  if (type.includes('return') || refType === 'return') {
+    return '/returns';
+  }
+  if (type.includes('product') || type.includes('listing') || refType === 'product') {
+    return refId ? `/products/${refId}` : '/products';
+  }
+  if (type.includes('review') || type.includes('order') || type.includes('transaction') || refType === 'transaction') {
+    return '/meetups';
+  }
+  return '/meetups';
+}
+
+function dedupeNotifications(list) {
+  const seenIds = new Set();
+  const seenContent = new Set();
+  return (list || []).filter((n) => {
+    if (!n) return false;
+    const contentKey = `${(n.title || '').trim()}|||${(n.message || '').trim()}`;
+    if (seenContent.has(contentKey)) return false;
+    seenContent.add(contentKey);
+
+    if (n.id) {
+      if (seenIds.has(String(n.id))) return false;
+      seenIds.add(String(n.id));
+    }
+    return true;
+  });
 }
 
 // แปลงแถวดิบจากตาราง notifications (backend) ให้เป็นรูปแบบที่ UI ใช้
@@ -31,6 +54,8 @@ function mapBackendNotification(n) {
     title: n.title,
     message: n.message,
     type: n.type,
+    reference_type: n.reference_type,
+    reference_id: n.reference_id,
     link: buildNotificationLink(n),
     read: !!n.is_read,
     createdAt: n.created_at,
@@ -43,19 +68,21 @@ export const useNotificationStore = create()(
       notifications: [],
       loaded: false,
 
-      // ดึงแจ้งเตือนจริงจาก backend (ตาราง notifications) — backend กรองให้เฉพาะของ user ที่ login อยู่แล้ว
+      // ดึงแจ้งเตือนจริงจาก backend (ตาราง notifications)
       fetchNotifications: async () => {
-        // ── เพิ่ม guard: ถ้ายังไม่มี token (ยังไม่ login หรือ authStore ยังโหลดจาก
-        // localStorage ไม่เสร็จ) ไม่ต้องยิง request เลย กันเกิด 401 โดยไม่จำเป็นตอนหน้าเว็บเพิ่งโหลด ──
         const token = useAuthStore.getState().token;
         if (!token) return;
 
         try {
           const res = await api.getNotifications();
           if (res?.notifications) {
-            set({
-              notifications: res.notifications.map(mapBackendNotification),
-              loaded: true,
+            const backendList = res.notifications.map(mapBackendNotification);
+            set((state) => {
+              const combined = dedupeNotifications([...backendList, ...state.notifications]);
+              return {
+                notifications: combined,
+                loaded: true,
+              };
             });
           }
         } catch (err) {
@@ -64,31 +91,44 @@ export const useNotificationStore = create()(
       },
 
       // เพิ่มแจ้งเตือนทันทีตอนได้รับ event แบบ real-time จาก socket ("new_notification")
-      // ไม่ต้องรอ fetch ใหม่ทั้งหมด
       pushRealtimeNotification: (rawNotif) => {
         const mapped = mapBackendNotification(rawNotif);
         set((state) => {
-          if (state.notifications.some((n) => String(n.id) === String(mapped.id))) {
-            return state; // กันซ้ำ ถ้ามาซ้ำ id เดิม
+          if (
+            state.notifications.some(
+              (n) =>
+                String(n.id) === String(mapped.id) ||
+                (n.title === mapped.title && n.message === mapped.message)
+            )
+          ) {
+            return state; // กันซ้ำ
           }
           return { notifications: [mapped, ...state.notifications] };
         });
       },
 
-      // ใช้สำหรับแจ้งเตือนที่สร้างขึ้นเฉพาะฝั่ง frontend เท่านั้น (ยังไม่มี endpoint backend รองรับ
-      // เช่น การแจ้งเตือนเรื่องคำขอนัดรับใน ProductDetailPage) — คงพฤติกรรมเดิมไว้เป็น fallback
+      // ใช้สำหรับแจ้งเตือนที่สร้างขึ้นเฉพาะฝั่ง frontend (มีระบบตรวจจับและกันแจ้งเตือนซ้ำ)
       addNotification: (notification) => {
-        set((state) => ({
-          notifications: [
-            {
-              id: `notif-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              read: false,
-              createdAt: new Date().toISOString(),
-              ...notification,
-            },
-            ...state.notifications,
-          ],
-        }));
+        set((state) => {
+          const isDuplicate = state.notifications.some(
+            (n) =>
+              (n.title || '').trim() === (notification.title || '').trim() &&
+              (n.message || '').trim() === (notification.message || '').trim()
+          );
+          if (isDuplicate) return state;
+
+          const newNotif = {
+            id: `notif-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            read: false,
+            createdAt: new Date().toISOString(),
+            ...notification,
+            link: notification.link || buildNotificationLink(notification),
+          };
+
+          return {
+            notifications: [newNotif, ...state.notifications],
+          };
+        });
       },
 
       markAsRead: (id) => {

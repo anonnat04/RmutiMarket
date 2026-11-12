@@ -99,8 +99,12 @@ export function NotificationsPage() {
           return (
             <div
               key={item.id}
-              onClick={() => markAsRead(item.id)}
-              className={`flex items-start gap-3.5 rounded-2xl border p-4 transition-all cursor-pointer ${
+              onClick={() => {
+                markAsRead(item.id);
+                const target = item.link && item.link !== '#' ? item.link : '/meetups';
+                navigate(target);
+              }}
+              className={`flex items-start gap-3.5 rounded-2xl border p-4 transition-all cursor-pointer hover:border-orange-300 ${
                 item.read
                   ? 'bg-white border-gray-100 text-gray-600'
                   : 'bg-orange-50/50 border-orange-200/80 shadow-xs'
@@ -124,14 +128,9 @@ export function NotificationsPage() {
                   </span>
                 </div>
                 <p className="mt-0.5 text-xs text-gray-600">{item.message}</p>
-                {item.link && (
-                  <Link
-                    to={item.link}
-                    className="mt-2 inline-block text-xs font-bold text-[#f95721] hover:underline"
-                  >
-                    ดูรายละเอียด →
-                  </Link>
-                )}
+                <span className="mt-2 inline-block text-xs font-bold text-[#f95721] hover:underline">
+                  ดูรายละเอียด →
+                </span>
               </div>
             </div>
           );

@@ -211,6 +211,7 @@ function mapAppointment(a) {
     seller,
     buyerInfo: buyer,
     sellerInfo: seller,
+    reviews: txn.reviews || [],
   };
 }
 
@@ -244,7 +245,8 @@ async function getMyMeetups(req, res, next) {
           transaction_status(id, name),
           products(id, title, price, product_images(id, image_url, is_primary)),
           buyer:users!buyer_id(id, username, full_name, avatar_url, profile_image_url),
-          seller:users!seller_id(id, username, full_name, avatar_url, profile_image_url)
+          seller:users!seller_id(id, username, full_name, avatar_url, profile_image_url),
+          reviews(id, reviewer_id, reviewee_id, rating, comment, created_at)
         )
       `, { count: "exact" })
       .in("transaction_id", txnIds);
