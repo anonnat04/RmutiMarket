@@ -46,39 +46,61 @@ function mapStatusCode(code) {
 }
 
 function resolveUserName(u) {
-  return u?.username || u?.display_name || u?.full_name || 'ผู้ใช้';
+  if (!u) return 'ผู้ใช้';
+  if (typeof u === 'string') return u;
+  return u.username || u.display_name || u.displayName || u.full_name || u.fullName || 'ผู้ใช้';
 }
 
 function mapAppointment(m) {
-  const txn = m.transactions || {};
-  const product = txn.products || {};
-  const buyer = txn.buyer || {};
-  const seller = txn.seller || {};
-  const location = m.locations || {};
-  const statusCode = m.appointment_status?.code || 'PENDING';
-  const images = product.product_images || [];
-  const coverImage = images.find((i) => i.is_primary)?.image_url || images[0]?.image_url || '';
+  if (!m) return null;
+
+  const txn = m.transaction || m.transactions || {};
+  const product = m.product || m.listing || txn.products || txn.product || {};
+  const buyer = m.buyer || txn.buyer || {};
+  const seller = m.seller || txn.seller || {};
+  const location = m.location || m.meetupPoint || m.locations || {};
+
+  const buyerId = m.buyerId || m.buyer_id || txn.buyer_id || buyer.id;
+  const sellerId = m.sellerId || m.seller_id || txn.seller_id || seller.id;
+  const productId = m.productId || m.product_id || txn.product_id || product.id;
+
+  const rawStatusCode = m.statusCode || m.appointment_status?.code || (m.status ? String(m.status).toUpperCase() : 'PENDING');
+  const mappedStatus = m.status ? mapStatusCode(String(m.status).toUpperCase()) : mapStatusCode(rawStatusCode);
+
+  const images = product.images || product.product_images || [];
+  const coverImage = product.imageUrl || product.image_url || images.find((i) => i.is_cover || i.is_primary)?.url || images.find((i) => i.is_cover || i.is_primary)?.image_url || images[0]?.url || images[0]?.image_url || '';
+
+  const date = m.appointment_date || m.date || (m.scheduledAt ? m.scheduledAt.split('T')[0] : '');
+  const rawTime = m.appointment_time || m.time || m.startTime || (m.scheduledAt ? m.scheduledAt.split('T')[1]?.slice(0, 5) : '12:00');
+  const time = rawTime ? String(rawTime).slice(0, 5) : '12:00';
 
   return {
     id: m.id,
-    transactionId: m.transaction_id || txn.id,
-    productId: product.id,
-    productTitle: product.title || 'สินค้า',
-    productPrice: txn.agreed_price ?? product.price,
+    transactionId: m.transactionId || m.transaction_id || txn.id,
+    productId,
+    productTitle: product.title || m.productTitle || 'สินค้า',
+    productPrice: m.price ?? m.agreedPrice ?? txn.agreed_price ?? product.price ?? 0,
     productImage: coverImage,
-    buyerId: txn.buyer_id,
-    buyerName: resolveUserName(buyer),
-    sellerId: txn.seller_id,
-    sellerName: resolveUserName(seller),
-    status: mapStatusCode(statusCode),
-    date: m.appointment_date,
-    time: m.appointment_time ? String(m.appointment_time).slice(0, 5) : '12:00',
-    startTime: m.appointment_time ? String(m.appointment_time).slice(0, 5) : '12:00',
-    locationId: m.location_id ?? location.id,
-    locationName: location.name || m.location_detail || 'จุดนัดรับ มทร.อีสาน',
-    locationLat: location.latitude,
-    locationLng: location.longitude,
-    note: m.location_detail,
+    buyerId,
+    buyerName: resolveUserName(buyer) || m.buyerName || 'ผู้ซื้อ',
+    sellerId,
+    sellerName: resolveUserName(seller) || m.sellerName || 'ผู้ขาย',
+    status: mappedStatus,
+    statusCode: rawStatusCode,
+    date,
+    time,
+    startTime: time,
+    locationId: m.locationId ?? m.location_id ?? location.id,
+    locationName: location.name || m.locationName || m.location_detail || m.locationDetail || 'จุดนัดรับ มทร.อีสาน',
+    locationLat: location.latitude != null ? parseFloat(location.latitude) : (m.locationLat != null ? parseFloat(m.locationLat) : null),
+    locationLng: location.longitude != null ? parseFloat(location.longitude) : (m.locationLng != null ? parseFloat(m.locationLng) : null),
+    buyerCheckedIn: Boolean(m.buyerCheckedIn || m.buyer_checked_in),
+    sellerCheckedIn: Boolean(m.sellerCheckedIn || m.seller_checked_in),
+    buyerCheckedInAt: m.buyerCheckedInAt || m.buyer_checked_in_at || null,
+    sellerCheckedInAt: m.sellerCheckedInAt || m.seller_checked_in_at || null,
+    buyerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
+    sellerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
+    note: m.note || m.location_detail || m.locationDetail || '',
     isDb: true,
   };
 }
@@ -682,32 +704,23 @@ export function MeetupCheckInPage() {
   const executeCancel = async () => {
     setCancelling(true);
     try {
-      // พยายามยกเลิกผ่าน backend ก่อน (ถ้ามี endpoint)
-      if (meetup.isDb && meetup.id && api.cancelMeetup) {
+      if (meetup.id && api.cancelMeetup) {
         await api.cancelMeetup(meetup.id);
       }
-      const result = cancelRequest(meetup.id);
-      if (!result.success) {
-        alert(result.reason);
-        return;
-      }
+      try {
+        cancelRequest(meetup.id);
+      } catch (e) {}
+
       setShowCancelConfirm(false);
       navigate('/meetups');
     } catch (err) {
-      // ถ้า backend ล้ม ยังยกเลิกใน local store ได้
-      const result = cancelRequest(meetup.id);
-      if (result.success) {
-        setShowCancelConfirm(false);
-        navigate('/meetups');
-      } else {
-        alert(err.message || 'เกิดข้อผิดพลาดในการยกเลิกนัด');
-      }
+      alert(err.message || 'เกิดข้อผิดพลาดในการยกเลิกนัด');
     } finally {
       setCancelling(false);
     }
   };
 
-  const canCancel = ['pending', 'confirmed'].includes(meetup.status) && !myCheckedIn;
+  const canCancel = ['pending', 'confirmed'].includes(meetup.status) && !bothCheckedIn;
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -851,32 +864,24 @@ export function MeetupCheckInPage() {
           <div className="space-y-2">
             <Button
               size="sm"
-              className={`w-full sm:w-auto text-white transition-all ${
-                checkInWindow.status === 'open' || checkInWindow.status === 'late'
-                  ? 'bg-emerald-600 hover:bg-emerald-700'
-                  : 'bg-gray-400 hover:bg-gray-400 cursor-not-allowed opacity-80'
-              }`}
+              className="w-full sm:w-auto text-white transition-all bg-emerald-600 hover:bg-emerald-700 shadow-xs"
               onClick={handleCheckIn}
-              disabled={checkingIn || checkInWindow.status === 'waiting' || checkInWindow.status === 'closed'}
+              disabled={checkingIn}
             >
               <span className="flex items-center gap-1.5">
                 <Navigation size={14} className={checkingIn ? 'animate-spin' : 'animate-pulse'} />
                 {checkingIn
                   ? 'กำลังตรวจสอบตำแหน่ง...'
-                  : checkInWindow.status === 'waiting'
-                  ? `รอเปิดเช็คอิน (${checkInWindow.opensAt ? formatTime(checkInWindow.opensAt.toISOString()) : ''} น.)`
-                  : checkInWindow.status === 'closed'
-                  ? 'ปิดรับการเช็คอินแล้ว'
                   : 'เช็คอินยืนยันว่าถึงจุดนัดพบแล้ว'}
               </span>
             </Button>
 
-            {/* แสดงเวลาช่วงเปิด-ปิดเช็คอินชัดเจน (±30 นาที) */}
+            {/* แสดงเวลานัดหมาย */}
             <div className="flex items-center gap-1.5 text-[11px] text-ink-500 bg-gray-50 border border-gray-100 px-3 py-1.5 rounded-xl w-fit">
               <Clock size={12} className="text-[#f95721] shrink-0" />
               <span>
-                ช่วงเวลาเปิดเช็คอิน: <b>{checkInWindow.opensAt ? formatTime(checkInWindow.opensAt.toISOString()) : '—'}</b> - <b>{checkInWindow.closesAt ? formatTime(checkInWindow.closesAt.toISOString()) : '—'} น.</b>
-                <span className="text-gray-400 ml-1">(±30 นาทีจากเวลานัด {meetup.startTime || meetup.time} น.)</span>
+                เวลานัดหมาย: <b>{meetup.startTime || meetup.time} น.</b>
+                <span className="text-emerald-600 ml-1.5 font-medium">(สามารถเช็คอินได้ทันทีเมื่อตกลงกันแล้ว)</span>
               </span>
             </div>
           </div>

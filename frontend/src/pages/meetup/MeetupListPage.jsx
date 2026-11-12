@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { CalendarClock, MapPin, ChevronDown, ChevronUp, Bell, ArrowLeft, ChevronRight, CheckCircle2, XCircle } from 'lucide-react';
+import { CalendarClock, MapPin, ChevronDown, ChevronUp, Bell, ArrowLeft, ChevronRight, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useMeetupStore, getCheckInWindow } from '@/store/meetupStore';
 import { useNotificationStore } from '@/store/notificationStore';
@@ -48,7 +48,63 @@ function mapStatusCode(code) {
 
 // ── เลือกชื่อที่จะแสดง: ใช้ username เป็นหลักเสมอ (ตรงกับ users.username ในฐานข้อมูล) ──
 function resolveUserName(u) {
-  return u?.username || u?.display_name || u?.full_name || 'ผู้ใช้';
+  if (!u) return 'ผู้ใช้';
+  if (typeof u === 'string') return u;
+  return u.username || u.display_name || u.displayName || u.full_name || u.fullName || 'ผู้ใช้';
+}
+
+function mapAppointmentFromApi(m) {
+  if (!m) return null;
+
+  const txn = m.transaction || m.transactions || {};
+  const product = m.product || m.listing || txn.products || txn.product || {};
+  const buyer = m.buyer || txn.buyer || {};
+  const seller = m.seller || txn.seller || {};
+  const location = m.location || m.meetupPoint || m.locations || {};
+
+  const buyerId = m.buyerId || m.buyer_id || txn.buyer_id || buyer.id;
+  const sellerId = m.sellerId || m.seller_id || txn.seller_id || seller.id;
+  const productId = m.productId || m.product_id || txn.product_id || product.id;
+
+  const rawStatusCode = m.statusCode || m.appointment_status?.code || (m.status ? String(m.status).toUpperCase() : 'PENDING');
+  const mappedStatus = m.status ? mapStatusCode(String(m.status).toUpperCase()) : mapStatusCode(rawStatusCode);
+
+  const images = product.images || product.product_images || [];
+  const coverImage = product.imageUrl || product.image_url || images.find((i) => i.is_cover || i.is_primary)?.url || images.find((i) => i.is_cover || i.is_primary)?.image_url || images[0]?.url || images[0]?.image_url || '';
+
+  const date = m.appointment_date || m.date || (m.scheduledAt ? m.scheduledAt.split('T')[0] : '');
+  const rawTime = m.appointment_time || m.time || m.startTime || (m.scheduledAt ? m.scheduledAt.split('T')[1]?.slice(0, 5) : '12:00');
+  const time = rawTime ? String(rawTime).slice(0, 5) : '12:00';
+
+  return {
+    id: m.id,
+    transactionId: m.transactionId || m.transaction_id || txn.id,
+    productId,
+    productTitle: product.title || m.productTitle || 'สินค้า',
+    productPrice: m.price ?? m.agreedPrice ?? txn.agreed_price ?? product.price ?? 0,
+    productImage: coverImage,
+    buyerId,
+    buyerName: resolveUserName(buyer) || m.buyerName || 'ผู้ซื้อ',
+    sellerId,
+    sellerName: resolveUserName(seller) || m.sellerName || 'ผู้ขาย',
+    status: mappedStatus,
+    statusCode: rawStatusCode,
+    date,
+    time,
+    startTime: time,
+    locationId: m.locationId ?? m.location_id ?? location.id,
+    locationName: location.name || m.locationName || m.location_detail || m.locationDetail || 'จุดนัดรับ มทร.อีสาน',
+    locationLat: location.latitude != null ? parseFloat(location.latitude) : (m.locationLat != null ? parseFloat(m.locationLat) : null),
+    locationLng: location.longitude != null ? parseFloat(location.longitude) : (m.locationLng != null ? parseFloat(m.locationLng) : null),
+    buyerCheckedIn: Boolean(m.buyerCheckedIn || m.buyer_checked_in),
+    sellerCheckedIn: Boolean(m.sellerCheckedIn || m.seller_checked_in),
+    buyerCheckedInAt: m.buyerCheckedInAt || m.buyer_checked_in_at || null,
+    sellerCheckedInAt: m.sellerCheckedInAt || m.seller_checked_in_at || null,
+    buyerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
+    sellerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
+    note: m.note || m.location_detail || m.locationDetail || '',
+    isDb: true,
+  };
 }
 
 // ── ป้ายสถานะช่วง Check-in ───────────────────────────────────────────
@@ -181,57 +237,14 @@ export function MeetupListPage() {
     return () => clearInterval(t);
   }, []);
 
-  // ── mapping ให้ตรงกับโครงสร้างจริงที่ backend ส่งมา (getMyMeetups ใน meetupController.js) ──
+  // ── ดึงรายการนัดรับจริงจาก Backend API ──
   const fetchMeetups = async () => {
-    if (!user || user.id === 'me') return;
+    const token = localStorage.getItem('cm_token') || localStorage.getItem('token') || localStorage.getItem('cm_admin_token');
+    if (!token && !user) return;
     try {
       setLoadingDb(true);
       const res = await api.getMyMeetups();
-      const list = (res.meetups || []).map((m) => {
-        const txn = m.transactions || {};
-        const product = txn.products || {};
-        const buyer = txn.buyer || {};
-        const seller = txn.seller || {};
-        const location = m.locations || {};
-        const statusCode = m.appointment_status?.code || 'PENDING';
-
-        const images = product.product_images || [];
-        const coverImage = images.find((i) => i.is_primary)?.image_url || images[0]?.image_url || '';
-
-        const mappedStatus = mapStatusCode(statusCode);
-
-        return {
-          id: m.id,
-          transactionId: m.transaction_id || txn.id,
-          productId: product.id,
-          productTitle: product.title || 'สินค้า',
-          productPrice: txn.agreed_price ?? product.price,
-          productImage: coverImage,
-          buyerId: txn.buyer_id,
-          buyerName: resolveUserName(buyer),
-          sellerId: txn.seller_id,
-          sellerName: resolveUserName(seller),
-          status: mappedStatus,
-          date: m.appointment_date,
-          time: m.appointment_time ? String(m.appointment_time).slice(0, 5) : '12:00',
-          startTime: m.appointment_time ? String(m.appointment_time).slice(0, 5) : '12:00',
-          locationId: m.location_id ?? location.id,
-          locationName: location.name || m.location_detail || 'จุดนัดรับ มทร.อีสาน',
-          locationLat: location.latitude,
-          locationLng: location.longitude,
-          // รับค่า check-in จาก DB ถ้ามี column (ถ้าไม่มีจะเป็น undefined → เป็น false)
-          buyerCheckedIn: m.buyer_checked_in ?? false,
-          sellerCheckedIn: m.seller_checked_in ?? false,
-          buyerCheckedInAt: m.buyer_checked_in_at ?? null,
-          sellerCheckedInAt: m.seller_checked_in_at ?? null,
-          buyerCheckedInLate: false,
-          sellerCheckedInLate: false,
-          buyerConfirmedDelivery: statusCode === 'COMPLETED',
-          sellerConfirmedDelivery: statusCode === 'COMPLETED',
-          note: m.location_detail,
-          isDb: true,
-        };
-      });
+      const list = (res.meetups || []).map(mapAppointmentFromApi).filter(Boolean);
       setDbMeetups(list);
     } catch (err) {
       console.warn("Failed to fetch meetups from DB:", err);
@@ -240,7 +253,6 @@ export function MeetupListPage() {
     }
   };
 
-
   useEffect(() => {
     fetchMeetups();
   }, [user]);
@@ -248,14 +260,20 @@ export function MeetupListPage() {
   const allMeetups = useMemo(() => {
     const combined = [...dbMeetups];
     for (const m of meetups) {
-      if (!combined.some((c) => c.id === m.id)) {
+      if (!combined.some((c) => String(c.id) === String(m.id))) {
         combined.push(m);
       }
     }
     return combined;
   }, [dbMeetups, meetups]);
 
-  const myMeetups = allMeetups.filter((m) => String(m.buyerId) === String(myId) || String(m.sellerId) === String(myId));
+  const myMeetups = useMemo(() => {
+    return allMeetups.filter((m) => {
+      if (m.isDb) return true; // รายการจาก API /api/meetups คือของ user ปัจจุบันโดยตรง
+      if (!myId || myId === 'me') return true;
+      return String(m.buyerId) === String(myId) || String(m.sellerId) === String(myId);
+    });
+  }, [allMeetups, myId]);
   const filteredMeetups = myMeetups.filter((m) => {
     const tab = TABS.find((t) => t.key === activeTab);
     return tabMatches(tab, m.status);
@@ -318,15 +336,20 @@ export function MeetupListPage() {
   };
 
   const executeRespond = async (m, action) => {
-    respondToRequest(m.id, action);
+    try {
+      respondToRequest(m.id, action);
+    } catch (e) {}
     notifyOther(m, action === 'confirm' ? 'confirm_request' : 'reject_request', 'seller');
     try {
       if (action === 'confirm') {
         await api.acceptMeetup(m.id);
-        fetchMeetups();
+      } else if (action === 'reject') {
+        await api.cancelMeetup(m.id, 'ผู้ขายปฏิเสธคำขอนัดรับ');
       }
+      await fetchMeetups();
     } catch (err) {
-      console.error('API acceptMeetup error:', err);
+      console.error('API accept/reject error:', err);
+      alert(err.message || 'เกิดข้อผิดพลาดในการตอบรับคำขอ');
     }
     setRejectTarget(null);
   };
@@ -340,22 +363,27 @@ export function MeetupListPage() {
     if (!cancelTarget) return;
     const { meetup: m, role } = cancelTarget;
 
-    // อัปเดต UI ทันที (optimistic)
-    const result = cancelRequest(m.id);
-    if (!result.success) {
-      alert(result.reason);
-      setCancelTarget(null);
-      return;
-    }
-    // อัปเดต dbMeetups ทันทีเพื่อไม่ให้กลับมาหลัง re-fetch
-    setDbMeetups((prev) => prev.map((x) => x.id === m.id ? { ...x, status: 'cancelled' } : x));
-    notifyOther(m, 'cancel_request', role);
-
     try {
       setCancelLoading(m.id);
+      // อัปเดต UI ทันที (optimistic)
+      setDbMeetups((prev) =>
+        prev.map((x) =>
+          x.id === m.id ? { ...x, status: 'cancelled', statusCode: 'CANCELLED' } : x
+        )
+      );
+
+      try {
+        cancelRequest(m.id);
+      } catch (e) {}
+
+      // เรียก API ยกเลิกที่ backend
       await api.cancelMeetup(m.id);
+
+      notifyOther(m, 'cancel_request', role);
+      await fetchMeetups();
     } catch (err) {
       console.error('API cancelMeetup error:', err);
+      alert(err.message || 'เกิดข้อผิดพลาดในการยกเลิกนัดรับ');
     } finally {
       setCancelLoading(null);
       setCancelTarget(null);
@@ -364,17 +392,6 @@ export function MeetupListPage() {
 
   // ── เช็คอิน ณ จุดนัดพบ (ทั้งผู้ซื้อและผู้ขาย) ──────────────────────
   const handleCheckIn = (m, role) => {
-    // ตรวจสอบช่วงเวลาก่อน
-    const win = getCheckInWindow(m);
-    if (win.status === 'waiting') {
-      alert('⏳ ยังไม่ถึงเวลาเปิด Check-in กรุณารอสักครู่');
-      return;
-    }
-    if (win.status === 'closed') {
-      alert('🔴 หมดเวลา Check-in แล้ว');
-      return;
-    }
-
     setCheckInTarget({ meetup: m, role });
   };
 
@@ -413,21 +430,6 @@ export function MeetupListPage() {
 
 
 
-  if (myMeetups.length === 0) {
-    return (
-      <EmptyState
-        title="ยังไม่มีนัดรับสินค้า"
-        description={`กดปุ่ม "นัดรับสินค้า" ที่หน้ารายละเอียดสินค้าเพื่อเริ่มนัดกับผู้ขาย`}
-        icon={CalendarClock}
-        action={
-          <Link to="/products">
-            <Button variant="outline" size="sm">เลือกดูสินค้า</Button>
-          </Link>
-        }
-      />
-    );
-  }
-
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-center justify-between border-b border-surface-border pb-4">
@@ -444,9 +446,21 @@ export function MeetupListPage() {
             <p className="text-xs text-ink-500">ติดตามสถานะการนัดพบและส่งมอบสินค้า</p>
           </div>
         </div>
-        <span className="text-xs font-bold text-brand-600 bg-brand-50 px-2.5 py-1 rounded-full border border-brand-200">
-          {myMeetups.length} รายการ
-        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => fetchMeetups()}
+            disabled={loadingDb}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200 bg-white text-xs font-semibold text-gray-700 hover:text-orange-600 hover:border-orange-300 transition-colors shadow-2xs disabled:opacity-50"
+            title="รีเฟรชข้อมูล"
+          >
+            <RefreshCw size={13} className={loadingDb ? "animate-spin text-orange-600" : ""} />
+            <span>รีเฟรช</span>
+          </button>
+          <span className="text-xs font-bold text-brand-600 bg-brand-50 px-2.5 py-1 rounded-full border border-brand-200">
+            {myMeetups.length} รายการ
+          </span>
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: 6, background: '#f3f4f6', borderRadius: 14, padding: 4, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }} className="scrollbar-none">
@@ -491,7 +505,6 @@ export function MeetupListPage() {
         })}
       </div>
 
-
       {pendingCount > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 12, background: '#fff7ed', border: '1.5px solid #fed7aa' }}>
           <Bell size={16} color="#f97316" />
@@ -500,28 +513,52 @@ export function MeetupListPage() {
         </div>
       )}
 
-      {filteredMeetups.length === 0 && <div className="py-10 text-center text-sm text-ink-400">ไม่มีรายการในหมวดนี้</div>}
+      {loadingDb && dbMeetups.length === 0 ? (
+        <div className="space-y-4 py-4">
+          <div className="h-36 bg-slate-100 rounded-2xl animate-pulse" />
+          <div className="h-36 bg-slate-100 rounded-2xl animate-pulse" />
+        </div>
+      ) : myMeetups.length === 0 ? (
+        <EmptyState
+          title="ยังไม่มีนัดรับสินค้า"
+          description='กดปุ่ม "นัดรับสินค้า" ที่หน้ารายละเอียดสินค้าเพื่อเริ่มนัดกับผู้ขาย'
+          icon={CalendarClock}
+          action={
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => fetchMeetups()} disabled={loadingDb}>
+                <RefreshCw size={14} className={loadingDb ? "animate-spin" : ""} /> รีเฟรชข้อมูล
+              </Button>
+              <Link to="/products">
+                <Button size="sm">เลือกดูสินค้า</Button>
+              </Link>
+            </div>
+          }
+        />
+      ) : filteredMeetups.length === 0 ? (
+        <div className="py-12 text-center text-sm text-ink-400 bg-white rounded-2xl border border-gray-100 shadow-2xs">
+          ไม่มีรายการในหมวดนี้
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {filteredMeetups.map((m) => {
+            const role = String(m.buyerId) === String(myId) ? 'buyer' : (String(m.sellerId) === String(myId) ? 'seller' : 'buyer');
+            const otherName = role === 'buyer' ? (m.sellerName || 'ผู้ขาย') : (m.buyerName || 'ผู้ซื้อ');
+            const myReview = role === 'buyer' ? m.buyerReview : m.sellerReview;
 
-      <div className="flex flex-col gap-4">
-        {filteredMeetups.map((m) => {
-          const role = String(m.buyerId) === String(myId) ? 'buyer' : 'seller';
-          const otherName = role === 'buyer' ? m.sellerName : m.buyerName;
-          const myReview = role === 'buyer' ? m.buyerReview : m.sellerReview;
+            const hasAction =
+              (m.status === 'pending' && role === 'seller') ||
+              (m.status === 'return_requested' && role === 'seller');
 
-          const hasAction =
-            (m.status === 'pending' && role === 'seller') ||
-            (m.status === 'return_requested' && role === 'seller');
+            const mapOpen = expandedMap === m.id;
+            const checkInWindow = m.status === 'confirmed' ? getCheckInWindow(m) : null;
+            const bothCheckedIn = m.buyerCheckedIn && m.sellerCheckedIn;
+            const bothDelivered = m.buyerConfirmedDelivery && m.sellerConfirmedDelivery;
+            const myCheckedIn = role === 'buyer' ? m.buyerCheckedIn : m.sellerCheckedIn;
+            const myCheckedInAt = role === 'buyer' ? m.buyerCheckedInAt : m.sellerCheckedInAt;
+            const canCancel = ['pending', 'confirmed'].includes(m.status) && !bothDelivered;
 
-          const mapOpen = expandedMap === m.id;
-          const checkInWindow = m.status === 'confirmed' ? getCheckInWindow(m) : null;
-          const bothCheckedIn = m.buyerCheckedIn && m.sellerCheckedIn;
-          const bothDelivered = m.buyerConfirmedDelivery && m.sellerConfirmedDelivery;
-          const myCheckedIn = role === 'buyer' ? m.buyerCheckedIn : m.sellerCheckedIn;
-          const myCheckedInAt = role === 'buyer' ? m.buyerCheckedInAt : m.sellerCheckedInAt;
-          const canCancel = ['pending', 'confirmed'].includes(m.status) && !m.buyerCheckedIn && !m.sellerCheckedIn;
-
-          return (
-            <div key={m.id} className="cm-card flex flex-col gap-3 p-4" style={{ borderLeft: hasAction ? '4px solid #f97316' : undefined, transition: 'box-shadow 0.2s' }}>
+            return (
+              <div key={m.id} className="cm-card flex flex-col gap-3 p-4" style={{ borderLeft: hasAction ? '4px solid #f97316' : undefined, transition: 'box-shadow 0.2s' }}>
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <p className="text-sm font-semibold text-ink-900">{m.productTitle}</p>
@@ -629,7 +666,7 @@ export function MeetupListPage() {
                         <button
                           type="button"
                           onClick={() => handleCheckIn(m, role)}
-                          disabled={checkInLoading === m.id || checkInWindow?.status === 'waiting' || checkInWindow?.status === 'closed'}
+                          disabled={checkInLoading === m.id}
                           className="inline-flex items-center gap-1.5 rounded-xl bg-[#f95721] px-4 py-2 text-xs font-bold text-white hover:bg-orange-600 transition-colors shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <CheckCircle2 size={14} />
@@ -657,17 +694,17 @@ export function MeetupListPage() {
                     <span className="text-xs font-medium text-brand-600">✅ ทั้งสองฝ่ายยืนยันรับ–ส่งสินค้าครบแล้ว</span>
                   )}
 
-                  {/* ปุ่มยกเลิก (ผู้ซื้อและผู้ขาย ถ้ายังไม่มีใครเช็คอิน) */}
+                  {/* ปุ่มยกเลิก (ทั้งผู้ซื้อและผู้ขายสามารถกดยกเลิกได้ก่อนปิดการขาย) */}
                   {canCancel && (
-                    <div className="border-t border-orange-100 pt-2 mt-1">
+                    <div className="border-t border-orange-100 pt-2.5 mt-2 flex justify-end">
                       <button
                         type="button"
                         onClick={() => handleCancelClick(m, role)}
                         disabled={cancelLoading === m.id}
-                        className="flex items-center gap-1 text-xs font-semibold text-red-500 hover:underline disabled:opacity-50"
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 px-3.5 py-1.5 text-xs font-bold text-red-600 transition-colors shadow-2xs disabled:opacity-50"
                       >
-                        <XCircle size={13} />
-                        {cancelLoading === m.id ? 'กำลังยกเลิก...' : 'ยกเลิกนัดนี้'}
+                        <XCircle size={14} />
+                        {cancelLoading === m.id ? 'กำลังยกเลิก...' : 'ยกเลิกการนัดรับ'}
                       </button>
                     </div>
                   )}
@@ -706,6 +743,7 @@ export function MeetupListPage() {
           );
         })}
       </div>
+    )}
 
 
       <ReviewModal

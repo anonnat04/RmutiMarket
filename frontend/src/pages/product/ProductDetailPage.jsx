@@ -91,11 +91,14 @@ export function ProductDetailPage() {
   const [showBuyModal, setShowBuyModal] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(meetupPoints[0]?.name || 'โรงอาหารกลาง มทร.อีสาน');
   const [meetupDate, setMeetupDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    return d.toISOString().split('T')[0];
+    return new Date().toISOString().split('T')[0];
   });
-  const [meetupTime, setMeetupTime] = useState('12:00');
+  const [meetupTime, setMeetupTime] = useState(() => {
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  });
   const [meetupNote, setMeetupNote] = useState('');
   const [submittingBuy, setSubmittingBuy] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
@@ -728,9 +731,24 @@ export function ProductDetailPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-ink-800 mb-1.5">
-                    ⏰ เวลาโดยประมาณ
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold text-ink-800">
+                      ⏰ เวลาโดยประมาณ
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const now = new Date();
+                        const hh = String(now.getHours()).padStart(2, '0');
+                        const mm = String(now.getMinutes()).padStart(2, '0');
+                        setMeetupDate(now.toISOString().split('T')[0]);
+                        setMeetupTime(`${hh}:${mm}`);
+                      }}
+                      className="text-[11px] font-bold text-orange-600 hover:underline"
+                    >
+                      ⚡ นัดตอนนี้เลย
+                    </button>
+                  </div>
                   <input
                     type="time"
                     value={meetupTime}

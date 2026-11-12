@@ -60,8 +60,13 @@ export function ScheduleMeetupPage() {
 
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [date, setDate] = useState('');
-  const [time, setTime] = useState('');
+  const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [time, setTime] = useState(() => {
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  });
   const [locationValue, setLocationValue] = useState(null); // { type, id } | { type, lat, lng, name }
   const [errors, setErrors] = useState({});
   // กันกดส่งซ้ำจนสร้างนัดหมายซ้ำในฐานข้อมูล
@@ -100,13 +105,6 @@ export function ScheduleMeetupPage() {
     const next = {};
     if (!date) next.date = 'กรุณาเลือกวันที่';
     if (!time) next.time = 'กรุณาเลือกเวลา';
-    if (time) {
-      const [h, m] = time.split(':').map(Number);
-      const totalMin = h * 60 + (m || 0);
-      if (totalMin < 8 * 60 || totalMin > 19 * 60) {
-        next.time = '⏰ กรุณาเลือกเวลานัดรับระหว่าง 08:00 – 19:00 น. เท่านั้น';
-      }
-    }
     if (!locationValue) next.location = 'กรุณาเลือกจุดนัดรับบนแผนที่';
     setErrors(next);
     if (Object.keys(next).length > 0) return;
@@ -185,11 +183,11 @@ export function ScheduleMeetupPage() {
     }
   };
 
-  // สร้าง time slot แนะนำ (ทุกครึ่งชั่วโมง 8:00 - 19:00)
+  // สร้าง time slot แนะนำ
   const timeSlots = [];
-  for (let h = 8; h <= 19; h++) {
+  for (let h = 8; h <= 22; h++) {
     timeSlots.push(`${String(h).padStart(2, '0')}:00`);
-    if (h < 19) timeSlots.push(`${String(h).padStart(2, '0')}:30`);
+    if (h < 22) timeSlots.push(`${String(h).padStart(2, '0')}:30`);
   }
 
   return (
@@ -295,17 +293,30 @@ export function ScheduleMeetupPage() {
 
             {/* เวลา */}
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-ink-700">เวลานัดรับ</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-medium text-ink-700">เวลานัดรับ</label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const now = new Date();
+                    const hh = String(now.getHours()).padStart(2, '0');
+                    const mm = String(now.getMinutes()).padStart(2, '0');
+                    setDate(now.toISOString().split('T')[0]);
+                    setTime(`${hh}:${mm}`);
+                  }}
+                  className="text-[11px] font-bold text-orange-600 hover:underline"
+                >
+                  ⚡ นัดตอนนี้เลย
+                </button>
+              </div>
               <input
                 type="time"
                 value={time}
-                min="08:00"
-                max="19:00"
                 onChange={(e) => setTime(e.target.value)}
                 className="block w-full rounded-xl border border-surface-border bg-white px-3 py-2.5 text-sm text-ink-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
               />
               {errors.time && <p className="mt-1 text-xs font-medium text-red-500">{errors.time}</p>}
-              <p className="mt-1 text-[10px] text-gray-400">รับนัดได้เฉพาะ 08:00 – 19:00 น.</p>
+              <p className="mt-1 text-[10px] text-gray-400">เลือกเวลาใดก็ได้ตามที่ตกลงกันในแชท</p>
             </div>
           </div>
 

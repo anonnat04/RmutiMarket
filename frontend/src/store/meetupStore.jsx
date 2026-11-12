@@ -60,23 +60,17 @@ export function haversineDistanceMeters(lat1, lng1, lat2, lng2) {
   return R * c;
 }
 
-// สถานะ Check-in ตามช่วงเวลา: 'waiting' | 'open' | 'late' | 'closed'
+// สถานะ Check-in: อนุญาตให้ Check-in ได้ตลอดเมื่อผู้ขายยืนยันนัดหมายแล้ว
 export function getCheckInWindow(meetup) {
   const start = toDateTime(meetup?.date, meetup?.startTime || meetup?.time);
-  if (!start) return { status: 'unknown' };
-
-  const opensAt = addMinutes(start, -CHECKIN_OPENS_BEFORE_MIN);
-  const normalUntil = addMinutes(start, CHECKIN_NORMAL_AFTER_START_MIN);
-  const closesAt = addMinutes(start, CHECKIN_LATE_AFTER_START_MIN);
   const now = new Date();
-
-  let status = 'waiting';
-  if (now < opensAt) status = 'waiting';
-  else if (now >= opensAt && now < normalUntil) status = 'open';
-  else if (now >= normalUntil && now < closesAt) status = 'late';
-  else status = 'closed';
-
-  return { status, opensAt, normalUntil, closesAt, meetupStart: start };
+  return {
+    status: 'open',
+    opensAt: start || now,
+    normalUntil: addMinutes(start || now, 120),
+    closesAt: addMinutes(start || now, 240),
+    meetupStart: start || now,
+  };
 }
 
 // ตรวจสอบว่าผู้ใช้อยู่ในระยะที่ Check-in ได้หรือไม่ (ต้องมี lat/lng ของ Safe Point ใน meetup)
@@ -152,11 +146,7 @@ export const useMeetupStore = create()(
         });
 
         if (conflict) {
-          return {
-            success: false,
-            reason: 'ไม่สามารถสร้างนัดได้ เนื่องจากมีนัดในช่วงเวลาเดียวกันอยู่แล้ว กรุณาเลือกช่วงเวลาอื่น',
-            conflict,
-          };
+          console.warn('[Meetup] Overlap noticed but booking allowed per chat agreement:', conflict);
         }
 
         const resolvedEndTime =
@@ -251,12 +241,6 @@ export const useMeetupStore = create()(
         }
 
         const window = getCheckInWindow(meetup);
-        if (window.status === 'waiting') {
-          return { success: false, reason: 'ยังไม่ถึงเวลาเปิด Check-in' };
-        }
-        if (window.status === 'closed') {
-          return { success: false, reason: 'หมดเวลา Check-in แล้ว' };
-        }
 
         if (typeof lat === 'number' && typeof lng === 'number' && meetup.locationLat != null) {
           const { withinRadius, distance } = isWithinSafePointRadius(meetup, lat, lng);
