@@ -128,6 +128,16 @@ function mapAppointment(a) {
   const scheduledAt = `${a.appointment_date}T${a.appointment_time}`;
   const price = parseFloat(prod.price || 0);
 
+  const cleanLocDetail = a.location_detail ? a.location_detail.replace(/^จุดนัด:\s*/, '').trim() : null;
+  const finalLocName = cleanLocDetail || a.locations?.name || "จุดนัดรับ มทร.อีสาน";
+
+  const locObj = a.locations ? {
+    ...a.locations,
+    name: finalLocName,
+    latitude: parseFloat(a.locations.latitude),
+    longitude: parseFloat(a.locations.longitude),
+  } : (cleanLocDetail ? { name: finalLocName } : null);
+
   return {
     id: a.id,
     transaction_id: a.transaction_id,
@@ -164,16 +174,6 @@ function mapAppointment(a) {
     agreed_price: price,
     agreedPrice: price,
     price,
-
-    const cleanLocDetail = a.location_detail ? a.location_detail.replace(/^จุดนัด:\s*/, '').trim() : null;
-    const finalLocName = cleanLocDetail || a.locations?.name || "จุดนัดรับ มทร.อีสาน";
-
-    const locObj = a.locations ? {
-      ...a.locations,
-      name: finalLocName,
-      latitude: parseFloat(a.locations.latitude),
-      longitude: parseFloat(a.locations.longitude),
-    } : (cleanLocDetail ? { name: finalLocName } : null);
 
     location: locObj,
     meetupPoint: locObj,
