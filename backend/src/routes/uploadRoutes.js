@@ -23,9 +23,9 @@ const BUCKET_NAME = process.env.SUPABASE_STORAGE_BUCKET || "campus-market";
 
 /**
  * POST /api/upload
- * Upload 1-10 images to Supabase Storage
+ * Upload 1-5 images to Supabase Storage
  */
-router.post("/", requireUserAuth, upload.array("images", 10), async (req, res, next) => {
+router.post("/", requireUserAuth, upload.array("images", 5), async (req, res, next) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: "ไม่พบไฟล์รูปภาพที่ต้องการอัปโหลด" });

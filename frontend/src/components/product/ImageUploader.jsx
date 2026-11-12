@@ -7,7 +7,7 @@ export function ImageUploader({
   onChange,
   coverId,
   onCoverChange,
-  maxImages = 8
+  maxImages = 5
 }) {
   const inputRef = useRef(null);
   const dragIndex = useRef(null);
@@ -15,7 +15,12 @@ export function ImageUploader({
   // บีบอัดรูปแล้วค่อยเพิ่มเข้า state เพื่อลดขนาดไฟล์ก่อนอัปโหลด
   const handleFiles = async (files) => {
     if (!files) return;
-    const rawFiles = Array.from(files).slice(0, Math.max(0, maxImages - images.length));
+    const remaining = Math.max(0, maxImages - images.length);
+    if (remaining <= 0) return;
+    if (files.length > remaining) {
+      alert(`สามารถใส่รูปได้สูงสุด ${maxImages} รูป (ระบบจะเลือกเฉพาะ ${remaining} รูปแรก)`);
+    }
+    const rawFiles = Array.from(files).slice(0, remaining);
 
     const next = await Promise.all(
       rawFiles.map(async (file) => {

@@ -246,7 +246,7 @@ async function createListing(req, res, next) {
     if (pErr) throw pErr;
 
     if (images && images.length) {
-      const imgRows = images.map((img, i) => ({
+      const imgRows = images.slice(0, 5).map((img, i) => ({
         product_id: prod.id,
         image_url: typeof img === "string" ? img : (img.url || img.imageUrl),
         is_primary: i === 0,
@@ -325,7 +325,7 @@ async function updateListing(req, res, next) {
 
     if (images && Array.isArray(images) && images.length > 0) {
       await supabase.from("product_images").delete().eq("product_id", prodId);
-      const imgRows = images.map((img, i) => {
+      const imgRows = images.slice(0, 5).map((img, i) => {
         const url = typeof img === "string" ? img : (img.imageUrl || img.url || img.previewUrl);
         const isPrimary = typeof img === "object" && img.isCover !== undefined ? Boolean(img.isCover) : (i === 0);
         return {

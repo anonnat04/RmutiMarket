@@ -40,6 +40,7 @@ export function CreateProductPage() {
     if (!title.trim()) next.title = 'กรุณากรอกชื่อสินค้า';
     if (!price || Number(price) <= 0) next.price = 'กรุณากรอกราคาที่ถูกต้อง';
     if (images.length === 0) next.images = 'กรุณาเพิ่มรูปสินค้าอย่างน้อย 1 รูป';
+    if (images.length > 5) next.images = 'ใส่รูปสินค้าได้สูงสุด 5 รูป';
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -185,6 +186,7 @@ export function CreateProductPage() {
             onChange={setImages}
             coverId={coverId}
             onCoverChange={setCoverId}
+            maxImages={5}
           />
           {errors.images && <p className="mt-1.5 text-xs font-medium text-red-500">{errors.images}</p>}
         </div>
