@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { CalendarClock, MapPin, ChevronDown, ChevronUp, Bell, ArrowLeft, ChevronRight, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
+import { CalendarClock, MapPin, ChevronDown, ChevronUp, Bell, ArrowLeft, ChevronRight, CheckCircle2, XCircle, RefreshCw, Star, Award } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useMeetupStore, getCheckInWindow } from '@/store/meetupStore';
 import { useNotificationStore } from '@/store/notificationStore';
@@ -227,6 +227,17 @@ export function MeetupListPage() {
   const [cancelTarget, setCancelTarget] = useState(null);     // { meetup, role } สำหรับ confirm dialog
   const [rejectTarget, setRejectTarget] = useState(null);     // meetup สำหรับ confirm ปฏิเสธนัด
   const [checkInTarget, setCheckInTarget] = useState(null);   // { meetup, role } สำหรับ confirm เช็คอิน
+
+  // ── จดจำรายการนัดรับที่เคยกดเปิดดูแล้ว (เพื่อให้ตัวเลขแจ้งเตือนบนแท็บหายไปเมื่อกดดูแล้ว) ──
+  const [seenMeetupIds, setSeenMeetupIds] = useState(() => {
+    try {
+      const stored = localStorage.getItem('cm_seen_meetup_ids');
+      return new Set(stored ? JSON.parse(stored) : []);
+    } catch {
+      return new Set();
+    }
+  });
+
   // บังคับ re-render ทุกนาทีเพื่อให้ป้ายสถานะช่วง Check-in อัปเดตตามเวลาจริง
   const [, forceTick] = useState(0);
 
@@ -286,6 +297,41 @@ export function MeetupListPage() {
     if (m.status === 'return_requested' && role === 'seller') return true;
     return false;
   }).length;
+
+  // ── เมื่อเปิดดูแท็บใด ให้บันทึกว่ารายการในแท็บนั้นถูกเปิดดูแล้ว เพื่อลบเลขแจ้งเตือนบนแท็บ ──
+  const markTabAsSeen = (tabKey) => {
+    const tabObj = TABS.find((t) => t.key === tabKey);
+    if (!tabObj) return;
+    const tabMeetups = tabObj.key === 'all'
+      ? myMeetups
+      : myMeetups.filter((m) => tabMatches(tabObj, m.status));
+    if (tabMeetups.length === 0) return;
+
+    setSeenMeetupIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      tabMeetups.forEach((m) => {
+        const idStr = String(m.id);
+        if (!next.has(idStr)) {
+          next.add(idStr);
+          changed = true;
+        }
+      });
+      if (changed) {
+        try {
+          localStorage.setItem('cm_seen_meetup_ids', JSON.stringify([...next]));
+        } catch (e) {}
+        return next;
+      }
+      return prev;
+    });
+  };
+
+  useEffect(() => {
+    if (activeTab && myMeetups.length > 0) {
+      markTabAsSeen(activeTab);
+    }
+  }, [activeTab, myMeetups]);
 
   // ── ส่ง Notification จำลองให้อีกฝ่าย ──────────────────────────────
   const notifyOther = (meetup, actionType, role) => {
@@ -449,6 +495,14 @@ export function MeetupListPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Link
+            to="/reviews"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-orange-200 bg-orange-50 hover:bg-orange-100 text-[#f95721] text-xs font-bold transition-colors shadow-2xs"
+            title="ไปดูรีวิวและคะแนนความน่าเชื่อถือของฉัน"
+          >
+            <Award size={14} />
+            <span>หน้ารีวิว</span>
+          </Link>
           <button
             type="button"
             onClick={() => fetchMeetups()}
@@ -468,16 +522,27 @@ export function MeetupListPage() {
       <div style={{ display: 'flex', gap: 6, background: '#f3f4f6', borderRadius: 14, padding: 4, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }} className="scrollbar-none">
         {TABS.map((tab) => {
           const isCancelledTab = tab.key === 'cancelled';
-          const count = tab.key === 'pending'
-            ? pendingCount
-            : tab.key !== 'all'
-            ? myMeetups.filter((m) => tabMatches(tab, m.status)).length
-            : null;
+          const tabMeetups = tab.key !== 'all'
+            ? myMeetups.filter((m) => tabMatches(tab, m.status))
+            : [];
+
+          // นับเฉพาะรายการใหม่ที่ยังไม่เคยเปิดดูในหน้านี้ (!seenMeetupIds.has)
+          // และถ้ากำลังเปิดดูแท็บนั้นอยู่ (activeTab === tab.key) ให้ซ่อนตัวเลขแจ้งเตือนออกทันที
+          const unseenCount = activeTab === tab.key
+            ? 0
+            : tab.key === 'pending'
+            ? tabMeetups.filter((m) => !seenMeetupIds.has(String(m.id)) && ((m.status === 'pending' || m.status === 'return_requested') && String(m.sellerId) === String(myId))).length
+            : tabMeetups.filter((m) => !seenMeetupIds.has(String(m.id))).length;
+
+          const count = unseenCount;
           return (
             <button
               key={tab.key}
               type="button"
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => {
+                setActiveTab(tab.key);
+                markTabAsSeen(tab.key);
+              }}
               style={{
                 flexShrink: 0, padding: '7px 12px', borderRadius: 10, border: 'none',
                 background: activeTab === tab.key ? '#fff' : 'transparent',
@@ -490,7 +555,7 @@ export function MeetupListPage() {
               }}
             >
               <span>{tab.label}</span>
-              {count != null && count > 0 && (
+              {count > 0 && (
                 <span
                   style={{
                     minWidth: 16, height: 16, borderRadius: 999, padding: '0 4px',
@@ -545,6 +610,7 @@ export function MeetupListPage() {
           {filteredMeetups.map((m) => {
             const role = String(m.buyerId) === String(myId) ? 'buyer' : (String(m.sellerId) === String(myId) ? 'seller' : 'buyer');
             const otherName = role === 'buyer' ? (m.sellerName || 'ผู้ขาย') : (m.buyerName || 'ผู้ซื้อ');
+            const targetUserId = role === 'buyer' ? m.sellerId : m.buyerId;
             const userReviewFromDb = Array.isArray(m.reviews)
               ? m.reviews.find((r) => String(r.reviewer_id) === String(myId))
               : null;
@@ -743,15 +809,33 @@ export function MeetupListPage() {
                             "{myReview.comment}"
                           </span>
                         )}
+                        <Link
+                          to={targetUserId ? `/profile/${targetUserId}/reviews` : '/reviews'}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-orange-200 bg-orange-50 hover:bg-orange-100 text-[#f95721] font-bold text-xs transition-colors shadow-2xs"
+                          title={`ดูหน้ารีวิวของ ${otherName}`}
+                        >
+                          <Star size={13} className="fill-[#f95721] text-[#f95721]" />
+                          <span>ดูรีวิว ({otherName})</span>
+                          <ChevronRight size={13} />
+                        </Link>
                       </div>
                     ) : (
-                      <Button
-                        size="sm"
-                        onClick={() => setReviewTarget({ meetup: m, role })}
-                        className="bg-[#f95721] hover:bg-orange-600 text-white font-bold text-xs shadow-xs"
-                      >
-                        ⭐ ให้คะแนน
-                      </Button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => setReviewTarget({ meetup: m, role })}
+                          className="bg-[#f95721] hover:bg-orange-600 text-white font-bold text-xs shadow-xs"
+                        >
+                          ⭐ ให้คะแนน
+                        </Button>
+                        <Link
+                          to={targetUserId ? `/profile/${targetUserId}/reviews` : '/reviews'}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 font-semibold text-xs transition-colors shadow-2xs"
+                        >
+                          <span>ดูรีวิว ({otherName})</span>
+                          <ChevronRight size={13} />
+                        </Link>
+                      </div>
                     )}
                   </div>
                 </div>
