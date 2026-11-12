@@ -60,6 +60,7 @@ export function ScheduleMeetupPage() {
 
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [existingMeetups, setExistingMeetups] = useState([]);
   const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [time, setTime] = useState(() => {
     const now = new Date();
@@ -77,7 +78,30 @@ export function ScheduleMeetupPage() {
       setProduct(p ?? null);
       setLoading(false);
     });
+    api.getMyMeetups().then((res) => {
+      setExistingMeetups(res?.meetups || []);
+    }).catch(() => {});
   }, [id]);
+
+  const toMinutes = (t) => {
+    if (!t) return 0;
+    const [h, m] = String(t).slice(0, 5).split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
+
+  const getConflictingMeetup = (checkDate, checkTime) => {
+    if (!checkDate || !checkTime) return null;
+    const targetMin = toMinutes(checkTime);
+    return (existingMeetups || []).find((m) => {
+      const st = String(m.statusCode || m.status || '').toLowerCase();
+      if (!['pending', 'confirmed'].includes(st)) return false;
+      const mDate = m.date || m.appointment_date;
+      if (mDate !== checkDate) return false;
+      const mTime = m.time || m.startTime || m.appointment_time;
+      const mMin = toMinutes(mTime);
+      return Math.abs(mMin - targetMin) < 30;
+    });
+  };
 
   if (loading) {
     return (
@@ -106,6 +130,16 @@ export function ScheduleMeetupPage() {
     if (!date) next.date = 'กรุณาเลือกวันที่';
     if (!time) next.time = 'กรุณาเลือกเวลา';
     if (!locationValue) next.location = 'กรุณาเลือกจุดนัดรับบนแผนที่';
+
+    // ── ตรวจสอบเวลานัดหมายซ้อนทับ ──
+    if (date && time) {
+      const conflict = getConflictingMeetup(date, time);
+      if (conflict) {
+        const conflictTitle = conflict.productTitle || conflict.product?.title || 'รายการอื่น';
+        next.time = `⚠️ เวลานัดหมาย ${time} น. ซ้อนทับกับนัดรับสินค้าอื่นของคุณ ("${conflictTitle}") กรุณาเลือกเวลาอื่นที่ห่างกันอย่างน้อย 30 นาที`;
+      }
+    }
+
     setErrors(next);
     if (Object.keys(next).length > 0) return;
 
@@ -137,11 +171,17 @@ export function ScheduleMeetupPage() {
       const payload = {
         listingId: product.id,
         agreedPrice: product.price,
-        meetupPointId: locationValue.type === 'point' ? locationValue.id : 'canteen39',
-        locationId: locationValue.type === 'point' ? locationValue.id : 'canteen39',
+        // ส่ง locationId เป็น string id ของจุด (เช่น 'canteen39') เพื่อให้ backend ค้นชื่อได้
+        // และส่ง locationName + lat/lng ไปด้วยเพื่อให้ backend บันทึก location_detail ที่ถูกต้อง
+        meetupPointId: locationValue.type === 'point' ? locationValue.id : null,
+        locationId: locationValue.type === 'point' ? locationValue.id : null,
+        locationName,
+        locationLat: lat,
+        locationLng: lng,
         date,
         time,
         note: `จุดนัด: ${locationName}`,
+        locationDetail: locationName,
       };
 
       // แก้ไข: เดิมหลังจากยิง api.createMeetup() (เขียนลง backend/appointments จริง)
@@ -178,7 +218,12 @@ export function ScheduleMeetupPage() {
       // หมายเหตุ: ไม่ setSubmitting(false) ที่นี่โดยตั้งใจ เพราะกำลังจะออกจากหน้านี้อยู่แล้ว
     } catch (err) {
       console.error("Failed to create meetup:", err);
-      setErrors((prev) => ({ ...prev, location: err.message || "เกิดข้อผิดพลาดในการส่งคำขอนัดรับ" }));
+      const msg = err.message || "เกิดข้อผิดพลาดในการส่งคำขอนัดรับ";
+      if (msg.includes("ซ้อนทับ") || msg.includes("เวลา")) {
+        setErrors((prev) => ({ ...prev, time: msg }));
+      } else {
+        setErrors((prev) => ({ ...prev, location: msg }));
+      }
       setSubmitting(false);
     }
   };
@@ -316,7 +361,7 @@ export function ScheduleMeetupPage() {
                 className="block w-full rounded-xl border border-surface-border bg-white px-3 py-2.5 text-sm text-ink-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
               />
               {errors.time && <p className="mt-1 text-xs font-medium text-red-500">{errors.time}</p>}
-              <p className="mt-1 text-[10px] text-gray-400">เลือกเวลาใดก็ได้ตามที่ตกลงกันในแชท</p>
+              <p className="mt-1 text-[10px] text-gray-400">เลือกเวลาใดก็ได้ตามที่ตกลงกันในแชท (ต้องไม่ซ้อนทับกับนัดรับอื่น)</p>
             </div>
           </div>
 
@@ -325,26 +370,40 @@ export function ScheduleMeetupPage() {
             <div className="mt-3">
               <p className="mb-2 text-xs font-medium text-ink-500">⏰ เวลาที่แนะนำ</p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {timeSlots.map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setTime(t)}
-                    style={{
-                      padding: '4px 12px',
-                      borderRadius: 999,
-                      border: `1.5px solid ${time === t ? '#f97316' : '#e5e7eb'}`,
-                      background: time === t ? '#f97316' : '#fff',
-                      color: time === t ? '#fff' : '#374151',
-                      fontSize: 11,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      transition: 'all 0.15s',
-                    }}
-                  >
-                    {t}
-                  </button>
-                ))}
+                {timeSlots.map((t) => {
+                  const isBusy = !!getConflictingMeetup(date, t);
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => {
+                        if (isBusy) {
+                          setErrors((prev) => ({ ...prev, time: `เวลานัด ${t} น. ซ้อนทับกับนัดรับอื่นที่มีอยู่แล้ว` }));
+                        } else {
+                          setTime(t);
+                          setErrors((prev) => ({ ...prev, time: null }));
+                        }
+                      }}
+                      disabled={isBusy}
+                      title={isBusy ? `เวลา ${t} น. ติดนัดรับอื่นแล้ว` : `เลือกเวลา ${t} น.`}
+                      style={{
+                        padding: '4px 12px',
+                        borderRadius: 999,
+                        border: `1.5px solid ${isBusy ? '#e5e7eb' : time === t ? '#f97316' : '#e5e7eb'}`,
+                        background: isBusy ? '#f3f4f6' : time === t ? '#f97316' : '#fff',
+                        color: isBusy ? '#9ca3af' : time === t ? '#fff' : '#374151',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        cursor: isBusy ? 'not-allowed' : 'pointer',
+                        textDecoration: isBusy ? 'line-through' : 'none',
+                        opacity: isBusy ? 0.6 : 1,
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      {t} {isBusy ? '(ไม่ว่าง)' : ''}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}

@@ -3,15 +3,18 @@ import {
   Bell,
   Check,
   CheckCheck,
+  CheckCircle2,
   Trash2,
   CalendarClock,
   RotateCcw,
   ShoppingBag,
   Clock,
   ChevronRight,
+  MessageCircle,
+  Star,
   X,
 } from 'lucide-react';
-import { useNotificationStore } from '@/store/notificationStore';
+import { useNotificationStore, buildNotificationLink } from '@/store/notificationStore';
 import { useAuthStore } from '@/store/authStore';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { Link } from 'react-router-dom';

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { CalendarClock, MapPin, ChevronDown, ChevronUp, Bell, ArrowLeft, ChevronRight, CheckCircle2, XCircle, RefreshCw, Star, Award } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { CalendarClock, MapPin, ChevronDown, ChevronUp, Bell, ArrowLeft, ChevronRight, CheckCircle2, XCircle, RefreshCw, Star } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useMeetupStore, getCheckInWindow } from '@/store/meetupStore';
 import { useNotificationStore } from '@/store/notificationStore';
@@ -93,9 +93,9 @@ function mapAppointmentFromApi(m) {
     time,
     startTime: time,
     locationId: m.locationId ?? m.location_id ?? location.id,
-    locationName: location.name || m.locationName || m.location_detail || m.locationDetail || 'จุดนัดรับ มทร.อีสาน',
-    locationLat: location.latitude != null ? parseFloat(location.latitude) : (m.locationLat != null ? parseFloat(m.locationLat) : null),
-    locationLng: location.longitude != null ? parseFloat(location.longitude) : (m.locationLng != null ? parseFloat(m.locationLng) : null),
+    locationName: (m.location_detail ? m.location_detail.replace(/^จุดนัด:\s*/, '').trim() : null) || (m.locationDetail ? m.locationDetail.replace(/^จุดนัด:\s*/, '').trim() : null) || m.locationName || location.name || 'จุดนัดรับ มทร.อีสาน',
+    locationLat: m.locationLat != null ? parseFloat(m.locationLat) : (meetupPoints.find((p) => p.name === ((m.location_detail ? m.location_detail.replace(/^จุดนัด:\s*/, '').trim() : null) || m.locationName || location.name))?.lat ?? (location.latitude != null ? parseFloat(location.latitude) : null)),
+    locationLng: m.locationLng != null ? parseFloat(m.locationLng) : (meetupPoints.find((p) => p.name === ((m.location_detail ? m.location_detail.replace(/^จุดนัด:\s*/, '').trim() : null) || m.locationName || location.name))?.lng ?? (location.longitude != null ? parseFloat(location.longitude) : null)),
     buyerCheckedIn: Boolean(m.buyerCheckedIn || m.buyer_checked_in),
     sellerCheckedIn: Boolean(m.sellerCheckedIn || m.seller_checked_in),
     buyerCheckedInAt: m.buyerCheckedInAt || m.buyer_checked_in_at || null,
@@ -208,6 +208,7 @@ function tabMatches(tab, status) {
 
 export function MeetupListPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const user = useAuthStore((s) => s.user);
   const meetups = useMeetupStore((s) => s.meetups);
   const respondToRequest = useMeetupStore((s) => s.respondToRequest);
@@ -220,7 +221,8 @@ export function MeetupListPage() {
   const [dbMeetups, setDbMeetups] = useState([]);
   const [loadingDb, setLoadingDb] = useState(false);
   const [reviewTarget, setReviewTarget] = useState(null);
-  const [activeTab, setActiveTab] = useState('all');
+  const [activeTab, setActiveTab] = useState(() => searchParams.get('tab') || 'all');
+  const [highlightId, setHighlightId] = useState(() => searchParams.get('highlight') || null);
   const [expandedMap, setExpandedMap] = useState(null);
   const [checkInLoading, setCheckInLoading] = useState(null); // meetup id ที่กำลังเช็คอิน
   const [cancelLoading, setCancelLoading] = useState(null);   // meetup id ที่กำลังยกเลิก
@@ -332,6 +334,25 @@ export function MeetupListPage() {
       markTabAsSeen(activeTab);
     }
   }, [activeTab, myMeetups]);
+
+  // ── อ่าน ?tab=X&highlight=Y จาก URL เมื่อมาจากแจ้งเตือน ──────────────────
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    const highlightParam = searchParams.get('highlight');
+    if (tabParam) setActiveTab(tabParam);
+    if (highlightParam) setHighlightId(highlightParam);
+  }, [searchParams]);
+
+  // ── Auto-scroll ไปที่การ์ดที่ถูก highlight ──────────────────────────────
+  const highlightRef = useRef(null);
+  useEffect(() => {
+    if (!highlightId || !highlightRef.current) return;
+    const timer = setTimeout(() => {
+      highlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [highlightId, filteredMeetups]);
+
 
   // ── ส่ง Notification จำลองให้อีกฝ่าย ──────────────────────────────
   const notifyOther = (meetup, actionType, role) => {
@@ -495,14 +516,6 @@ export function MeetupListPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Link
-            to="/reviews"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-orange-200 bg-orange-50 hover:bg-orange-100 text-[#f95721] text-xs font-bold transition-colors shadow-2xs"
-            title="ไปดูรีวิวและคะแนนความน่าเชื่อถือของฉัน"
-          >
-            <Award size={14} />
-            <span>หน้ารีวิว</span>
-          </Link>
           <button
             type="button"
             onClick={() => fetchMeetups()}
@@ -631,8 +644,20 @@ export function MeetupListPage() {
             const myCheckedInAt = role === 'buyer' ? m.buyerCheckedInAt : m.sellerCheckedInAt;
             const canCancel = ['pending', 'confirmed'].includes(m.status) && !bothDelivered;
 
+            const isHighlighted = highlightId && String(m.id) === String(highlightId);
+
             return (
-              <div key={m.id} className="cm-card flex flex-col gap-3 p-4" style={{ borderLeft: hasAction ? '4px solid #f97316' : undefined, transition: 'box-shadow 0.2s' }}>
+              <div
+                key={m.id}
+                ref={isHighlighted ? highlightRef : null}
+                className="cm-card flex flex-col gap-3 p-4"
+                style={{
+                  borderLeft: hasAction ? '4px solid #f97316' : undefined,
+                  transition: 'box-shadow 0.2s, outline 0.2s',
+                  outline: isHighlighted ? '2.5px solid #f97316' : undefined,
+                  boxShadow: isHighlighted ? '0 0 0 4px #fed7aa55' : undefined,
+                }}
+              >
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <p className="text-sm font-semibold text-ink-900">{m.productTitle}</p>

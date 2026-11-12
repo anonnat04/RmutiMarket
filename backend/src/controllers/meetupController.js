@@ -165,17 +165,20 @@ function mapAppointment(a) {
     agreedPrice: price,
     price,
 
-    location: a.locations ? {
+    const cleanLocDetail = a.location_detail ? a.location_detail.replace(/^จุดนัด:\s*/, '').trim() : null;
+    const finalLocName = cleanLocDetail || a.locations?.name || "จุดนัดรับ มทร.อีสาน";
+
+    const locObj = a.locations ? {
       ...a.locations,
+      name: finalLocName,
       latitude: parseFloat(a.locations.latitude),
       longitude: parseFloat(a.locations.longitude),
-    } : null,
-    meetupPoint: a.locations ? {
-      ...a.locations,
-      latitude: parseFloat(a.locations.latitude),
-      longitude: parseFloat(a.locations.longitude),
-    } : null,
-    meetup_points: a.locations,
+    } : (cleanLocDetail ? { name: finalLocName } : null);
+
+    location: locObj,
+    meetupPoint: locObj,
+    meetup_points: locObj,
+    locationName: finalLocName,
 
     transaction: {
       id: txn.id,
@@ -275,17 +278,51 @@ async function getMyMeetups(req, res, next) {
 // ----------------------------------------------------------------
 async function createMeetup(req, res, next) {
   try {
-    let { transactionId, listingId, productId, sellerId, meetupPointId, locationId, scheduledAt, date, appointmentDate, time, appointmentTime, note, locationDetail } = req.body;
+    let { transactionId, listingId, productId, sellerId, meetupPointId, locationId, scheduledAt, date, appointmentDate, time, appointmentTime, note, locationDetail, locationName, locationLat, locationLng } = req.body;
 
     const targetProductId = productId || listingId;
     const finalLocationRaw = locationId || meetupPointId;
     const finalDate = appointmentDate || date || (scheduledAt ? scheduledAt.split("T")[0] : new Date().toISOString().split("T")[0]);
     const finalTime = appointmentTime || time || (scheduledAt ? scheduledAt.split("T")[1]?.slice(0, 5) : "12:00");
-    const finalDetail = locationDetail || note || null;
+    const finalDetail = locationDetail || locationName || note || null;
 
+    // ── ค้นหา location id: ลอง parseInt ก่อน ถ้าไม่ใช่ตัวเลขให้ค้นจากชื่อใน DB ──
     let resolvedLocationId = parseInt(finalLocationRaw);
-    if (isNaN(resolvedLocationId)) {
-      const { data: firstLoc } = await supabase.from("locations").select("id").limit(1).single();
+    if (isNaN(resolvedLocationId) && (finalLocationRaw || finalDetail)) {
+      // อาจเป็น string key เช่น 'canteen39', 'library-cl' หรือชื่อจุดนัดรับ — ค้นหาจากชื่อที่คล้ายกัน
+      const locationKeyMap = {
+        'canteen39': 'โรงอาหาร 39',
+        'library-cl': 'CL',
+        'civil-eng': 'โยธา',
+        'ee-building18': 'ตึก 18',
+        'sci-arts': 'วิทยาศาสตร์',
+        'student-center': 'กิจกรรม',
+        'sports-complex': 'กีฬา',
+        'admin-building': 'อาคารอำนวยการ',
+        'it-building': 'IT',
+        'mechanic-eng': 'เครื่องกล',
+        'seven-eleven': '7-Eleven',
+        'stadium': 'สนามกีฬา',
+        'business-admin': 'บริหารธุรกิจ',
+        'dormitory': 'หอพัก',
+        'student-dev': 'พัฒนานักศึกษา',
+        'eng-tech': 'วิศวกรรมศาสตร์',
+        'boxing-gym': 'สนามมวย',
+      };
+      const searchName = locationKeyMap[finalLocationRaw] || finalDetail || finalLocationRaw;
+      const { data: foundLoc } = await supabase
+        .from("locations")
+        .select("id, name")
+        .ilike("name", `%${searchName}%`)
+        .limit(1)
+        .maybeSingle();
+      if (foundLoc) {
+        resolvedLocationId = foundLoc.id;
+      }
+    }
+    // ถ้ายังหาไม่ได้ให้ใช้ location แรกสุดเป็น fallback
+    if (isNaN(resolvedLocationId) || !resolvedLocationId) {
+      const { data: firstLoc } = await supabase.from("locations").select("id").order("id").limit(1).maybeSingle();
       resolvedLocationId = firstLoc?.id || 1;
     }
 
@@ -342,6 +379,50 @@ async function createMeetup(req, res, next) {
 
     if (!txn) {
       return res.status(400).json({ error: "ไม่พบข้อมูลรายการซื้อขาย" });
+    }
+
+    // ── ตรวจสอบเวลานัดหมายซ้ำ/ทับซ้อน (Overlap Check) ──
+    // ห้ามมีนัดหมายอื่นในช่วงเวลาเดียวกัน (ห่างกันน้อยกว่า 30 นาที) สำหรับผู้ซื้อ ผู้ขาย หรือสินค้านี้
+    const toMinutes = (t) => {
+      if (!t) return 0;
+      const [h, m] = String(t).slice(0, 5).split(':').map(Number);
+      return (h || 0) * 60 + (m || 0);
+    };
+
+    const targetMin = toMinutes(finalTime);
+
+    const { data: dayAppts } = await supabase
+      .from("appointments")
+      .select(`
+        id, appointment_date, appointment_time, status_id,
+        transactions!inner(id, buyer_id, seller_id, product_id)
+      `)
+      .eq("appointment_date", finalDate)
+      .in("status_id", [1, 2]);
+
+    if (dayAppts?.length) {
+      const conflict = dayAppts.find((a) => {
+        const t = a.transactions;
+        if (!t) return false;
+        // เช็คว่าเกี่ยวข้องกับผู้ซื้อ ผู้ขาย หรือสินค้านี้
+        const involvesParty =
+          t.buyer_id === txn.buyer_id ||
+          t.seller_id === txn.buyer_id ||
+          t.buyer_id === txn.seller_id ||
+          t.seller_id === txn.seller_id ||
+          t.product_id === txn.product_id;
+
+        if (!involvesParty) return false;
+
+        const apptMin = toMinutes(a.appointment_time);
+        return Math.abs(apptMin - targetMin) < 30; // ถือว่าทับซ้อนถ้าเวลาห่างกันน้อยกว่า 30 นาที
+      });
+
+      if (conflict) {
+        return res.status(400).json({
+          error: `เวลานัดหมาย ${finalTime} น. ซ้อนทับกับนัดรับอื่นที่มีอยู่แล้ว กรุณาเลือกเวลาอื่น`,
+        });
+      }
     }
 
     // Insert Appointment

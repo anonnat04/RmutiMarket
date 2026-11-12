@@ -4,28 +4,65 @@ import { api } from '@/lib/api';
 import { getSocket } from '@/services/socket';
 import { useAuthStore } from '@/store/authStore';
 
-// แปลง type/reference ของแจ้งเตือนจาก backend ให้เป็นลิงก์ที่กดแล้วพาไปหน้าที่เกี่ยวข้อง
-function buildNotificationLink(n) {
-  if (n.link && n.link !== '#' && n.link !== '') return n.link;
+// แปลง type/reference ของแจ้งเตือนจาก backend ให้เป็นลิงก์ที่กดแล้วพาไปหน้าที่เกี่ยวข้องแบบตรงจุด
+export function buildNotificationLink(n) {
+  if (!n) return '/meetups';
   const type = String(n.type || '').toLowerCase();
-  const refType = String(n.reference_type || '').toLowerCase();
-  const refId = n.reference_id || n.referenceId;
+  const refType = String(n.reference_type || n.ref_type || '').toLowerCase();
+  const refId = n.reference_id || n.referenceId || n.ref_id;
+  const title = String(n.title || '').toLowerCase();
 
-  if (type.includes('chat') || type.includes('message')) {
-    return '/chat';
+  // 1. แชท (พาไปหน้าแชท พร้อมเปิดห้องแชทนั้นถ้ามี id)
+  if (type.includes('chat') || type.includes('message') || refType === 'conversation') {
+    return refId ? `/chat?conversationId=${refId}` : '/chat';
   }
-  if (type.includes('meetup') || type.includes('appointment') || type.includes('deal') || refType === 'meetup' || refType === 'appointment') {
-    return '/meetups';
+
+  // 2. รีวิว (พาไปหน้ารวมรีวิว)
+  if (type.includes('review') || refType === 'review') {
+    return '/reviews';
   }
+
+  // 3. การคืนสินค้า
   if (type.includes('return') || refType === 'return') {
     return '/returns';
   }
-  if (type.includes('product') || type.includes('listing') || refType === 'product') {
-    return refId ? `/products/${refId}` : '/products';
+
+  // 4. สินค้า
+  if ((type.includes('product') || refType === 'product') && refId) {
+    return `/products/${refId}`;
   }
-  if (type.includes('review') || type.includes('order') || type.includes('transaction') || refType === 'transaction') {
-    return '/meetups';
+
+  // 5. นัดรับสินค้า / ซื้อขาย (ส่งไปแท็บที่ถูกต้องตามประเภทแจ้งเตือน + เลื่อนไปที่การ์ดนั้น)
+  if (
+    type.includes('meetup') ||
+    type.includes('appointment') ||
+    type.includes('deal') ||
+    type.includes('transaction') ||
+    type.includes('order') ||
+    refType === 'meetup' ||
+    refType === 'appointment' ||
+    refType === 'transaction'
+  ) {
+    // นัดรับใหม่ / ขอนัดรับ -> ไปแท็บ pending (รอดำเนินการ)
+    if (type.includes('scheduled') || title.includes('การนัดหมาย') || title.includes('ขอนัดรับ') || title.includes('คำขอ')) {
+      return refId ? `/meetups?tab=pending&highlight=${refId}` : '/meetups?tab=pending';
+    }
+    // ยืนยันนัดรับแล้ว -> ไปแท็บ confirmed (นัดหมายแล้ว)
+    if (type.includes('confirmed') || title.includes('ยืนยันการนัดรับ')) {
+      return refId ? `/meetups?tab=confirmed&highlight=${refId}` : '/meetups?tab=confirmed';
+    }
+    // ซื้อขายเสร็จสิ้น / ส่งมอบสำเร็จ -> ไปแท็บ completed (เสร็จสิ้น)
+    if (type.includes('completed') || title.includes('เสร็จสมบูรณ์') || title.includes('สำเร็จ')) {
+      return refId ? `/meetups?tab=completed&highlight=${refId}` : '/meetups?tab=completed';
+    }
+    // ยกเลิก / ปฏิเสธ -> ไปแท็บ cancelled (ยกเลิกแล้ว)
+    if (type.includes('cancel') || type.includes('reject') || title.includes('ยกเลิก') || title.includes('ปฏิเสธ')) {
+      return refId ? `/meetups?tab=cancelled&highlight=${refId}` : '/meetups?tab=cancelled';
+    }
+    return refId ? `/meetups?highlight=${refId}` : '/meetups';
   }
+
+  if (n.link && n.link !== '#' && n.link !== '') return n.link;
   return '/meetups';
 }
 
