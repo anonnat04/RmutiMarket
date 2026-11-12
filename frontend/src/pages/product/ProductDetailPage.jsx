@@ -641,7 +641,7 @@ export function ProductDetailPage() {
 
       {showBuyModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl border border-orange-100 max-h-[90vh] overflow-y-auto">
+          <div className="w-full max-w-lg rounded-3xl bg-white p-4 sm:p-6 shadow-2xl border border-orange-100 max-h-[90vh] overflow-y-auto">
             {/* Header */}
             <div className="flex items-start justify-between pb-4 border-b border-gray-100 mb-4">
               <div>
@@ -721,46 +721,46 @@ export function ProductDetailPage() {
               </div>
 
               {/* Date & Time */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-ink-800 mb-1.5">
-                    📅 วันที่สะดวก
-                  </label>
-                  <input
-                    type="date"
-                    value={meetupDate}
-                    onChange={(e) => setMeetupDate(e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 px-3.5 py-2.5 text-sm font-semibold text-ink-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                  />
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-ink-800 flex items-center gap-1">
+                    📅 วันและเวลานัดรับ
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const now = new Date();
+                      const hh = String(now.getHours()).padStart(2, '0');
+                      const mm = String(now.getMinutes()).padStart(2, '0');
+                      setMeetupDate(now.toISOString().split('T')[0]);
+                      setMeetupTime(`${hh}:${mm}`);
+                    }}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-orange-600 bg-orange-50 hover:bg-orange-100 px-2.5 py-1 rounded-lg border border-orange-200/70 transition-colors"
+                  >
+                    ⚡ นัดตอนนี้เลย
+                  </button>
                 </div>
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-bold text-ink-800">
-                      ⏰ เวลาโดยประมาณ
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const now = new Date();
-                        const hh = String(now.getHours()).padStart(2, '0');
-                        const mm = String(now.getMinutes()).padStart(2, '0');
-                        setMeetupDate(now.toISOString().split('T')[0]);
-                        setMeetupTime(`${hh}:${mm}`);
-                      }}
-                      className="text-[11px] font-bold text-orange-600 hover:underline"
-                    >
-                      ⚡ นัดตอนนี้เลย
-                    </button>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-medium text-ink-500 mb-1">วันที่สะดวก</label>
+                    <input
+                      type="date"
+                      value={meetupDate}
+                      onChange={(e) => setMeetupDate(e.target.value)}
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 text-sm font-semibold text-ink-900 outline-none focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+                    />
                   </div>
-                  <input
-                    type="time"
-                    value={meetupTime}
-                    onChange={(e) => setMeetupTime(e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 px-3.5 py-2.5 text-sm font-semibold text-ink-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                  />
+                  <div>
+                    <label className="block text-[11px] font-medium text-ink-500 mb-1">เวลาโดยประมาณ</label>
+                    <input
+                      type="time"
+                      value={meetupTime}
+                      onChange={(e) => setMeetupTime(e.target.value)}
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 text-sm font-semibold text-ink-900 outline-none focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+                    />
+                  </div>
                 </div>
               </div>
-
               {/* Note to seller */}
               <div>
                 <label className="block text-xs font-bold text-ink-800 mb-1.5">

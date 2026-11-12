@@ -29,7 +29,7 @@ async function getConversations(req, res, next) {
         .from("conversations")
         .select(`
           id, product_id, created_at, updated_at,
-          products(id, title, price, seller_id,
+          products(id, title, price, seller_id, status_id,
             product_images(image_url, is_primary)
           )
         `)
@@ -107,6 +107,8 @@ async function getConversations(req, res, next) {
               title: product.title,
               price: product.price,
               coverImage,
+              sellerId: product.seller_id,
+              statusId: product.status_id,
             } : null,
             partner: partner?.users ? {
               id: partner.users.id,

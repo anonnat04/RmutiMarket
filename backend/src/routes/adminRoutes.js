@@ -16,6 +16,7 @@ router.get("/seller-stats", adminController.getSellerLeaderboard);
 router.get("/users", adminController.getUsers);
 router.get("/users/:userId", adminController.getUserDetail);
 router.post("/users/:userId/ban", adminController.banUser);
+router.post("/users/:userId/score", adminController.adjustUserScore);
 router.post("/users/:userId/unban", adminController.unbanUser);
 router.delete("/users/:userId", adminController.deleteUser);
 

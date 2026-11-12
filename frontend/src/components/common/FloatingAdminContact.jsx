@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Headset, X, Send, CheckCircle2, QrCode, ArrowLeft } from 'lucide-react';
 import { useNotificationStore } from '@/store/notificationStore';
 import { useReportStore } from '@/store/reportStore';
@@ -18,6 +19,8 @@ export function FloatingAdminContact() {
   const [submitting, setSubmitting] = useState(false);
 
   const addNotification = useNotificationStore((s) => s.addNotification);
+  const location = useLocation();
+  if (location.pathname.startsWith('/chat')) return null;
 
   const handleSubmit = async (e) => {
     e.preventDefault();

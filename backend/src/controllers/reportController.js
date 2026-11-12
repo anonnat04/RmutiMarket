@@ -20,7 +20,13 @@ async function createReport(req, res, next) {
       return res.status(400).json({ error: "กรุณาระบุข้อมูลการรายงานให้ครบถ้วน (หัวข้อและรายละเอียด)" });
     }
 
-    const type = targetType === "wanted_post" ? "wanted_post" : "product";
+    // อนุญาต support_ticket และ user ด้วย — ไม่บังคับเปลี่ยนเป็น product
+    let type = "product";
+    if (targetType === "wanted_post") type = "wanted_post";
+    else if (targetType === "support_ticket" || targetType === "user") type = targetType;
+    else if ((targetTitle && targetTitle.includes("ศูนย์ช่วยเหลือ")) || (category && (category.includes("โกง") || category.includes("มิจฉาชีพ") || category.includes("ระบบ")))) {
+      type = "support_ticket";
+    }
     const finalTargetId = parseInt(targetId) || Date.now();
     const reporterId = req.user?.id || null;
     const reporterName = req.user?.fullName || req.user?.username || "ผู้ใช้ในระบบ";

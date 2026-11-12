@@ -64,18 +64,20 @@ export function AdminDisputesPage() {
   // แยกรายงานออกเป็น 2 กลุ่ม:
   // 1) รายงานสินค้าและโพสต์ (product / wanted_post)
   // 2) รายการแจ้งปัญหาจากศูนย์ช่วยเหลือ (support_ticket / user / scam / general)
-  const productAndPostReports = allReports.filter((r) => {
-    const t = r.target_type || r.type || 'product';
-    return t === 'product' || t === 'wanted_post';
-  });
-
-  const supportTicketReports = allReports.filter((r) => {
+  const isSupportItem = (r) => {
     const t = r.target_type || r.type;
-    return t === 'support_ticket' || t === 'user' || t === 'scam' || t === 'system';
-  });
+    const title = r.target_title || r.targetTitle || '';
+    const cat = r.category || '';
+    return t === 'support_ticket' || t === 'user' || t === 'scam' || t === 'system' ||
+           title.includes('ศูนย์ช่วยเหลือ') || cat.includes('โกง') || cat.includes('มิจฉาชีพ') || cat.includes('ระบบ');
+  };
+
+  const productAndPostReports = allReports.filter((r) => !isSupportItem(r));
+  const supportTicketReports = allReports.filter((r) => isSupportItem(r));
 
   // Action: ปลด/ลบสินค้าหรือโพสต์ทันที
   const handleTakeDown = (report) => {
+    if (isSupportItem(report)) { alert("รายการนี้เป็นการแจ้งปัญหา/แจ้งโกง ไม่ใช่สินค้า จึงไม่สามารถปลดสินค้าได้"); return; }
     setTakeDownReport(report);
   };
 
@@ -357,7 +359,7 @@ export function AdminDisputesPage() {
             const isDismissed = item.status === 'dismissed';
             const itemType = item.target_type || item.type || 'product';
             const isPost = itemType === 'wanted_post';
-            const isSupport = itemType === 'support_ticket' || activeMainTab === 'support';
+            const isSupport = isSupportItem(item) || activeMainTab === 'support';
             const title = item.target_title || item.targetTitle || (isSupport ? 'แจ้งปัญหาจากศูนย์ช่วยเหลือ' : `รายการ #${item.target_id || ''}`);
             const reporter = item.reporter_name || item.reporterName || 'ผู้ใช้ในระบบ';
             const reporterEmail = item.reporter_email || item.reporterEmail || '';

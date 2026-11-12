@@ -251,6 +251,8 @@ export const api = {
   adminUnbanUser: (token, id) => request(`/api/admin/users/${id}/unban`, { method: "POST", token }),
   adminDeleteUser: (token, id, reason = "") =>
     request(`/api/admin/users/${id}`, { method: "DELETE", token, body: { reason } }),
+  adminAdjustUserScore: (token, id, changeAmount, reason = "") =>
+    request(`/api/admin/users/${id}/score`, { method: "POST", token, body: { changeAmount, reason } }),
 
   // ── Listings (paginated, with images & seller info) ──
   adminGetListings: (token, { q = "", status = "", page = 1, limit = 20 } = {}) => {

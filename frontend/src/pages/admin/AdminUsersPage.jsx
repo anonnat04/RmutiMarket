@@ -111,6 +111,22 @@ export function AdminUsersPage() {
     );
   };
   const handleUnban = (u) => run(u.id, () => api.adminUnbanUser(token, u.id));
+  const handleAdjustScore = async (u) => {
+    const pts = window.prompt(`ปรับคะแนน Trust Score ของ ${u.display_name || u.full_name || u.username}\n(ปัจจุบัน: ${u.trust_score}/100)\nระบุแต้มที่ต้องการเปลี่ยน เช่น -10, -20 (ตัดคะแนน) หรือ +10, +20 (เพิ่มคะแนน):`, '-10');
+    if (pts === null) return;
+    const delta = parseInt(pts);
+    if (isNaN(delta) || delta === 0) {
+      alert('กรุณาระบุตัวเลขคะแนน เช่น -10 หรือ +10');
+      return;
+    }
+    const reason = window.prompt('ระบุเหตุผลในการปรับคะแนน:', delta < 0 ? 'ทำผิดกฎการใช้งาน / แจ้งโกง' : 'ปรับคะแนนชดเชยโดยผู้ดูแลระบบ');
+    if (reason === null) return;
+
+    run(u.id, async () => {
+      const res = await api.adminAdjustUserScore(token, u.id, delta, reason.trim() || 'ปรับคะแนนโดยผู้ดูแลระบบ');
+      setNotice(res.message || 'ปรับคะแนนเรียบร้อยแล้ว');
+    });
+  };
 
   const confirmDeleteUser = async () => {
     if (!toDeleteUser) return;
@@ -339,12 +355,21 @@ export function AdminUsersPage() {
 
                   <td className="p-4 text-right">
                     <div className="flex items-center justify-end gap-1.5">
+                      <button
+                        disabled={busyId === u.id}
+                        onClick={() => handleAdjustScore(u)}
+                        className="flex items-center gap-1 rounded-xl bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-[11px] font-bold text-amber-700 hover:bg-amber-500 hover:text-white hover:border-amber-500 transition-all disabled:opacity-50"
+                        title="ตัดหรือปรับคะแนนความน่าเชื่อถือ"
+                      >
+                        ⚡ ตัด/ปรับคะแนน
+                      </button>
+
                       {banned ? (
                         <button
                           disabled={busyId === u.id}
                           onClick={() => handleUnban(u)}
                           className="flex items-center gap-1 rounded-xl bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 text-[11px] font-bold text-emerald-600 hover:bg-emerald-500 hover:text-white hover:border-emerald-500 transition-all disabled:opacity-50"
-                          title="ปลดการระงับบัญชี"
+                          title="ปลดระงับบัญชี"
                         >
                           <CheckCircle size={12} /> ปลดระงับ
                         </button>

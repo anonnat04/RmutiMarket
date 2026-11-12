@@ -136,7 +136,13 @@ function MiniMap({ meetup }) {
   const mapInstanceRef = useRef(null);
 
   useEffect(() => {
-    if (!mapRef.current || mapInstanceRef.current) return;
+    if (!mapRef.current) return;
+
+    // ถ้า map ถูกสร้างแล้ว ให้ invalidateSize เมื่อ container ปรากฏ
+    if (mapInstanceRef.current) {
+      setTimeout(() => mapInstanceRef.current?.invalidateSize(), 100);
+      return;
+    }
 
     let lat = CAMPUS_CENTER.lat;
     let lng = CAMPUS_CENTER.lng;
@@ -144,6 +150,7 @@ function MiniMap({ meetup }) {
     if (found) { lat = found.lat; lng = found.lng; }
     else if (meetup.locationLat) { lat = meetup.locationLat; lng = meetup.locationLng; }
 
+    // ใส่ Leaflet CSS ถ้ายังไม่มี
     if (!document.querySelector('link[data-leaflet]')) {
       const link = document.createElement('link');
       link.rel = 'stylesheet';
@@ -152,42 +159,54 @@ function MiniMap({ meetup }) {
       document.head.appendChild(link);
     }
 
-    import('leaflet').then((mod) => {
-      if (mapInstanceRef.current) return;
-      const L = mod.default ?? mod;
-      const map = L.map(mapRef.current, {
-        center: [lat, lng],
-        zoom: 17,
-        zoomControl: false,
-        dragging: false,
-        scrollWheelZoom: false,
-        doubleClickZoom: false,
-        attributionControl: false,
-      });
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    // รอให้ CSS โหลดก่อนสร้าง map (100ms)
+    const timer = setTimeout(() => {
+      import('leaflet').then((mod) => {
+        if (mapInstanceRef.current || !mapRef.current) return;
+        const L = mod.default ?? mod;
+        try {
+          const map = L.map(mapRef.current, {
+            center: [lat, lng],
+            zoom: 17,
+            zoomControl: false,
+            dragging: false,
+            scrollWheelZoom: false,
+            doubleClickZoom: false,
+            attributionControl: false,
+          });
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+          }).addTo(map);
 
-      const icon = L.divIcon({
-        html: `<div style="width:20px;height:20px;background:#f97316;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>`,
-        iconSize: [20, 20],
-        iconAnchor: [10, 10],
-        className: '',
+          const icon = L.divIcon({
+            html: `<div style="width:20px;height:20px;background:#f97316;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>`,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
+            className: '',
+          });
+          L.marker([lat, lng], { icon }).addTo(map);
+          mapInstanceRef.current = map;
+          // invalidateSize หลัง render เสร็จ
+          setTimeout(() => map.invalidateSize(), 200);
+        } catch (e) {
+          console.warn('Map init error:', e);
+        }
       });
-      L.marker([lat, lng], { icon }).addTo(map);
-      mapInstanceRef.current = map;
-    });
+    }, 100);
 
     return () => {
+      clearTimeout(timer);
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
       }
     };
-  }, [meetup.locationId]);
+  }, [meetup.locationId, meetup.locationLat, meetup.locationLng]);
 
   return (
     <div
       ref={mapRef}
-      style={{ height: 180, borderRadius: 12, overflow: 'hidden', border: '1px solid #e5e7eb' }}
+      style={{ height: 180, borderRadius: 12, overflow: 'hidden', border: '1px solid #e5e7eb', background: '#f3f4f6' }}
     />
   );
 }
@@ -426,6 +445,10 @@ export function MeetupListPage() {
     try {
       if (action === 'confirm') {
         await api.acceptMeetup(m.id);
+        await fetchMeetups();
+        // ไปหน้าเช็คอินทันทีหลังยืนยันนัด
+        navigate(`/meetups/${m.id}/checkin`);
+        return;
       } else if (action === 'reject') {
         await api.cancelMeetup(m.id, 'ผู้ขายปฏิเสธคำขอนัดรับ');
       }

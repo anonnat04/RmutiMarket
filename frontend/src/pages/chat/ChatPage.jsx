@@ -93,6 +93,8 @@ export function ChatPage() {
       productTitle: product?.title || "สินค้า",
       productPrice: product?.price || 0,
       productImage: coverImage,
+      sellerId: product?.sellerId ?? product?.seller_id,
+      statusId: product?.statusId ?? product?.status_id,
       lastMessage: c.lastMessage?.content || "เริ่มการสนทนา",
       unread: (c.unreadCount || 0) > 0,
       messages: [],
@@ -744,15 +746,34 @@ export function ChatPage() {
                     </div>
                   </div>
 
-                  {active.productId && (
-                    <button
-                      onClick={() => navigate(`/products/${active.productId}/meetup`)}
-                      className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-brand-500 to-orange-500 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:from-brand-600 hover:to-orange-600 transition-all shrink-0"
-                    >
-                      <CalendarClock size={15} />
-                      ตกลงเวลาแล้ว → กดนัดรับสินค้า
-                    </button>
-                  )}
+                  {(() => {
+                    if (!active.productId) return null;
+                    const isMyProduct = String(active.sellerId) === String(user?.id);
+                    const isSold = active.statusId === 3 || active.statusId === 4 || active.status === 'sold';
+
+                    if (isSold) {
+                      return (
+                        <span className="flex items-center gap-1 rounded-xl bg-gray-100 border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-500 shrink-0 select-none">
+                          ✓ ขายแล้ว
+                        </span>
+                      );
+                    }
+
+                    // แสดงเฉพาะผู้ซื้อเท่านั้น (ถ้าเป็นสินค้าของตัวเองที่เป็นคนขาย จะไม่มีปุ่มนัดรับ)
+                    if (isMyProduct) {
+                      return null;
+                    }
+
+                    return (
+                      <button
+                        onClick={() => navigate(`/products/${active.productId}/meetup`)}
+                        className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-brand-500 to-orange-500 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:from-brand-600 hover:to-orange-600 transition-all shrink-0"
+                      >
+                        <CalendarClock size={15} />
+                        ตกลงเวลาแล้ว → กดนัดรับสินค้า
+                      </button>
+                    );
+                  })()}
                 </div>
               )}
             </div>

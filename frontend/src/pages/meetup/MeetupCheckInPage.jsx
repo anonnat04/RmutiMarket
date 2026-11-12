@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, MapPin, CalendarClock, Navigation,
@@ -156,10 +156,10 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
   const sellerLabel = isMeBuyer ? `ผู้ขาย: ${otherName}` : `คุณ (ผู้ขาย: ${myName})`;
 
   // ฟังก์ชันสร้าง Custom HTML Marker สำหรับ Leaflet
-  const createMarkerIcon = (L, color, labelText) => {
+  const createMarkerIcon = (L, color, labelText, yOffset = -100) => {
     return L.divIcon({
       html: `
-        <div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%, -100%);pointer-events:auto">
+        <div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%, ${yOffset}%);pointer-events:auto">
           <div style="background:${color};color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:12px;box-shadow:0 2px 6px rgba(0,0,0,0.25);white-space:nowrap;margin-bottom:2px;border:1px solid #ffffffa0">
             ${labelText}
           </div>
@@ -205,6 +205,8 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
 
       miniMarkersRef.current = { target: targetMarker };
       mapInstanceRef.current = map;
+      setTimeout(() => map?.invalidateSize(), 200);
+      setTimeout(() => map?.invalidateSize(), 600);
     });
 
     return () => {
@@ -227,7 +229,7 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
       // ผู้ซื้อ (สีน้ำเงิน)
       if (buyerCoords?.lat && buyerCoords?.lng) {
         if (!miniMarkersRef.current.buyer) {
-          const icon = createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`);
+          const icon = createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`, -135);
           miniMarkersRef.current.buyer = L.marker([buyerCoords.lat, buyerCoords.lng], { icon }).addTo(map);
         } else {
           miniMarkersRef.current.buyer.setLatLng([buyerCoords.lat, buyerCoords.lng]);
@@ -279,7 +281,7 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
 
       // Marker ผู้ซื้อ
       if (buyerCoords?.lat && buyerCoords?.lng) {
-        const bIcon = createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`);
+        const bIcon = createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`, -135);
         fullMarkersRef.current.buyer = L.marker([buyerCoords.lat, buyerCoords.lng], { icon: bIcon }).addTo(map);
       }
 
@@ -583,7 +585,7 @@ export function MeetupCheckInPage() {
         });
       },
       (err) => { console.warn('GPS error:', err.message); },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 2000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   }, [id, myId, user, meetup, gpsActive]);
 
@@ -637,7 +639,7 @@ export function MeetupCheckInPage() {
   // ── Loading / Not found ──
   if (loading) {
     return (
-      <div className="mx-auto max-w-2xl">
+      <div className="mx-auto max-w-2xl pt-2 sm:pt-4">
         <div className="cm-card h-72 animate-pulse bg-surface-muted" />
       </div>
     );
@@ -676,7 +678,7 @@ export function MeetupCheckInPage() {
   const bothCheckedIn = !!meetup.buyerCheckedIn && !!meetup.sellerCheckedIn;
 
   // ── เช็คอิน ──
-  const handleCheckIn = () => {
+  const handleCheckIn = async () => {
     if (checkingIn) return;
     setCheckingIn(true);
 
@@ -691,11 +693,20 @@ export function MeetupCheckInPage() {
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => finalize(checkIn(meetup.id, role, { lat: pos.coords.latitude, lng: pos.coords.longitude })),
-      () => finalize(checkIn(meetup.id, role)),
-      { timeout: 8000 }
-    );
+    // ขอ GPS location — maximumAge: 0 บังคับ permission dialog บนมือถือ
+    try {
+      const pos = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 0,
+        });
+      });
+      finalize(checkIn(meetup.id, role, { lat: pos.coords.latitude, lng: pos.coords.longitude }));
+    } catch (geoErr) {
+      // PERMISSION_DENIED / TIMEOUT / UNAVAILABLE — ยังให้เช็คอินได้โดยไม่ใช้ GPS
+      finalize(checkIn(meetup.id, role));
+    }
   };
 
   // ── ยืนยันส่งมอบ (ผ่าน ConfirmDialog) ──
@@ -798,6 +809,40 @@ export function MeetupCheckInPage() {
           <p className="text-xs text-ink-500">{meetup.productTitle} · {role === 'buyer' ? 'ผู้ขาย' : 'ผู้ซื้อ'}: {otherName}</p>
         </div>
       </div>
+
+      {/* ── ขั้นตอนการนัดรับสินค้า ─────────────────────── */}
+      <div style={{ background: '#fff', borderRadius: 16, padding: '12px 16px', marginBottom: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
+        <p style={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', marginBottom: 10, letterSpacing: 1 }}>ขั้นตอนการนัดรับสินค้า</p>
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          {[
+            { label: 'รอดำเนินการ', done: true },
+            { label: 'นัดหมายแล้ว', done: ['confirmed','completed'].includes(meetup.status), active: meetup.status === 'confirmed' && !bothCheckedIn },
+            { label: 'เช็คอิน', done: bothCheckedIn || meetup.status === 'completed', active: meetup.status === 'confirmed' && !bothCheckedIn },
+            { label: 'เสร็จสิ้น', done: meetup.status === 'completed', active: meetup.status === 'completed' },
+          ].map((step, idx, arr) => (
+            <React.Fragment key={step.label}>
+              <div style={{ flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, minWidth: 56 }}>
+                <div style={{
+                  width: 28, height: 28, borderRadius: '50%',
+                  background: step.done ? '#16a34a' : step.active ? '#f97316' : '#e5e7eb',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 13, fontWeight: 700, color: (step.done || step.active) ? '#fff' : '#9ca3af',
+                  boxShadow: step.active ? '0 0 0 3px #fed7aa' : 'none',
+                }}>
+                  {step.done ? '✓' : idx + 1}
+                </div>
+                <span style={{ fontSize: 10, fontWeight: step.active || step.done ? 700 : 400, color: step.done ? '#16a34a' : step.active ? '#f97316' : '#9ca3af', textAlign: 'center', lineHeight: 1.2 }}>
+                  {step.label}
+                </span>
+              </div>
+              {idx < arr.length - 1 && (
+                <div style={{ flex: 1, height: 2, background: step.done ? '#16a34a' : '#e5e7eb', marginBottom: 18 }} />
+              )}
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+
 
       {/* แผนที่ + เวลา */}
       <div className="cm-card p-4 mb-4">

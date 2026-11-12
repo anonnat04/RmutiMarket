@@ -547,7 +547,72 @@ async function rejectVerification(req, res) {
   res.json({ message: "ปฏิเสธเรียบร้อยแล้ว" });
 }
 
+
+// POST /api/admin/users/:userId/score — ปรับ/ตัดคะแนนความน่าเชื่อถือของผู้ใช้
+async function adjustUserScore(req, res, next) {
+  try {
+    const { userId } = req.params;
+    const { changeAmount, reason = "ปรับคะแนนโดยผู้ดูแลระบบ" } = req.body;
+    const targetUid = parseInt(userId);
+    const delta = parseInt(changeAmount);
+
+    if (isNaN(targetUid) || isNaN(delta)) {
+      return res.status(400).json({ error: "ระบุ userId และ changeAmount (ตัวเลขคะแนนที่ต้องการเพิ่มหรือตัด) ให้ถูกต้อง" });
+    }
+
+    const { data: user } = await supabase
+      .from("users")
+      .select("id, username, full_name, trust_score")
+      .eq("id", targetUid)
+      .maybeSingle();
+
+    if (!user) return res.status(404).json({ error: "ไม่พบข้อมูลผู้ใช้นี้" });
+
+    const currentScore = user.trust_score ?? 100;
+    const newScore = Math.max(0, Math.min(100, currentScore + delta));
+
+    await supabase.from("users").update({ trust_score: newScore }).eq("id", targetUid);
+
+    // บันทึกประวัติคะแนน
+    await supabase.from("user_score_history").insert({
+      user_id: targetUid,
+      change_amount: delta,
+      score_after: newScore,
+      source_type: delta < 0 ? "PENALTY" : "ADMIN_ADJUSTMENT",
+      reason: reason,
+    });
+
+    if (delta < 0) {
+      await supabase.from("user_penalties").insert({
+        user_id: targetUid,
+        reason: reason,
+      });
+    }
+
+    // แจ้งเตือนผู้ใช้
+    const notifTitle = delta < 0 ? `⚠️ คุณถูกตัดคะแนนความน่าเชื่อถือ ${delta} คะแนน` : `🎉 คะแนนความน่าเชื่อถือของคุณเพิ่มขึ้น +${delta} คะแนน`;
+    const notifMsg = `เหตุผล: ${reason} (คะแนนปัจจุบัน: ${newScore}/100)`;
+    await supabase.from("notifications").insert({
+      user_id: targetUid,
+      type: "system",
+      title: notifTitle,
+      message: notifMsg,
+      link: "/profile",
+    });
+
+    await logAdminAction(req.admin?.id, "user.adjust_score", "user", targetUid, { delta, newScore, reason }, req.ip);
+
+    res.json({
+      message: `ปรับคะแนนเรียบร้อยแล้ว (${delta > 0 ? "+" : ""}${delta} คะแนน -> คงเหลือ ${newScore}/100)`,
+      trustScore: newScore,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
+  adjustUserScore,
   getStats,
   getSellerLeaderboard,
   getUsers,
