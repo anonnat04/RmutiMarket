@@ -120,6 +120,36 @@ export function EditProductPage() {
     const condId = isNew ? 1 : 2;
     const condName = isNew ? 'มือหนึ่ง' : 'มือสอง';
 
+    // อัปโหลดรูปภาพใหม่ที่เลือกจากเครื่องขึ้น Supabase Storage ก่อนบันทึก
+    let uploadedUrls = [];
+    const filesToUpload = images.filter((img) => img.file).map((img) => img.file);
+    if (filesToUpload.length > 0) {
+      try {
+        uploadedUrls = await api.uploadImages(filesToUpload);
+      } catch (uploadErr) {
+        console.error("Upload images error:", uploadErr);
+        setErrors((prev) => ({ ...prev, images: "อัปโหลดรูปภาพใหม่ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง" }));
+        setSubmitting(false);
+        return;
+      }
+    }
+
+    let uploadIndex = 0;
+    const finalImages = images.map((img, index) => {
+      let url = img.imageUrl || img.previewUrl;
+      if (img.file && uploadedUrls[uploadIndex]) {
+        url = uploadedUrls[uploadIndex];
+        uploadIndex++;
+      }
+      return {
+        id: img.id || `img-${index}`,
+        url,
+        imageUrl: url,
+        isCover: coverId ? img.id === coverId : index === 0,
+        sortOrder: index,
+      };
+    });
+
     const updatedData = {
       title: cleanTitle,
       description: cleanDesc,
@@ -131,12 +161,7 @@ export function EditProductPage() {
       product_conditions: { id: condId, name: condName },
       productType: isNew ? 'new' : 'used',
       categoryId,
-      images: images.map((img, index) => ({
-        id: img.id,
-        imageUrl: img.previewUrl || img.imageUrl,
-        isCover: coverId ? img.id === coverId : index === 0,
-        sortOrder: index,
-      })),
+      images: finalImages,
       updatedAt: new Date().toISOString(),
     };
 
@@ -149,8 +174,8 @@ export function EditProductPage() {
         categoryId: String(categoryId).replace(/^cat-/, ''),
         condition: isNew ? 'new' : 'used_good',
         condition_id: condId,
-        images: images.map((img) => ({
-          url: img.previewUrl || img.imageUrl,
+        images: finalImages.map((img) => ({
+          url: img.url || img.imageUrl,
           isCover: coverId ? img.id === coverId : false,
         })),
       });

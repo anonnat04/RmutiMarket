@@ -105,8 +105,10 @@ export const api = {
   uploadImages: async (files, token) => {
     const activeToken = token || getActiveToken();
     const formData = new FormData();
-    for (const file of files) {
-      formData.append("images", file);
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const safeName = file.name || `image_${Date.now()}_${i}.jpg`;
+      formData.append("images", file, safeName);
     }
     const res = await fetch(`${API_BASE}/api/upload`, {
       method: "POST",

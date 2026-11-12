@@ -65,11 +65,14 @@ export function CreateProductPage() {
       let uploadedUrls = [];
       if (filesToUpload.length > 0) {
         uploadedUrls = await api.uploadImages(filesToUpload);
+        if (!uploadedUrls || uploadedUrls.length !== filesToUpload.length) {
+          throw new Error("อัปโหลดรูปภาพไม่ครบทุกรูป กรุณาลองใหม่อีกครั้ง");
+        }
       }
 
       let uploadIndex = 0;
       const finalImages = images.map((img, index) => {
-        let url = img.previewUrl || img.url;
+        let url = img.previewUrl || img.url || img.imageUrl;
         if (img.file && uploadedUrls[uploadIndex]) {
           url = uploadedUrls[uploadIndex];
           uploadIndex++;

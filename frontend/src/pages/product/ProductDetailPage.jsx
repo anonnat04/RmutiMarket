@@ -248,6 +248,12 @@ export function ProductDetailPage() {
   const images = product.images && product.images.length > 0 ? product.images : [];
   const currentImage = images[selectedImageIndex] || images[0];
 
+  const getImgUrl = (img) => {
+    if (!img) return '';
+    return img.imageUrl || img.image_url || img.url || (typeof img === 'string' ? img : '');
+  };
+  const currentImageUrl = getImgUrl(currentImage);
+
   const rawSellerUsername = product.seller?.username || product.users?.username || '';
   const sellerUsername = rawSellerUsername ? rawSellerUsername.replace(/^@+/, '').trim() : '';
   const sellerFullName = product.seller?.fullName || product.seller?.full_name || product.users?.full_name || '';
@@ -283,11 +289,15 @@ export function ProductDetailPage() {
         {/* ── Image column ── */}
         <div className="flex flex-col gap-3">
           <div className="relative overflow-hidden rounded-2xl bg-surface-muted shadow-sm aspect-square">
-            {currentImage?.imageUrl ? (
+            {currentImageUrl ? (
               <img
-                src={currentImage.imageUrl}
+                src={currentImageUrl}
                 alt={product.title}
                 className="h-full w-full object-cover"
+                onError={(e) => {
+                  e.target.onerror = null;
+                  e.target.src = "https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=600&auto=format&fit=crop&q=80";
+                }}
               />
             ) : (
               <div className="flex h-full w-full items-center justify-center text-ink-300">
@@ -306,17 +316,28 @@ export function ProductDetailPage() {
           {/* Thumbnails */}
           {images.length > 1 && (
             <div className="flex gap-2 overflow-x-auto pb-1">
-              {images.map((img, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setSelectedImageIndex(idx)}
-                  className={`relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border-2 transition-all ${
-                    idx === selectedImageIndex ? 'border-brand-500 scale-105 shadow-sm' : 'border-gray-200 opacity-70 hover:opacity-100'
-                  }`}
-                >
-                  <img src={img.imageUrl} alt="" className="h-full w-full object-cover" />
-                </button>
-              ))}
+              {images.map((img, idx) => {
+                const thumbUrl = getImgUrl(img);
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => setSelectedImageIndex(idx)}
+                    className={`relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border-2 transition-all ${
+                      idx === selectedImageIndex ? 'border-brand-500 scale-105 shadow-sm' : 'border-gray-200 opacity-70 hover:opacity-100'
+                    }`}
+                  >
+                    <img
+                      src={thumbUrl}
+                      alt=""
+                      className="h-full w-full object-cover"
+                      onError={(e) => {
+                        e.target.onerror = null;
+                        e.target.src = "https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=600&auto=format&fit=crop&q=80";
+                      }}
+                    />
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

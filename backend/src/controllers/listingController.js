@@ -248,10 +248,13 @@ async function createListing(req, res, next) {
     if (images && images.length) {
       const imgRows = images.slice(0, 5).map((img, i) => ({
         product_id: prod.id,
-        image_url: typeof img === "string" ? img : (img.url || img.imageUrl),
+        image_url: typeof img === "string" ? img : (img.url || img.imageUrl || img.image_url),
         is_primary: i === 0,
-      }));
-      await supabase.from("product_images").insert(imgRows);
+      })).filter((r) => r.image_url && !r.image_url.startsWith("blob:"));
+
+      if (imgRows.length > 0) {
+        await supabase.from("product_images").insert(imgRows);
+      }
     }
 
     res.status(201).json({ message: "ลงสินค้าสำเร็จ", listingId: prod.id, id: prod.id });
@@ -326,15 +329,29 @@ async function updateListing(req, res, next) {
     if (images && Array.isArray(images) && images.length > 0) {
       await supabase.from("product_images").delete().eq("product_id", prodId);
       const imgRows = images.slice(0, 5).map((img, i) => {
-        const url = typeof img === "string" ? img : (img.imageUrl || img.url || img.previewUrl);
+        const url = typeof img === "string" ? img : (img.imageUrl || img.url || img.image_url || img.previewUrl);
         const isPrimary = typeof img === "object" && img.isCover !== undefined ? Boolean(img.isCover) : (i === 0);
         return {
           product_id: prodId,
           image_url: url,
           is_primary: isPrimary,
         };
-      });
-      await supabase.from("product_images").insert(imgRows);
+      }).filter((r) => r.image_url && !r.image_url.startsWith("blob:"));
+
+      if (imgRows.length > 0) {
+        await supabase.from("product_images").insert(imgRows);
+      }
+    }
+
+    // ดึง product_images ที่บันทึกล่าสุด
+    const { data: latestImages } = await supabase
+      .from("product_images")
+      .select("id, image_url, is_primary")
+      .eq("product_id", prodId)
+      .order("id", { ascending: true });
+
+    if (updatedProd) {
+      updatedProd.product_images = latestImages || [];
     }
 
     const mapped = mapProductToListing(updatedProd);

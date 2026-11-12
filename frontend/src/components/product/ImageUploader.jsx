@@ -111,6 +111,7 @@ export function ImageUploader({
         accept="image/*"
         multiple
         hidden
+        onClick={(e) => { e.target.value = ''; }}
         onChange={(e) => handleFiles(e.target.files)}
       />
       <p className="text-xs text-ink-500">

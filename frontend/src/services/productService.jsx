@@ -30,23 +30,37 @@ function isMockId(id) {
 export function formatListing(item) {
   if (!item) return null;
 
-  // If already full UI model and contains username or displayName
-  if (item.images && item.seller && typeof item.seller === "object" && item.seller.displayName && item.seller.username) {
+  // If already full UI model
+  if (item.images && item.images.length > 0 && item.seller && typeof item.seller === "object" && (item.seller.displayName || item.seller.username)) {
+    const normalizedImages = item.images.map((img, i) => {
+      const u = img.imageUrl || img.image_url || img.url || (typeof img === 'string' ? img : '');
+      return {
+        ...img,
+        url: u,
+        imageUrl: u,
+      };
+    });
     const condName = item.product_conditions?.name || item.condition_name || item.conditionName || (item.condition === 'new' ? 'มือหนึ่ง' : 'มือสอง');
     return {
       ...item,
+      images: normalizedImages,
       conditionName: condName,
       condition_name: condName,
       product_conditions: item.product_conditions || { id: item.condition_id, name: condName },
     };
   }
 
-  const images = (item.listing_images || []).map((img, i) => ({
-    id: img.id || `img-${i}`,
-    imageUrl: img.url,
-    isCover: img.is_cover ?? (i === 0),
-    sortOrder: img.sort_order ?? i,
-  }));
+  const rawImages = item.listing_images || item.images || item.product_images || [];
+  const images = rawImages.map((img, i) => {
+    const u = img.imageUrl || img.image_url || img.url || (typeof img === 'string' ? img : '');
+    return {
+      id: img.id || `img-${i}`,
+      url: u,
+      imageUrl: u,
+      isCover: img.is_cover ?? img.isCover ?? (i === 0),
+      sortOrder: img.sort_order ?? img.sortOrder ?? i,
+    };
+  });
 
   if (images.length === 0) {
     images.push({
