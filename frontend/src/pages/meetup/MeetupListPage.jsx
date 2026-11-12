@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+﻿import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { CalendarClock, MapPin, ChevronDown, ChevronUp, Bell, ArrowLeft, ChevronRight, CheckCircle2, XCircle, RefreshCw, Star } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
@@ -93,9 +93,9 @@ function mapAppointmentFromApi(m) {
     time,
     startTime: time,
     locationId: m.locationId ?? m.location_id ?? location.id,
-    locationName: (m.location_detail ? m.location_detail.replace(/^จุดนัด:\s*/, '').trim() : null) || (m.locationDetail ? m.locationDetail.replace(/^จุดนัด:\s*/, '').trim() : null) || m.locationName || location.name || 'จุดนัดรับ มทร.อีสาน',
-    locationLat: m.locationLat != null ? parseFloat(m.locationLat) : (meetupPoints.find((p) => p.name === ((m.location_detail ? m.location_detail.replace(/^จุดนัด:\s*/, '').trim() : null) || m.locationName || location.name))?.lat ?? (location.latitude != null ? parseFloat(location.latitude) : null)),
-    locationLng: m.locationLng != null ? parseFloat(m.locationLng) : (meetupPoints.find((p) => p.name === ((m.location_detail ? m.location_detail.replace(/^จุดนัด:\s*/, '').trim() : null) || m.locationName || location.name))?.lng ?? (location.longitude != null ? parseFloat(location.longitude) : null)),
+    locationName: location.name || m.locationName || 'จุดนัดรับ มทร.อีสาน',
+    locationLat: m.locationLat != null ? parseFloat(m.locationLat) : (meetupPoints.find((p) => p.name === (location.name || m.locationName))?.lat ?? (location.latitude != null ? parseFloat(location.latitude) : null)),
+    locationLng: m.locationLng != null ? parseFloat(m.locationLng) : (meetupPoints.find((p) => p.name === (location.name || m.locationName))?.lng ?? (location.longitude != null ? parseFloat(location.longitude) : null)),
     buyerCheckedIn: Boolean(m.buyerCheckedIn || m.buyer_checked_in),
     sellerCheckedIn: Boolean(m.sellerCheckedIn || m.seller_checked_in),
     buyerCheckedInAt: m.buyerCheckedInAt || m.buyer_checked_in_at || null,
@@ -272,11 +272,25 @@ export function MeetupListPage() {
   }, [user]);
 
   const allMeetups = useMemo(() => {
-    const combined = [...dbMeetups];
+    // DB เป็น source of truth — ใช้เป็น base แล้ว dedup ด้วย transactionId + productId-buyerId-sellerId
+    const seenIds = new Set();
+    const seenTxnIds = new Set();
+    const seenCombo = new Set();
+    const combined = [];
+    for (const m of dbMeetups) {
+      seenIds.add(String(m.id));
+      if (m.transactionId) seenTxnIds.add(String(m.transactionId));
+      const combo = `${m.productId}-${m.buyerId}-${m.sellerId}-${m.status}`;
+      seenCombo.add(combo);
+      combined.push(m);
+    }
+    // เพิ่มรายการจาก localStorage เฉพาะที่ไม่ซ้ำกับ DB
     for (const m of meetups) {
-      if (!combined.some((c) => String(c.id) === String(m.id))) {
-        combined.push(m);
-      }
+      if (seenIds.has(String(m.id))) continue;
+      if (m.transactionId && seenTxnIds.has(String(m.transactionId))) continue;
+      const combo = `${m.productId}-${m.buyerId}-${m.sellerId}-${m.status}`;
+      if (seenCombo.has(combo)) continue;
+      combined.push(m);
     }
     return combined;
   }, [dbMeetups, meetups]);
@@ -688,6 +702,7 @@ export function MeetupListPage() {
                 <div style={{ marginTop: 4 }}>
                   <MiniMap meetup={m} />
                   <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>📍 {m.locationName}</p>
+                  {m.note && m.note !== m.locationName && (<p style={{ fontSize: 11, color: '#78716c', marginTop: 2 }}>💬 หมายเหตุ: {m.note}</p>)}
                 </div>
               )}
 

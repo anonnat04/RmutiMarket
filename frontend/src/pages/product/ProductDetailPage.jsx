@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Heart, ImageOff, MessageCircle, ShieldCheck, Star,
@@ -148,39 +148,22 @@ export function ProductDetailPage() {
     const point = meetupPoints.find((p) => p.name === selectedLocation) || meetupPoints[0];
 
     // ตรวจสอบเวลาทับซ้อน (ผู้ซื้อ + ผู้ขาย + สินค้า) ก่อนยิง API สร้างนัด
-    const { success, id: meetupId, reason } = createMeetupRequest({
-      productId: product.id,
-      productTitle: product.title,
-      productImage: product.images?.[0]?.imageUrl || '',
-      seller: { id: product.seller?.id, name: product.seller?.displayName },
-      buyer: { id: user?.id || 'me', name: user?.name || 'ผู้ซื้อ' },
-      allowsReturn: product.allowsReturn !== false,
-      returnPolicyDays: product.allowsReturn !== false ? (product.returnPolicyDays || 3) : 0,
-      date: meetupDate,
-      startTime: meetupTime,
-      locationId: point?.id || 'custom',
-      locationName: selectedLocation,
-      locationLat: point?.lat || 14.9860,
-      locationLng: point?.lng || 102.1195,
-      note: meetupNote,
-    });
-
-    if (!success) {
-      alert(reason || 'ไม่สามารถสร้างนัดได้ กรุณาเลือกช่วงเวลาอื่น');
-      setSubmittingBuy(false);
-      return;
-    }
-
+    // ไม่เรียก createMeetupRequest ใน localStorage เพราะ backend เป็น source of truth
+    // — ตรวจสอบ overlap และสร้างนัดจาก API โดยตรง
     try {
-      await api.createMeetup({
-        meetupId,
+      const res = await api.createMeetup({
         listingId: product.id,
-        agreedPrice: product.price,
-        meetupPointId: point?.id || 'canteen39',
+        meetupPointId: point?.id || null,
+        locationId: point?.id || null,
+        locationName: selectedLocation,
+        locationLat: point?.lat || null,
+        locationLng: point?.lng || null,
         date: meetupDate,
         time: meetupTime,
-        note: meetupNote,
+        note: meetupNote || null,
       });
+
+      const meetupId = res?.meetupId;
 
       // Send notifications
       addNotification({
@@ -193,8 +176,8 @@ export function ProductDetailPage() {
 
       addNotification({
         userId: user?.id || 'me',
-        title: '📤 ส่งคำขอซื้อและนัดรับสำเร็จ',
-        message: `ส่งคำขอนัดรับ "${product.title}" ให้ผู้ขายแล้ว เมื่อผู้ขายตอบรับให้ไปพบกัน ณ จุดปลอดภัย`,
+        title: '📤 ส่งคำขอนัดรับสินค้าแล้ว',
+        message: `ส่งคำขอนัดรับ "${product.title}" ให้ผู้ขายแล้ว กรุณารอการตอบรับ`,
         type: 'meetup',
         link: '/meetups',
       });
@@ -203,12 +186,11 @@ export function ProductDetailPage() {
       setShowBuyModal(false);
       navigate('/meetups', { state: { justCreated: meetupId } });
     } catch (err) {
-      console.error("Failed to submit meetup:", err);
-      // ยกเลิกนัดที่สร้างไว้ในเครื่อง เนื่องจากฝั่ง API สร้างไม่สำเร็จ
-      useMeetupStore.getState().cancelRequest(meetupId);
-      alert(err.message || "เกิดข้อผิดพลาดในการส่งคำขอนัดรับ");
+      console.error('Failed to submit meetup:', err);
+      alert(err.message || 'เกิดข้อผิดพลาดในการส่งคำขอนัดรับ');
       setSubmittingBuy(false);
     }
+
   };
 
   if (loading) {

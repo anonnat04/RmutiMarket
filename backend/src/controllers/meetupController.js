@@ -1,4 +1,4 @@
-const { supabase } = require("../config/db");
+﻿const { supabase } = require("../config/db");
 const { sendNotificationToUser } = require("../services/chatSocket");
 const { formatUser, formatStatus, getStatusId } = require("../utils/statusHelper");
 
@@ -128,16 +128,16 @@ function mapAppointment(a) {
   const scheduledAt = `${a.appointment_date}T${a.appointment_time}`;
   const price = parseFloat(prod.price || 0);
 
-  const cleanLocDetail = a.location_detail ? a.location_detail.replace(/^จุดนัด:\s*/, '').trim() : null;
-  const finalLocName = cleanLocDetail || a.locations?.name || "จุดนัดรับ มทร.อีสาน";
+  // locationName ��ͧ�Ҩҡ locations.name ��ҹ�� � location_detail ��������˵آͧ����� ������᷹���ͨش
+  const realLocName = a.locations?.name || "�ش�Ѵ�Ѻ ���.���ҹ";
+  const cleanNote = a.location_detail ? a.location_detail.replace(/^�ش�Ѵ:\s*/, '').trim() : null;
 
   const locObj = a.locations ? {
     ...a.locations,
-    name: finalLocName,
+    name: realLocName,
     latitude: parseFloat(a.locations.latitude),
     longitude: parseFloat(a.locations.longitude),
-  } : (cleanLocDetail ? { name: finalLocName } : null);
-
+  } : null;
   return {
     id: a.id,
     transaction_id: a.transaction_id,
@@ -150,7 +150,7 @@ function mapAppointment(a) {
     locationId: a.location_id,
     location_detail: a.location_detail,
     locationDetail: a.location_detail,
-    note: a.location_detail,
+    note: cleanNote || '',
     status_id: a.status_id,
     status: apptStatus.ui,
     statusCode: apptStatus.code,
@@ -178,7 +178,7 @@ function mapAppointment(a) {
     location: locObj,
     meetupPoint: locObj,
     meetup_points: locObj,
-    locationName: finalLocName,
+    locationName: realLocName,
 
     transaction: {
       id: txn.id,
@@ -284,11 +284,11 @@ async function createMeetup(req, res, next) {
     const finalLocationRaw = locationId || meetupPointId;
     const finalDate = appointmentDate || date || (scheduledAt ? scheduledAt.split("T")[0] : new Date().toISOString().split("T")[0]);
     const finalTime = appointmentTime || time || (scheduledAt ? scheduledAt.split("T")[1]?.slice(0, 5) : "12:00");
-    const finalDetail = locationDetail || locationName || note || null;
+    const finalDetail = note || locationDetail || null;  // หมายเหตุ/note เท่านั้น ไม่เอา locationName
 
     // ── ค้นหา location id: ลอง parseInt ก่อน ถ้าไม่ใช่ตัวเลขให้ค้นจากชื่อใน DB ──
     let resolvedLocationId = parseInt(finalLocationRaw);
-    if (isNaN(resolvedLocationId) && (finalLocationRaw || finalDetail)) {
+    if (isNaN(resolvedLocationId) && (finalLocationRaw || locationName)) {
       // อาจเป็น string key เช่น 'canteen39', 'library-cl' หรือชื่อจุดนัดรับ — ค้นหาจากชื่อที่คล้ายกัน
       const locationKeyMap = {
         'canteen39': 'โรงอาหาร 39',
@@ -309,7 +309,7 @@ async function createMeetup(req, res, next) {
         'eng-tech': 'วิศวกรรมศาสตร์',
         'boxing-gym': 'สนามมวย',
       };
-      const searchName = locationKeyMap[finalLocationRaw] || finalDetail || finalLocationRaw;
+      const searchName = locationKeyMap[finalLocationRaw] || locationName || finalLocationRaw;
       const { data: foundLoc } = await supabase
         .from("locations")
         .select("id, name")
@@ -379,6 +379,19 @@ async function createMeetup(req, res, next) {
 
     if (!txn) {
       return res.status(400).json({ error: "ไม่พบข้อมูลรายการซื้อขาย" });
+    }
+
+
+    // ── ตรวจสอบว่ามีนัดหมาย pending อยู่แล้วสำหรับ transaction นี้ — ถ้ามีให้ยกเลิกอันเก่าก่อน ──
+    const { data: existingPending } = await supabase
+      .from('appointments')
+      .select('id')
+      .eq('transaction_id', txn.id)
+      .in('status_id', [1]) // 1 = pending
+      .limit(5);
+    if (existingPending?.length) {
+      const oldIds = existingPending.map((a) => a.id);
+      await supabase.from('appointments').update({ status_id: 5, cancellation_reason: 'replaced_by_new_request' }).in('id', oldIds);
     }
 
     // ── ตรวจสอบเวลานัดหมายซ้ำ/ทับซ้อน (Overlap Check) ──

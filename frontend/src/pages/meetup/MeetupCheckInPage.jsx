@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, MapPin, CalendarClock, Navigation,
@@ -92,9 +92,9 @@ function mapAppointment(m) {
     time,
     startTime: time,
     locationId: m.locationId ?? m.location_id ?? location.id,
-    locationName: (m.location_detail ? m.location_detail.replace(/^จุดนัด:\s*/, '').trim() : null) || (m.locationDetail ? m.locationDetail.replace(/^จุดนัด:\s*/, '').trim() : null) || m.locationName || location.name || 'จุดนัดรับ มทร.อีสาน',
-    locationLat: m.locationLat != null ? parseFloat(m.locationLat) : (meetupPoints.find((p) => p.name === ((m.location_detail ? m.location_detail.replace(/^จุดนัด:\s*/, '').trim() : null) || m.locationName || location.name))?.lat ?? (location.latitude != null ? parseFloat(location.latitude) : null)),
-    locationLng: m.locationLng != null ? parseFloat(m.locationLng) : (meetupPoints.find((p) => p.name === ((m.location_detail ? m.location_detail.replace(/^จุดนัด:\s*/, '').trim() : null) || m.locationName || location.name))?.lng ?? (location.longitude != null ? parseFloat(location.longitude) : null)),
+    locationName: location.name || m.locationName || 'จุดนัดรับ มทร.อีสาน',
+    locationLat: m.locationLat != null ? parseFloat(m.locationLat) : (meetupPoints.find((p) => p.name === (location.name || m.locationName))?.lat ?? (location.latitude != null ? parseFloat(location.latitude) : null)),
+    locationLng: m.locationLng != null ? parseFloat(m.locationLng) : (meetupPoints.find((p) => p.name === (location.name || m.locationName))?.lng ?? (location.longitude != null ? parseFloat(location.longitude) : null)),
     buyerCheckedIn: Boolean(m.buyerCheckedIn || m.buyer_checked_in),
     sellerCheckedIn: Boolean(m.sellerCheckedIn || m.seller_checked_in),
     buyerCheckedInAt: m.buyerCheckedInAt || m.buyer_checked_in_at || null,
