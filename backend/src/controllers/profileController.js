@@ -111,13 +111,15 @@ async function getPublicProfile(req, res, next) {
     const targetUid = parseInt(userId);
     if (isNaN(targetUid)) return res.status(404).json({ error: "ไม่พบผู้ใช้" });
 
+    // เลือกเฉพาะ field ที่โปรไฟล์สาธารณะต้องใช้
+    // (ไม่ดึง phone, university_email, student_id, ban_reason, email_verified_at, updated_at)
     const { data: rawUser, error } = await supabase
       .from("users")
       .select(`
-        id, username, full_name, university_email, student_id, faculty_id, major_id,
-        phone, role, trust_score, status, ban_reason, successful_deal_count,
+        id, username, full_name, faculty_id, major_id,
+        role, trust_score, status, successful_deal_count,
         average_rating, review_count, avatar_url, profile_image_url,
-        last_seen_at, email_verified_at, created_at, updated_at,
+        last_seen_at, created_at,
         faculties(id, name, code), majors(id, name, code)
       `)
       .eq("id", targetUid)
@@ -222,9 +224,14 @@ async function getPublicProfile(req, res, next) {
       ? user.successful_deal_count
       : txns.filter((t) => t.status_id === 3).length;
 
+    // ใช้ค่าจาก rawUser ตรง ๆ ไม่ต้องพึ่งว่า formatUser จะเก็บ trust_score ไว้หรือไม่
+    const trustScore = rawUser.trust_score ?? 100;
+
     res.json({
       user: {
         ...user,
+        trust_score: trustScore,
+        trustScore: trustScore,
         average_rating: averageRating || user.average_rating || 0,
         review_count: reviewCount || user.review_count || 0,
         successful_deal_count: successfulDeals,

@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, MapPin, CalendarClock, Navigation,
   PackageCheck, ShieldCheck, Radio, XCircle, Clock,
-  Maximize2, Minimize2, ZoomIn, ZoomOut, X, CheckCircle2, Star
+  Maximize2, Minimize2, ZoomIn, ZoomOut, X, CheckCircle2, Star, AlertTriangle
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useMeetupStore, getCheckInWindow, haversineDistanceMeters } from '@/store/meetupStore';
@@ -41,8 +41,21 @@ function mapStatusCode(code) {
     case 'CONFIRMED': return 'confirmed';
     case 'COMPLETED': return 'completed';
     case 'CANCELLED': return 'cancelled';
-    case 'NO_SHOW': return 'rejected';
+    case 'NO_SHOW': return 'no_show';
     default: return 'pending';
+  }
+}
+
+function isMeetupOverdue(date, time, buyerCheckedIn, sellerCheckedIn) {
+  if (!date || !time) return false;
+  try {
+    const timeClean = String(time).slice(0, 5);
+    const apptDate = new Date(`${date}T${timeClean}:00`);
+    if (isNaN(apptDate.getTime())) return false;
+    const deadline = new Date(apptDate.getTime() + 45 * 60 * 1000);
+    return new Date() > deadline && (!buyerCheckedIn || !sellerCheckedIn);
+  } catch {
+    return false;
   }
 }
 
@@ -66,7 +79,7 @@ function mapAppointment(m) {
   const productId = m.productId || m.product_id || txn.product_id || product.id;
 
   const rawStatusCode = m.statusCode || m.appointment_status?.code || (m.status ? String(m.status).toUpperCase() : 'PENDING');
-  const mappedStatus = m.status ? mapStatusCode(String(m.status).toUpperCase()) : mapStatusCode(rawStatusCode);
+  let mappedStatus = m.status === 'no_show' ? 'no_show' : (m.status ? mapStatusCode(String(m.status).toUpperCase()) : mapStatusCode(rawStatusCode));
 
   const images = product.images || product.product_images || [];
   const coverImage = product.imageUrl || product.image_url || images.find((i) => i.is_cover || i.is_primary)?.url || images.find((i) => i.is_cover || i.is_primary)?.image_url || images[0]?.url || images[0]?.image_url || '';
@@ -74,6 +87,14 @@ function mapAppointment(m) {
   const date = m.appointment_date || m.date || (m.scheduledAt ? m.scheduledAt.split('T')[0] : '');
   const rawTime = m.appointment_time || m.time || m.startTime || (m.scheduledAt ? m.scheduledAt.split('T')[1]?.slice(0, 5) : '12:00');
   const time = rawTime ? String(rawTime).slice(0, 5) : '12:00';
+
+  const buyerCheckedIn = Boolean(m.buyerCheckedIn || m.buyer_checked_in);
+  const sellerCheckedIn = Boolean(m.sellerCheckedIn || m.seller_checked_in);
+
+  // ตรวจจับ Overdue 45 นาที หากเลยเวลาแล้วไม่เช็คอิน ให้แสดงเป็น no_show ทันที
+  if ((rawStatusCode === 'CONFIRMED' || mappedStatus === 'confirmed') && isMeetupOverdue(date, time, buyerCheckedIn, sellerCheckedIn)) {
+    mappedStatus = 'no_show';
+  }
 
   return {
     id: m.id,
@@ -87,7 +108,7 @@ function mapAppointment(m) {
     sellerId,
     sellerName: resolveUserName(seller) || m.sellerName || 'ผู้ขาย',
     status: mappedStatus,
-    statusCode: rawStatusCode,
+    statusCode: mappedStatus === 'no_show' ? 'NO_SHOW' : rawStatusCode,
     date,
     time,
     startTime: time,
@@ -95,8 +116,8 @@ function mapAppointment(m) {
     locationName: location.name || m.locationName || 'จุดนัดรับ มทร.อีสาน',
     locationLat: m.locationLat != null ? parseFloat(m.locationLat) : (meetupPoints.find((p) => p.name === (location.name || m.locationName))?.lat ?? (location.latitude != null ? parseFloat(location.latitude) : null)),
     locationLng: m.locationLng != null ? parseFloat(m.locationLng) : (meetupPoints.find((p) => p.name === (location.name || m.locationName))?.lng ?? (location.longitude != null ? parseFloat(location.longitude) : null)),
-    buyerCheckedIn: Boolean(m.buyerCheckedIn || m.buyer_checked_in),
-    sellerCheckedIn: Boolean(m.sellerCheckedIn || m.seller_checked_in),
+    buyerCheckedIn,
+    sellerCheckedIn,
     buyerCheckedInAt: m.buyerCheckedInAt || m.buyer_checked_in_at || null,
     sellerCheckedInAt: m.sellerCheckedInAt || m.seller_checked_in_at || null,
     buyerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
@@ -883,7 +904,8 @@ export function MeetupCheckInPage() {
     }
   };
 
-  const canCancel = ['pending', 'confirmed'].includes(meetup.status) && !bothCheckedIn;
+  const isNoShow = meetup.status === 'no_show';
+  const canCancel = ['pending', 'confirmed'].includes(meetup.status) && !bothCheckedIn && !isNoShow;
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -1143,7 +1165,16 @@ export function MeetupCheckInPage() {
         </div>
 
         {/* ปุ่มเช็คอินสำหรับตนเอง */}
-        {myCheckedIn ? (
+        {isNoShow ? (
+          <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 space-y-1">
+            <p className="font-bold flex items-center gap-1.5 text-rose-900">
+              <AlertTriangle size={15} className="text-rose-600 shrink-0" /> นัดหมายนี้ถูกตัดจบเนื่องจากเลยเวลา 45 นาที (ไม่มาตามนัด)
+            </p>
+            <p className="text-[11px] text-rose-700">
+              ระบบได้ทำการตัดจบนัดหมายและบันทึกการตัดคะแนนความน่าเชื่อถือของผู้ที่ไม่มาตามนัดเรียบร้อยแล้ว
+            </p>
+          </div>
+        ) : myCheckedIn ? (
           <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center gap-2">
             <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
             <div className="text-xs text-emerald-800">
@@ -1169,28 +1200,30 @@ export function MeetupCheckInPage() {
           </div>
         )}
 
-        {!bothCheckedIn && (
+        {!bothCheckedIn && !isNoShow && (
           <p className="text-[11px] text-ink-400">
             💡 แนะนำให้ทั้งสองฝ่ายเช็คอินให้เรียบร้อยก่อนทำการตรวจสอบสินค้าและยืนยันรับของ
           </p>
         )}
       </div>
 
-      {/* ─── ยืนยันส่งมอบสินค้า ─── */}
-      <div className="cm-card p-4 space-y-3 mb-4">
-        <p className="text-sm font-bold text-ink-900 flex items-center gap-1.5">
-          <ShieldCheck size={16} className="text-brand-500" /> ยืนยันการส่งมอบสินค้า
-        </p>
-        <p className="text-xs text-ink-500">
-          กดปุ่มนี้เมื่อได้รับ/ส่งมอบสินค้าเรียบร้อยแล้วเท่านั้น — เมื่อกดแล้วจะถือว่าดีลนี้เสร็จสมบูรณ์ทันที ไม่สามารถย้อนกลับได้
-        </p>
-        <Button onClick={() => setShowDeliveryConfirm(true)} disabled={completing}>
-          <span className="flex items-center gap-1.5">
-            <PackageCheck size={16} />
-            {completing ? 'กำลังยืนยัน...' : role === 'buyer' ? 'ยืนยันรับสินค้าแล้ว' : 'ยืนยันส่งมอบสินค้าแล้ว'}
-          </span>
-        </Button>
-      </div>
+      {/* ─── ยืนยันส่งมอบสินค้า (เฉพาะนัดที่ยังไม่ถูกตัดจบ) ─── */}
+      {!isNoShow && (
+        <div className="cm-card p-4 space-y-3 mb-4">
+          <p className="text-sm font-bold text-ink-900 flex items-center gap-1.5">
+            <ShieldCheck size={16} className="text-brand-500" /> ยืนยันการส่งมอบสินค้า
+          </p>
+          <p className="text-xs text-ink-500">
+            กดปุ่มนี้เมื่อได้รับ/ส่งมอบสินค้าเรียบร้อยแล้วเท่านั้น — เมื่อกดแล้วจะถือว่าดีลนี้เสร็จสมบูรณ์ทันที ไม่สามารถย้อนกลับได้
+          </p>
+          <Button onClick={() => setShowDeliveryConfirm(true)} disabled={completing}>
+            <span className="flex items-center gap-1.5">
+              <PackageCheck size={16} />
+              {completing ? 'กำลังยืนยัน...' : role === 'buyer' ? 'ยืนยันรับสินค้าแล้ว' : 'ยืนยันส่งมอบสินค้าแล้ว'}
+            </span>
+          </Button>
+        </div>
+      )}
 
       {/* ─── ปุ่มยกเลิกนัด ─── */}
       {canCancel && (

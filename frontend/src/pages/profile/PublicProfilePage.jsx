@@ -45,6 +45,13 @@ function StarRow({ rating, size = 16 }) {
   );
 }
 
+// สีและป้ายของ Trust Score (เส้น 50 = เกณฑ์ที่ระบบบล็อกการซื้อขาย)
+function getTrustStyle(score) {
+  if (score >= 80) return { text: 'text-emerald-600', label: 'น่าเชื่อถือสูง' };
+  if (score >= 50) return { text: 'text-amber-500', label: 'ปานกลาง' };
+  return { text: 'text-red-500', label: 'ควรระวัง' };
+}
+
 export function PublicProfilePage({ targetId, navigate }) {
   const [activeTab, setActiveTab] = useState('listings');
   const [publicUser, setPublicUser] = useState(null);
@@ -114,6 +121,8 @@ export function PublicProfilePage({ targetId, navigate }) {
 
   const topAverageRating = Number(publicUser?.average_rating ?? 0);
   const topReviewCount = Number(publicUser?.review_count ?? displayReviews.length ?? 0);
+  const trustScore = Number(publicUser?.trust_score ?? publicUser?.trustScore ?? 100);
+  const trustStyle = getTrustStyle(trustScore);
 
   const tabs = [
     { key: 'listings', label: `สินค้าของผู้ขาย (${userListings.length})` },
@@ -236,7 +245,7 @@ export function PublicProfilePage({ targetId, navigate }) {
           </div>
 
           {/* Stats Bar */}
-          <div className="flex gap-6 border-t sm:border-t-0 sm:border-l border-gray-100 pt-3 sm:pt-0 sm:pl-6">
+          <div className="flex gap-5 border-t sm:border-t-0 sm:border-l border-gray-100 pt-3 sm:pt-0 sm:pl-6">
             <div className="text-center">
               <p className="text-[11px] font-semibold text-gray-400">คะแนนรวม</p>
               {topReviewCount > 0 ? (
@@ -256,6 +265,11 @@ export function PublicProfilePage({ targetId, navigate }) {
               <p className="text-[11px] font-semibold text-gray-400">สำเร็จการซื้อขาย</p>
               <p className="text-2xl font-black text-ink-900 mt-0.5">{publicUser.successful_deal_count || 0}</p>
               <p className="text-[10px] text-gray-400">รายการ</p>
+            </div>
+            <div className="text-center">
+              <p className="text-[11px] font-semibold text-gray-400">Trust Score</p>
+              <p className={`text-2xl font-black mt-0.5 ${trustStyle.text}`}>{trustScore}</p>
+              <p className="text-[10px] text-gray-400">{trustStyle.label}</p>
             </div>
           </div>
         </div>
@@ -497,7 +511,7 @@ export function PublicProfilePage({ targetId, navigate }) {
           </div>
           <div className="flex items-center gap-3">
             <Sparkles size={18} className="text-purple-500 shrink-0" />
-            <span>คะแนนความน่าเชื่อถือ {publicUser.trust_score ?? 100} คะแนน</span>
+            <span>คะแนนความน่าเชื่อถือ {trustScore} คะแนน</span>
           </div>
         </div>
       )}

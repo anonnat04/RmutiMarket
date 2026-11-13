@@ -30,7 +30,8 @@ async function getConversations(req, res, next) {
         .select(`
           id, product_id, created_at, updated_at,
           products(id, title, price, seller_id, status_id,
-            product_images(image_url, is_primary)
+            product_images(image_url, is_primary),
+            transactions(id, status_id, completed_at, updated_at)
           )
         `)
         .in("id", convIds)
@@ -99,6 +100,15 @@ async function getConversations(req, res, next) {
             || product?.product_images?.[0]?.image_url
             || null;
 
+          // หา transaction ล่าสุดของสินค้านี้ (เรียงตาม updated_at ล่าสุด)
+          const txList = product?.transactions || [];
+          const latestTx = txList.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0] || null;
+          // status_id: 1=PENDING, 2=CONFIRMED, 3=COMPLETED, 4=CANCELLED, 5=NO_SHOW
+          const txStatus = latestTx?.status_id || null;
+          const txCompletedAt = latestTx?.completed_at || latestTx?.updated_at || null;
+          // ถือว่าปิดการขายแล้วถ้า status 3=COMPLETED, 4=CANCELLED, 5=NO_SHOW
+          const isDealClosed = txStatus === 3 || txStatus === 4 || txStatus === 5;
+
           return {
             id: c.id,
             product_id: c.product_id,
@@ -124,6 +134,10 @@ async function getConversations(req, res, next) {
             unreadCount,
             updatedAt: c.updated_at,
             createdAt: c.created_at,
+            // ข้อมูล transaction สำหรับ frontend ใช้ตัดสินใจแสดง/ซ่อนปุ่มนัดหมาย
+            transactionStatusId: txStatus,
+            isDealClosed,
+            dealClosedAt: isDealClosed ? txCompletedAt : null,
           };
         });
 
@@ -714,6 +728,59 @@ async function deleteConversation(req, res, next) {
   }
 }
 
+// ----------------------------------------------------------------
+// Background Job: ลบแชทที่หมดอายุ (เกิน 7 วันหลังจาก deal ปิด)
+// ระบบนี้จะลบห้องแชทที่:
+//   - สินค้ามี transaction ที่ status = COMPLETED(3) / CANCELLED(4) / NO_SHOW(5)
+//   - และ updated_at ของ transaction นั้นเกิน 7 วันแล้ว
+// ----------------------------------------------------------------
+async function deleteExpiredChats() {
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    // หา transactions ที่ปิดแล้วเกิน 7 วัน
+    const { data: expiredTxs, error: txErr } = await supabase
+      .from("transactions")
+      .select("id, product_id, status_id, updated_at, completed_at")
+      .in("status_id", [3, 4, 5]) // COMPLETED, CANCELLED, NO_SHOW
+      .lt("updated_at", sevenDaysAgo);
+
+    if (txErr) {
+      console.error("[deleteExpiredChats] ดึง transactions หมดอายุล้มเหลว:", txErr);
+      return;
+    }
+
+    if (!expiredTxs || expiredTxs.length === 0) return;
+
+    // หา product_id ที่มี transaction หมดอายุ
+    const expiredProductIds = [...new Set(expiredTxs.map((t) => t.product_id).filter(Boolean))];
+
+    if (expiredProductIds.length === 0) return;
+
+    // หา conversations ที่เกี่ยวกับสินค้าเหล่านั้น
+    const { data: expiredConvs, error: convErr } = await supabase
+      .from("conversations")
+      .select("id")
+      .in("product_id", expiredProductIds);
+
+    if (convErr) {
+      console.error("[deleteExpiredChats] ดึง conversations หมดอายุล้มเหลว:", convErr);
+      return;
+    }
+
+    if (!expiredConvs || expiredConvs.length === 0) return;
+
+    const expiredConvIds = expiredConvs.map((c) => c.id);
+    console.log(`🧹 [Chat Retention] พบห้องแชทหมดอายุ ${expiredConvIds.length} ห้อง → กำลังลบ...`);
+
+    await deleteConversations(expiredConvIds);
+
+    console.log(`✅ [Chat Retention] ลบห้องแชทหมดอายุเรียบร้อย (${expiredConvIds.join(", ")})`);
+  } catch (err) {
+    console.error("[deleteExpiredChats] unexpected error:", err?.message || err);
+  }
+}
+
 module.exports = {
   getConversations,
   getMessages,
@@ -721,4 +788,5 @@ module.exports = {
   sendMessage,
   deleteConversation,
   deleteConversations,
+  deleteExpiredChats,
 };

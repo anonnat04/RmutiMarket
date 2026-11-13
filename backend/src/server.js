@@ -114,6 +114,24 @@ app.get("/api/test-error", () => {
 // ── Realtime Chat Socket.IO ──────────────────────────────────────
 const io = setupChatSocket(server, checkOrigin);
 
+// ── Auto No-Show Background Job (ตรวจจับและตัดจบนัดหมายที่เกิน 45 นาที + ตัดคะแนน) ──
+const { checkAndProcessNoShows } = require("./controllers/meetupController");
+setInterval(() => {
+  checkAndProcessNoShows().catch((e) => console.warn("[Auto-NoShow Background Job]", e.message));
+}, 60 * 1000);
+setTimeout(() => {
+  checkAndProcessNoShows().catch(() => {});
+}, 3000);
+
+// ── Chat Retention Background Job (ลบห้องแชทที่เกิน 7 วันหลังปิดการขาย) ──
+const { deleteExpiredChats } = require("./controllers/chatController");
+setInterval(() => {
+  deleteExpiredChats().catch((e) => console.warn("[Chat Retention Background Job]", e.message));
+}, 60 * 60 * 1000); // ทุก 1 ชั่วโมง
+setTimeout(() => {
+  deleteExpiredChats().catch(() => {});
+}, 10000); // รันครั้งแรก 10 วินาทีหลัง server เปิด
+
 // ── 404 + Error Handler (ดักจับ Error จากทุก Endpoint) ──────────────
 app.use(notFoundHandler);
 app.use(errorHandler);

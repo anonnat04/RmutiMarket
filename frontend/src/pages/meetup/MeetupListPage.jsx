@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { CalendarClock, MapPin, ChevronDown, ChevronUp, Bell, ArrowLeft, ChevronRight, CheckCircle2, XCircle, RefreshCw, Star } from 'lucide-react';
+import { CalendarClock, MapPin, ChevronDown, ChevronUp, Bell, ArrowLeft, ChevronRight, CheckCircle2, XCircle, RefreshCw, Star, AlertTriangle } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useMeetupStore, getCheckInWindow } from '@/store/meetupStore';
 import { useNotificationStore } from '@/store/notificationStore';
@@ -34,15 +34,29 @@ function formatDate(dateStr) {
 }
 
 // ── แปลง appointment_status.code (PENDING/CONFIRMED/COMPLETED/CANCELLED/NO_SHOW) ──
-// ให้เป็น string status ที่ store ใช้อยู่จริง (pending/confirmed/completed/cancelled/rejected)
+// ให้เป็น string status ที่ store ใช้อยู่จริง (pending/confirmed/completed/cancelled/no_show)
 function mapStatusCode(code) {
   switch (code) {
     case 'PENDING': return 'pending';
     case 'CONFIRMED': return 'confirmed';
     case 'COMPLETED': return 'completed';
     case 'CANCELLED': return 'cancelled';
-    case 'NO_SHOW': return 'rejected';
+    case 'NO_SHOW': return 'no_show';
     default: return 'pending';
+  }
+}
+
+// ── ตรวจสอบว่านัดหมายเลยเวลา 45 นาที และมีฝ่ายไม่เช็คอินหรือไม่ (No-show) ──
+function isMeetupOverdue(date, time, buyerCheckedIn, sellerCheckedIn) {
+  if (!date || !time) return false;
+  try {
+    const timeClean = String(time).slice(0, 5);
+    const apptDate = new Date(`${date}T${timeClean}:00`);
+    if (isNaN(apptDate.getTime())) return false;
+    const deadline = new Date(apptDate.getTime() + 45 * 60 * 1000);
+    return new Date() > deadline && (!buyerCheckedIn || !sellerCheckedIn);
+  } catch {
+    return false;
   }
 }
 
@@ -67,7 +81,7 @@ function mapAppointmentFromApi(m) {
   const productId = m.productId || m.product_id || txn.product_id || product.id;
 
   const rawStatusCode = m.statusCode || m.appointment_status?.code || (m.status ? String(m.status).toUpperCase() : 'PENDING');
-  const mappedStatus = m.status ? mapStatusCode(String(m.status).toUpperCase()) : mapStatusCode(rawStatusCode);
+  let mappedStatus = m.status === 'no_show' ? 'no_show' : (m.status ? mapStatusCode(String(m.status).toUpperCase()) : mapStatusCode(rawStatusCode));
 
   const images = product.images || product.product_images || [];
   const coverImage = product.imageUrl || product.image_url || images.find((i) => i.is_cover || i.is_primary)?.url || images.find((i) => i.is_cover || i.is_primary)?.image_url || images[0]?.url || images[0]?.image_url || '';
@@ -75,6 +89,14 @@ function mapAppointmentFromApi(m) {
   const date = m.appointment_date || m.date || (m.scheduledAt ? m.scheduledAt.split('T')[0] : '');
   const rawTime = m.appointment_time || m.time || m.startTime || (m.scheduledAt ? m.scheduledAt.split('T')[1]?.slice(0, 5) : '12:00');
   const time = rawTime ? String(rawTime).slice(0, 5) : '12:00';
+
+  const buyerCheckedIn = Boolean(m.buyerCheckedIn || m.buyer_checked_in);
+  const sellerCheckedIn = Boolean(m.sellerCheckedIn || m.seller_checked_in);
+
+  // ตรวจจับ Overdue 45 นาที หากเลยเวลาแล้วไม่เช็คอิน ให้แสดงเป็น no_show ทันที
+  if ((rawStatusCode === 'CONFIRMED' || mappedStatus === 'confirmed') && isMeetupOverdue(date, time, buyerCheckedIn, sellerCheckedIn)) {
+    mappedStatus = 'no_show';
+  }
 
   return {
     id: m.id,
@@ -88,7 +110,7 @@ function mapAppointmentFromApi(m) {
     sellerId,
     sellerName: resolveUserName(seller) || m.sellerName || 'ผู้ขาย',
     status: mappedStatus,
-    statusCode: rawStatusCode,
+    statusCode: mappedStatus === 'no_show' ? 'NO_SHOW' : rawStatusCode,
     date,
     time,
     startTime: time,
@@ -96,8 +118,8 @@ function mapAppointmentFromApi(m) {
     locationName: location.name || m.locationName || 'จุดนัดรับ มทร.อีสาน',
     locationLat: m.locationLat != null ? parseFloat(m.locationLat) : (meetupPoints.find((p) => p.name === (location.name || m.locationName))?.lat ?? (location.latitude != null ? parseFloat(location.latitude) : null)),
     locationLng: m.locationLng != null ? parseFloat(m.locationLng) : (meetupPoints.find((p) => p.name === (location.name || m.locationName))?.lng ?? (location.longitude != null ? parseFloat(location.longitude) : null)),
-    buyerCheckedIn: Boolean(m.buyerCheckedIn || m.buyer_checked_in),
-    sellerCheckedIn: Boolean(m.sellerCheckedIn || m.seller_checked_in),
+    buyerCheckedIn,
+    sellerCheckedIn,
     buyerCheckedInAt: m.buyerCheckedInAt || m.buyer_checked_in_at || null,
     sellerCheckedInAt: m.sellerCheckedInAt || m.seller_checked_in_at || null,
     buyerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
@@ -213,15 +235,15 @@ function MiniMap({ meetup }) {
 
 // ─── Tabs ────────────────────────────────────────────────────────────────────
 const TABS = [
-  { key: 'all',       label: 'ทั้งหมด' },
   { key: 'pending',   label: 'รอดำเนินการ',  statuses: ['pending', 'return_requested'] },
   { key: 'confirmed', label: 'นัดหมายแล้ว',  statuses: ['confirmed'] },
   { key: 'completed', label: 'เสร็จสิ้น',    statuses: ['completed', 'return_accepted', 'return_rejected'] },
+  { key: 'no_show',   label: 'ไม่มาตามนัด',  statuses: ['no_show', 'missed'] },
   { key: 'cancelled', label: 'ยกเลิกแล้ว',   statuses: ['cancelled', 'rejected'] },
 ];
 
 function tabMatches(tab, status) {
-  if (tab.key === 'all') return true;
+  if (!tab) return false;
   return tab.statuses?.includes(status);
 }
 
@@ -581,9 +603,8 @@ export function MeetupListPage() {
       <div style={{ display: 'flex', gap: 6, background: '#f3f4f6', borderRadius: 14, padding: 4, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }} className="scrollbar-none">
         {TABS.map((tab) => {
           const isCancelledTab = tab.key === 'cancelled';
-          const tabMeetups = tab.key !== 'all'
-            ? myMeetups.filter((m) => tabMatches(tab, m.status))
-            : [];
+          const isNoShowTab = tab.key === 'no_show';
+          const tabMeetups = myMeetups.filter((m) => tabMatches(tab, m.status));
 
           // นับเฉพาะรายการใหม่ที่ยังไม่เคยเปิดดูในหน้านี้ (!seenMeetupIds.has)
           // และถ้ากำลังเปิดดูแท็บนั้นอยู่ (activeTab === tab.key) ให้ซ่อนตัวเลขแจ้งเตือนออกทันที
@@ -605,7 +626,7 @@ export function MeetupListPage() {
               style={{
                 flexShrink: 0, padding: '7px 12px', borderRadius: 10, border: 'none',
                 background: activeTab === tab.key ? '#fff' : 'transparent',
-                color: activeTab === tab.key ? (isCancelledTab ? '#dc2626' : '#f97316') : '#6b7280',
+                color: activeTab === tab.key ? (isCancelledTab ? '#dc2626' : isNoShowTab ? '#e11d48' : '#f97316') : '#6b7280',
                 fontWeight: activeTab === tab.key ? 700 : 500,
                 fontSize: 12, cursor: 'pointer',
                 boxShadow: activeTab === tab.key ? '0 1px 4px rgba(0,0,0,0.12)' : 'none',
@@ -618,7 +639,7 @@ export function MeetupListPage() {
                 <span
                   style={{
                     minWidth: 16, height: 16, borderRadius: 999, padding: '0 4px',
-                    background: isCancelledTab ? '#9ca3af' : '#f97316',
+                    background: isCancelledTab ? '#9ca3af' : isNoShowTab ? '#e11d48' : '#f97316',
                     color: '#fff', fontSize: 10, fontWeight: 800,
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   }}
@@ -898,6 +919,29 @@ export function MeetupListPage() {
                         </Link>
                       </div>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {m.status === 'no_show' && (
+                <div className="flex items-start gap-2.5 rounded-xl bg-rose-50 border border-rose-200 px-3.5 py-3">
+                  <AlertTriangle size={16} className="text-rose-600 mt-0.5 shrink-0" />
+                  <div className="space-y-1.5 flex-1">
+                    <p className="text-xs font-bold text-rose-800 flex items-center justify-between">
+                      <span>ตัดจบ: ไม่มาตามนัดหมาย (No-show)</span>
+                      <span className="text-[10px] text-rose-500 font-normal">เลยเวลานัดเกิน 45 นาที</span>
+                    </p>
+                    <p className="text-[11px] text-rose-700 leading-relaxed">
+                      เลยกำหนดเวลานัดหมายเกิน 45 นาที และมีฝ่ายที่ไม่ได้มาเช็คอิน ระบบจึงทำการตัดจบนัดหมายนี้อัตโนมัติ และตัดคะแนนความน่าเชื่อถือของผู้ที่ไม่มาตามนัดเรียบร้อยแล้ว
+                    </p>
+                    <div className="flex flex-wrap gap-2 pt-1 text-[11px] font-semibold">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md ${m.buyerCheckedIn ? "text-emerald-700 bg-emerald-100/80" : "text-rose-700 bg-rose-100/90"}`}>
+                        🛒 ผู้ซื้อ ({m.buyerName || 'ผู้ซื้อ'}): {m.buyerCheckedIn ? "เช็คอินแล้ว ✅" : "ไม่มาเช็คอิน ❌ (ถูกตัดคะแนน)"}
+                      </span>
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md ${m.sellerCheckedIn ? "text-emerald-700 bg-emerald-100/80" : "text-rose-700 bg-rose-100/90"}`}>
+                        🏷️ ผู้ขาย ({m.sellerName || 'ผู้ขาย'}): {m.sellerCheckedIn ? "เช็คอินแล้ว ✅" : "ไม่มาเช็คอิน ❌ (ถูกตัดคะแนน)"}
+                      </span>
+                    </div>
                   </div>
                 </div>
               )}

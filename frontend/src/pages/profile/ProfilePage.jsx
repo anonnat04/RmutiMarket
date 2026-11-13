@@ -9,11 +9,9 @@ export function ProfilePage() {
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
 
-  // แก้ไข: id จาก URL param (useParams) เป็น string เสมอ แต่ currentUser?.id
-  // จากฐานข้อมูล (bigint) มักเป็น number — เทียบด้วย === (strict equality)
-  // ระหว่าง string กับ number จะได้ false เสมอแม้ค่าจริงตรงกัน เช่น "4" === 4 → false
-  // ทำให้เข้าโปรไฟล์ตัวเองผ่านลิงก์ที่มี id ต่อท้าย (เช่น /profile/4) แล้วดันไปโชว์
-  // เป็น PublicProfilePage แทนที่จะเป็น SelfProfilePage ต้องแปลงเป็น string ทั้งคู่ก่อนเทียบ
+  // id จาก URL param (useParams) เป็น string เสมอ แต่ currentUser?.id จากฐานข้อมูล
+  // (bigint) มักเป็น number — เทียบด้วย === ระหว่าง string กับ number จะได้ false เสมอ
+  // จึงแปลงเป็น string ทั้งคู่ก่อนเทียบ
   const isSelf = !id || id === 'me' || String(id) === String(currentUser?.id);
   const targetId = isSelf ? (currentUser?.id || 'me') : id;
 

@@ -98,6 +98,10 @@ export function ChatPage() {
       lastMessage: c.lastMessage?.content || "เริ่มการสนทนา",
       unread: (c.unreadCount || 0) > 0,
       messages: [],
+      // ข้อมูลสถานะ deal สำหรับซ่อน/แสดงปุ่มนัดหมาย
+      transactionStatusId: c.transactionStatusId ?? null,
+      isDealClosed: c.isDealClosed ?? false,
+      dealClosedAt: c.dealClosedAt ?? null,
     };
   }
 
@@ -749,12 +753,27 @@ export function ChatPage() {
                   {(() => {
                     if (!active.productId) return null;
                     const isMyProduct = String(active.sellerId) === String(user?.id);
-                    const isSold = active.statusId === 3 || active.statusId === 4 || active.status === 'sold';
 
-                    if (isSold) {
+                    // ตรวจสอบว่า deal ปิดแล้วหรือยัง (จาก transactionStatusId หรือ statusId ของสินค้า)
+                    // transactionStatusId: 3=COMPLETED, 4=CANCELLED, 5=NO_SHOW
+                    // statusId ของ products: 2=RESERVED, 3=SOLD
+                    const isDealClosed = active.isDealClosed ||
+                      active.transactionStatusId === 3 ||
+                      active.transactionStatusId === 4 ||
+                      active.transactionStatusId === 5 ||
+                      active.statusId === 3 ||
+                      active.status === 'sold';
+
+                    if (isDealClosed) {
+                      // คำนวณวันที่เหลือก่อนลบแชท (7 วันหลัง deal ปิด)
+                      const closedAt = active.dealClosedAt ? new Date(active.dealClosedAt) : null;
+                      const daysLeft = closedAt
+                        ? Math.max(0, 7 - Math.floor((Date.now() - closedAt.getTime()) / (1000 * 60 * 60 * 24)))
+                        : null;
+
                       return (
                         <span className="flex items-center gap-1 rounded-xl bg-gray-100 border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-500 shrink-0 select-none">
-                          ✓ ขายแล้ว
+                          ✓ ปิดการขายแล้ว
                         </span>
                       );
                     }
@@ -779,6 +798,26 @@ export function ChatPage() {
             </div>
 
             {/* Chat Message Stream */}
+            {/* Banner แจ้งเตือนเมื่อ deal ปิดแล้ว — แสดงจำนวนวันที่เหลือก่อนลบแชทอัตโนมัติ */}
+            {active && (active.isDealClosed || active.transactionStatusId === 3 || active.transactionStatusId === 4 || active.transactionStatusId === 5) && (() => {
+              const closedAt = active.dealClosedAt ? new Date(active.dealClosedAt) : null;
+              const daysLeft = closedAt
+                ? Math.max(0, 7 - Math.floor((Date.now() - closedAt.getTime()) / (1000 * 60 * 60 * 24)))
+                : 7;
+              const txLabel =
+                active.transactionStatusId === 3 ? 'เสร็จสิ้น' :
+                active.transactionStatusId === 4 ? 'ยกเลิก' :
+                active.transactionStatusId === 5 ? 'ไม่มาตามนัด' : 'ปิดแล้ว';
+              return (
+                <div className="mx-4 mt-3 mb-0 flex items-start gap-2 rounded-xl bg-amber-50 border border-amber-200 px-4 py-2.5 text-xs text-amber-700">
+                  <span className="text-base leading-none mt-0.5">💬</span>
+                  <span>
+                    การขายนี้ <strong>{txLabel}แล้ว</strong> — ประวัติการสนทนาจะถูกลบอัตโนมัติ
+                    {daysLeft > 0 ? ` ภายใน ${daysLeft} วัน` : ' เร็วๆ นี้'}
+                  </span>
+                </div>
+              );
+            })()}
             <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4 bg-surface-muted/20">
               {activeMessages.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center text-center p-6 text-ink-400 space-y-2">
