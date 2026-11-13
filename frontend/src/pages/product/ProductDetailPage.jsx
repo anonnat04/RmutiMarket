@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Heart, ImageOff, MessageCircle, ShieldCheck, Star,
   CalendarClock, ShieldAlert, ChevronLeft,
-  CheckCircle2, ShoppingBag, MapPin, Clock, ArrowRight, Flag, X
+  CheckCircle2, ShoppingBag, MapPin, Clock, ArrowRight, Flag, X, ChevronDown
 } from 'lucide-react';
 import { fetchProductDetail } from '@/services/productService';
 import { formatCurrency } from '@/utils/formatCurrency';
@@ -119,6 +119,7 @@ export function ProductDetailPage() {
     return isWithinMeetupHours(now) ? now : '09:00';
   });
   const [timeError, setTimeError] = useState('');
+  const [locationOpen, setLocationOpen] = useState(false);
   const [submittingBuy, setSubmittingBuy] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
 
@@ -170,6 +171,10 @@ export function ProductDetailPage() {
     }
     if (!isWithinMeetupHours(meetupTime)) {
       setTimeError(`⏰ ${MEETUP_HOURS_TEXT}`);
+      return;
+    }
+    if (!meetupDate || meetupDate < localDateString()) {
+      setTimeError('กรุณาเลือกวันที่นัดรับตั้งแต่วันนี้เป็นต้นไป');
       return;
     }
     setTimeError('');
@@ -718,7 +723,9 @@ export function ProductDetailPage() {
               </button>
             </div>
 
-            <form onSubmit={handleConfirmBuyAndMeetup} className="flex min-h-0 flex-1 flex-col">
+            {/* noValidate: ปิดกล่องเตือนภาษาอังกฤษของเบราว์เซอร์ (เช่น "Value must be 8:00 PM or earlier")
+                แล้วใช้ข้อความเตือนภาษาไทยของเราเองแทน */}
+            <form onSubmit={handleConfirmBuyAndMeetup} noValidate className="flex min-h-0 flex-1 flex-col">
               {/* เนื้อหา (เลื่อนได้) */}
               <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
                 {/* Product Summary */}
@@ -746,18 +753,56 @@ export function ProductDetailPage() {
                   <label htmlFor="meetup-location" className="mb-1.5 block text-xs font-bold text-ink-800">
                     📍 เลือกจุดนัดรับปลอดภัยใน มทร.อีสาน
                   </label>
-                  <select
+                  {/* ตัวเลือกจุดนัดรับแบบกำหนดเอง: รายการขยายอยู่ในหน้าต่างเลย (เลื่อนได้)
+                      ไม่ใช้ <select> ของเบราว์เซอร์ เพราะเมนูของมันลอยทะลุขอบจอบนมือถือ */}
+                  <button
+                    type="button"
                     id="meetup-location"
-                    value={selectedLocation}
-                    onChange={(e) => setSelectedLocation(e.target.value)}
-                    className="h-11 w-full min-w-0 truncate rounded-xl border border-gray-200 bg-white px-3.5 text-sm font-semibold text-ink-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+                    onClick={() => setLocationOpen((o) => !o)}
+                    aria-haspopup="listbox"
+                    aria-expanded={locationOpen}
+                    className={`flex h-11 w-full items-center justify-between gap-2 rounded-xl border bg-white px-3.5 text-left text-sm font-semibold text-ink-900 outline-none transition-colors ${
+                      locationOpen ? 'border-brand-500 ring-2 ring-brand-100' : 'border-gray-200 hover:border-orange-300'
+                    }`}
                   >
-                    {meetupPoints.map((point) => (
-                      <option key={point.id} value={point.name}>
-                        {point.icon || '📍'} {point.name}
-                      </option>
-                    ))}
-                  </select>
+                    <span className="min-w-0 flex-1 truncate">
+                      {selectedPoint?.icon || '📍'} {selectedLocation}
+                    </span>
+                    <ChevronDown
+                      size={16}
+                      className={`shrink-0 text-gray-400 transition-transform ${locationOpen ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                  {locationOpen && (
+                    <ul
+                      role="listbox"
+                      className="mt-1.5 max-h-56 overflow-y-auto overscroll-contain rounded-xl border border-gray-200 bg-white p-1 shadow-sm"
+                    >
+                      {meetupPoints.map((point) => {
+                        const active = point.name === selectedLocation;
+                        return (
+                          <li key={point.id} role="option" aria-selected={active}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedLocation(point.name);
+                                setLocationOpen(false);
+                              }}
+                              className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm leading-snug transition-colors ${
+                                active
+                                  ? 'bg-orange-50 font-bold text-brand-600'
+                                  : 'font-medium text-ink-800 hover:bg-gray-50'
+                              }`}
+                            >
+                              <span className="shrink-0">{point.icon || '📍'}</span>
+                              <span className="min-w-0 flex-1 break-words">{point.name}</span>
+                              {active && <CheckCircle2 size={15} className="shrink-0 text-brand-500" />}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                   {selectedPoint?.description && (
                     <p className="mt-1.5 text-[11px] leading-relaxed text-gray-500">
                       {selectedPoint.description}
@@ -823,8 +868,10 @@ export function ProductDetailPage() {
                         min={MEETUP_START}
                         max={MEETUP_END}
                         onChange={(e) => {
-                          setMeetupTime(e.target.value);
-                          setTimeError('');
+                          const v = e.target.value;
+                          setMeetupTime(v);
+                          // เลือกเวลานอกช่วงที่กำหนด → แจ้งทันทีเป็นภาษาไทย
+                          setTimeError(v && !isWithinMeetupHours(v) ? `⏰ ${MEETUP_HOURS_TEXT}` : '');
                         }}
                         className={`h-11 w-full min-w-0 rounded-xl border bg-gray-50/50 px-3 text-sm font-semibold text-ink-900 outline-none focus:bg-white focus:ring-2 focus:ring-brand-100 ${
                           timeError ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-brand-500'

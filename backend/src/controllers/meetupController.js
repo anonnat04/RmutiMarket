@@ -3,6 +3,47 @@ const { sendNotificationToUser, emitMeetupUpdate } = require("../services/chatSo
 const { formatUser, formatStatus, getStatusId } = require("../utils/statusHelper");
 
 // ----------------------------------------------------------------
+// ค่าคงที่ของระบบนัดรับ
+// ----------------------------------------------------------------
+// เวลานัดรับที่อนุญาต (นาทีนับจากเที่ยงคืน): 08:00 – 20:00 น.
+const MEETUP_START_MIN = 8 * 60;
+const MEETUP_END_MIN = 20 * 60;
+const MEETUP_HOURS_TEXT = "นัดรับได้เฉพาะเวลา 08:00 – 20:00 น. เท่านั้น";
+
+// เลยเวลานัดกี่นาทีถึงนับว่าไม่มาตามนัด (ต้องตรงกับข้อความบนหน้าเว็บและ cron ใน DB ถ้ายังเปิดอยู่)
+const NO_SHOW_GRACE_MINUTES = 45;
+
+// ----------------------------------------------------------------
+// Helper: วันที่/เวลาตามเขตเวลาไทย (เซิร์ฟเวอร์อาจใช้ UTC)
+// ----------------------------------------------------------------
+function todayInBangkok() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" }); // YYYY-MM-DD
+}
+
+// แปลง "วันที่ + เวลา" ของนัดหมาย (เวลาไทย) เป็น Date ที่ถูกต้องไม่ว่าเซิร์ฟเวอร์จะอยู่เขตเวลาไหน
+function appointmentToDate(dateStr, timeStr) {
+  const t = String(timeStr || "").slice(0, 5);
+  return new Date(`${dateStr}T${t}:00+07:00`);
+}
+
+function toMinutes(t) {
+  if (!t) return 0;
+  const [h, m] = String(t).slice(0, 5).split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+function isWithinMeetupHours(timeStr) {
+  if (!timeStr || !/^\d{1,2}:\d{2}/.test(String(timeStr))) return false;
+  const mins = toMinutes(timeStr);
+  return mins >= MEETUP_START_MIN && mins <= MEETUP_END_MIN;
+}
+
+function isParticipant(txn, userId) {
+  if (!txn) return false;
+  return String(txn.buyer_id) === String(userId) || String(txn.seller_id) === String(userId);
+}
+
+// ----------------------------------------------------------------
 // Helper: ปรับคะแนนความน่าเชื่อถือ (Trust Score) และบันทึกลงประวัติ
 // ----------------------------------------------------------------
 async function recordPenalty(userId, actionType, reason) {
@@ -134,9 +175,9 @@ function mapAppointment(a) {
   const scheduledAt = `${a.appointment_date}T${a.appointment_time}`;
   const price = parseFloat(prod.price || 0);
 
-  // locationName ��ͧ�Ҩҡ locations.name ��ҹ�� � location_detail ��������˵آͧ����� ������᷹���ͨش
-  const realLocName = a.locations?.name || "�ش�Ѵ�Ѻ ���.���ҹ";
-  const cleanNote = a.location_detail ? a.location_detail.replace(/^�ش�Ѵ:\s*/, '').trim() : null;
+  // locationName ต้องมาจาก locations.name เท่านั้น — location_detail เป็นหมายเหตุของผู้ใช้ ไม่ใช่ชื่อจุด
+  const realLocName = a.locations?.name || "จุดนัดรับ มทร.อีสาน";
+  const cleanNote = a.location_detail ? a.location_detail.replace(/^จุดนัด:\s*/, "").trim() : null;
 
   const locObj = a.locations ? {
     ...a.locations,
@@ -225,7 +266,7 @@ function mapAppointment(a) {
 }
 
 // ----------------------------------------------------------------
-// Helper: ตรวจสอบและตัดจบนัดหมายที่เลยเวลาเกิน 45 นาที และตัดคะแนนคนไม่มาเช็คอิน (NO_SHOW)
+// Helper: ตรวจสอบและตัดจบนัดหมายที่เลยเวลา (NO_SHOW_GRACE_MINUTES) และตัดคะแนนคนไม่มาเช็คอิน
 // ----------------------------------------------------------------
 async function checkAndProcessNoShows() {
   try {
@@ -242,10 +283,11 @@ async function checkAndProcessNoShows() {
 
     let noShowStatusId = 5;
     try {
+      // appointment_status ไม่มีคอลัมน์ code จึงค้นจากชื่ออย่างเดียว
       const { data: noShowDb } = await supabase
         .from("appointment_status")
         .select("id")
-        .or("name.ilike.%ไม่มา%,code.eq.NO_SHOW")
+        .ilike("name", "%ไม่มา%")
         .limit(1)
         .maybeSingle();
       if (noShowDb?.id) noShowStatusId = noShowDb.id;
@@ -256,12 +298,11 @@ async function checkAndProcessNoShows() {
     for (const appt of confirmedAppts) {
       if (!appt.appointment_date || !appt.appointment_time) continue;
 
-      const timeClean = String(appt.appointment_time).slice(0, 5);
-      const apptDate = new Date(`${appt.appointment_date}T${timeClean}:00`);
+      const apptDate = appointmentToDate(appt.appointment_date, appt.appointment_time);
       if (isNaN(apptDate.getTime())) continue;
 
-      // เส้นตาย: เวลานัด + 45 นาที
-      const deadline = new Date(apptDate.getTime() + 45 * 60 * 1000);
+      // เส้นตาย: เวลานัด + NO_SHOW_GRACE_MINUTES
+      const deadline = new Date(apptDate.getTime() + NO_SHOW_GRACE_MINUTES * 60 * 1000);
 
       if (now > deadline) {
         const buyerCheckedIn = Boolean(appt.buyer_checked_in);
@@ -273,14 +314,23 @@ async function checkAndProcessNoShows() {
         const txn = appt.transactions || {};
         const nowIso = now.toISOString();
 
-        console.log(`🚨 [NO_SHOW Auto-Close] Appointment #${appt.id} passed 45m deadline (${deadline.toLocaleTimeString()}). Buyer checked in: ${buyerCheckedIn}, Seller checked in: ${sellerCheckedIn}`);
+        // 1. "จอง" นัดหมายนี้ด้วยการเปลี่ยนสถานะเฉพาะแถวที่ยังเป็น CONFIRMED
+        //    ถ้ามีคำขออื่นเข้ามาประมวลผลนัดเดียวกันพร้อมกัน จะมีแค่คำขอเดียวที่ได้แถวกลับมา
+        //    กันการตัดคะแนนซ้ำสองรอบ
+        const { data: claimed } = await supabase
+          .from("appointments")
+          .update({
+            status_id: noShowStatusId,
+            cancelled_at: nowIso,
+            cancellation_reason: `หมดเวลาเช็คอิน (เกินเวลานัด ${NO_SHOW_GRACE_MINUTES} นาที ไม่มาตามนัด)`,
+          })
+          .eq("id", appt.id)
+          .eq("status_id", 2)
+          .select("id");
 
-        // 1. ตัดจบนัดหมาย: อัปเดตสถานะเป็น ไม่มาตามนัด (NO_SHOW)
-        await supabase.from("appointments").update({
-          status_id: noShowStatusId,
-          cancelled_at: nowIso,
-          cancellation_reason: "หมดเวลาเช็คอิน (เกินเวลานัด 45 นาที ไม่มาตามนัด)",
-        }).eq("id", appt.id);
+        if (!claimed?.length) continue; // มีคนประมวลผลไปแล้ว
+
+        console.log(`🚨 [NO_SHOW Auto-Close] Appointment #${appt.id} passed ${NO_SHOW_GRACE_MINUTES}m deadline. Buyer checked in: ${buyerCheckedIn}, Seller checked in: ${sellerCheckedIn}`);
 
         // 2. ยกเลิก Transaction และนำสินค้ากลับมาวางขายใหม่ (AVAILABLE)
         if (appt.transaction_id) {
@@ -301,13 +351,13 @@ async function checkAndProcessNoShows() {
           await recordPenalty(
             txn.buyer_id,
             "NO_SHOW",
-            `ผู้ซื้อไม่มาตามนัดรับสินค้า (เกินเวลา 45 นาที) - นัดหมาย #${appt.id}`
+            `ผู้ซื้อไม่มาตามนัดรับสินค้า (เกินเวลา ${NO_SHOW_GRACE_MINUTES} นาที) - นัดหมาย #${appt.id}`
           );
           sendNotificationToUser(txn.buyer_id, {
             user_id: txn.buyer_id,
             type: "penalty",
             title: "⚠️ คุณถูกตัดคะแนนเนื่องจากไม่มาตามนัด",
-            message: "ระบบตัดคะแนนความน่าเชื่อถือของคุณเนื่องจากไม่มาเช็คอินตามจุดนัดพบภายใน 45 นาที",
+            message: `ระบบตัดคะแนนความน่าเชื่อถือของคุณเนื่องจากไม่มาเช็คอินตามจุดนัดพบภายใน ${NO_SHOW_GRACE_MINUTES} นาที`,
             reference_type: "meetup",
             reference_id: appt.id,
           });
@@ -317,13 +367,13 @@ async function checkAndProcessNoShows() {
           await recordPenalty(
             txn.seller_id,
             "NO_SHOW",
-            `ผู้ขายไม่มาตามนัดรับสินค้า (เกินเวลา 45 นาที) - นัดหมาย #${appt.id}`
+            `ผู้ขายไม่มาตามนัดรับสินค้า (เกินเวลา ${NO_SHOW_GRACE_MINUTES} นาที) - นัดหมาย #${appt.id}`
           );
           sendNotificationToUser(txn.seller_id, {
             user_id: txn.seller_id,
             type: "penalty",
             title: "⚠️ คุณถูกตัดคะแนนเนื่องจากไม่มาตามนัด",
-            message: "ระบบตัดคะแนนความน่าเชื่อถือของคุณเนื่องจากไม่มาเช็คอินตามจุดนัดพบภายใน 45 นาที",
+            message: `ระบบตัดคะแนนความน่าเชื่อถือของคุณเนื่องจากไม่มาเช็คอินตามจุดนัดพบภายใน ${NO_SHOW_GRACE_MINUTES} นาที`,
             reference_type: "meetup",
             reference_id: appt.id,
           });
@@ -335,7 +385,7 @@ async function checkAndProcessNoShows() {
             user_id: txn.buyer_id,
             type: "meetup_cancelled",
             title: "นัดหมายถูกตัดจบ (ผู้ขายไม่มาตามนัด)",
-            message: "เนื่องจากผู้ขายไม่ได้มาเช็คอินภายใน 45 นาที ระบบจึงตัดจบนัดหมายและตัดคะแนนผู้ขาย",
+            message: `เนื่องจากผู้ขายไม่ได้มาเช็คอินภายใน ${NO_SHOW_GRACE_MINUTES} นาที ระบบจึงตัดจบนัดหมายและตัดคะแนนผู้ขาย`,
             reference_type: "meetup",
             reference_id: appt.id,
           });
@@ -344,7 +394,7 @@ async function checkAndProcessNoShows() {
             user_id: txn.seller_id,
             type: "meetup_cancelled",
             title: "นัดหมายถูกตัดจบ (ผู้ซื้อไม่มาตามนัด)",
-            message: "เนื่องจากผู้ซื้อไม่ได้มาเช็คอินภายใน 45 นาที ระบบจึงตัดจบนัดหมายและนำสินค้ากลับสู่สถานะว่างขายใหม่",
+            message: `เนื่องจากผู้ซื้อไม่ได้มาเช็คอินภายใน ${NO_SHOW_GRACE_MINUTES} นาที ระบบจึงตัดจบนัดหมายและนำสินค้ากลับสู่สถานะว่างขายใหม่`,
             reference_type: "meetup",
             reference_id: appt.id,
           });
@@ -365,13 +415,22 @@ async function checkAndProcessNoShows() {
   }
 }
 
+// กันไม่ให้ตรวจ No-show ถี่เกินไป (หน้าเช็คอินเรียก getMyMeetups ทุก 4 วินาที)
+let lastNoShowCheck = 0;
+async function maybeCheckNoShows() {
+  const nowMs = Date.now();
+  if (nowMs - lastNoShowCheck < 20000) return;
+  lastNoShowCheck = nowMs;
+  await checkAndProcessNoShows();
+}
+
 // ----------------------------------------------------------------
 // GET /api/meetups  — นัดรับของฉัน
 // ----------------------------------------------------------------
 async function getMyMeetups(req, res, next) {
   try {
-    // ตรวจสอบและตัดจบนัดหมายที่เกิน 45 นาทีอัตโนมัติก่อนดึงข้อมูล
-    await checkAndProcessNoShows();
+    // ตรวจสอบและตัดจบนัดหมายที่เลยเวลาอัตโนมัติก่อนดึงข้อมูล
+    await maybeCheckNoShows();
 
     const { status, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -432,9 +491,17 @@ async function createMeetup(req, res, next) {
 
     const targetProductId = productId || listingId;
     const finalLocationRaw = locationId || meetupPointId;
-    const finalDate = appointmentDate || date || (scheduledAt ? scheduledAt.split("T")[0] : new Date().toISOString().split("T")[0]);
+    const finalDate = appointmentDate || date || (scheduledAt ? scheduledAt.split("T")[0] : todayInBangkok());
     const finalTime = appointmentTime || time || (scheduledAt ? scheduledAt.split("T")[1]?.slice(0, 5) : "12:00");
     const finalDetail = note || locationDetail || null;  // หมายเหตุ/note เท่านั้น ไม่เอา locationName
+
+    // ── ตรวจเวลานัดรับต้องอยู่ในช่วง 08:00 – 20:00 และไม่ใช่วันที่ผ่านมาแล้ว ──
+    if (!isWithinMeetupHours(finalTime)) {
+      return res.status(400).json({ error: MEETUP_HOURS_TEXT });
+    }
+    if (!finalDate || String(finalDate) < todayInBangkok()) {
+      return res.status(400).json({ error: "ไม่สามารถนัดรับย้อนหลังได้ กรุณาเลือกวันที่ตั้งแต่วันนี้เป็นต้นไป" });
+    }
 
     // ── ค้นหา location id: ลอง parseInt ก่อน ถ้าไม่ใช่ตัวเลขให้ค้นจากชื่อใน DB ──
     let resolvedLocationId = parseInt(finalLocationRaw);
@@ -484,6 +551,10 @@ async function createMeetup(req, res, next) {
         .eq("id", transactionId)
         .single();
       txn = data;
+      // ต้องเป็นผู้ซื้อหรือผู้ขายของรายการนี้เท่านั้น
+      if (txn && !isParticipant(txn, req.user.id)) {
+        return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในรายการซื้อขายนี้" });
+      }
     } else if (targetProductId) {
       const { data: product } = await supabase
         .from("products")
@@ -546,12 +617,6 @@ async function createMeetup(req, res, next) {
 
     // ── ตรวจสอบเวลานัดหมายซ้ำ/ทับซ้อน (Overlap Check) ──
     // ห้ามมีนัดหมายอื่นในช่วงเวลาเดียวกัน (ห่างกันน้อยกว่า 30 นาที) สำหรับผู้ซื้อ ผู้ขาย หรือสินค้านี้
-    const toMinutes = (t) => {
-      if (!t) return 0;
-      const [h, m] = String(t).slice(0, 5).split(':').map(Number);
-      return (h || 0) * 60 + (m || 0);
-    };
-
     const targetMin = toMinutes(finalTime);
 
     const { data: dayAppts } = await supabase
@@ -641,6 +706,9 @@ async function acceptMeetup(req, res, next) {
       .single();
 
     if (!appt) return res.status(404).json({ error: "ไม่พบนัดรับ" });
+    if (!isParticipant(appt.transactions, req.user.id)) {
+      return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในนัดรับนี้" });
+    }
 
     // Update appointment status to 2 = นัดหมายเรียบร้อย (CONFIRMED)
     await supabase.from("appointments").update({ status_id: 2 }).eq("id", id);
@@ -765,6 +833,9 @@ async function completeMeetup(req, res, next) {
       .single();
 
     if (!appt) return res.status(404).json({ error: "ไม่พบนัดรับ" });
+    if (!isParticipant(appt.transactions, req.user.id)) {
+      return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในนัดรับนี้" });
+    }
 
     const txn = appt.transactions;
     const now = new Date().toISOString();
@@ -856,6 +927,9 @@ async function cancelMeetup(req, res, next) {
       .single();
 
     if (!appt) return res.status(404).json({ error: "ไม่พบนัดรับ" });
+    if (!isParticipant(appt.transactions, req.user.id)) {
+      return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในนัดรับนี้" });
+    }
 
     const now = new Date().toISOString();
 
@@ -903,6 +977,26 @@ async function rescheduleMeetup(req, res, next) {
     const finalTime = appointmentTime || time || (scheduledAt ? scheduledAt.split("T")[1]?.slice(0, 5) : undefined);
     const finalLoc = locationId || meetupPointId;
     const finalDetail = locationDetail || note;
+
+    // ต้องเป็นผู้ซื้อหรือผู้ขายของนัดนี้เท่านั้น
+    const { data: appt } = await supabase
+      .from("appointments")
+      .select("id, transactions(buyer_id, seller_id)")
+      .eq("id", id)
+      .single();
+
+    if (!appt) return res.status(404).json({ error: "ไม่พบนัดรับ" });
+    if (!isParticipant(appt.transactions, req.user.id)) {
+      return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในนัดรับนี้" });
+    }
+
+    // ตรวจเวลา/วันที่ใหม่ (ถ้ามีการเปลี่ยน)
+    if (finalTime !== undefined && !isWithinMeetupHours(finalTime)) {
+      return res.status(400).json({ error: MEETUP_HOURS_TEXT });
+    }
+    if (finalDate !== undefined && String(finalDate) < todayInBangkok()) {
+      return res.status(400).json({ error: "ไม่สามารถนัดรับย้อนหลังได้ กรุณาเลือกวันที่ตั้งแต่วันนี้เป็นต้นไป" });
+    }
 
     const updates = {
       status_id: 1, // 1 = รอการยืนยัน (PENDING)

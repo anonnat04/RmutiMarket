@@ -156,6 +156,7 @@ export function ScheduleMeetupPage() {
 
     const next = {};
     if (!date) next.date = 'กรุณาเลือกวันที่';
+    else if (date < localDateString()) next.date = 'กรุณาเลือกวันที่นัดรับตั้งแต่วันนี้เป็นต้นไป';
     if (!time) next.time = 'กรุณาเลือกเวลา';
     else if (!isWithinMeetupHours(time)) next.time = `⏰ ${MEETUP_HOURS_TEXT}`;
     if (!locationValue) next.location = 'กรุณาเลือกจุดนัดรับบนแผนที่';
@@ -343,7 +344,8 @@ export function ScheduleMeetupPage() {
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+      {/* noValidate: ปิดกล่องเตือนภาษาอังกฤษของเบราว์เซอร์ แล้วใช้ข้อความเตือนภาษาไทยของเราเอง */}
+      <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-6">
         {/* ─── วันที่และเวลา ──────────────────────────────────── */}
         <div className="cm-card p-4">
           <p className="mb-3 text-sm font-bold text-ink-900">📅 วันที่และเวลานัดรับ</p>
@@ -389,8 +391,13 @@ export function ScheduleMeetupPage() {
                 min={MEETUP_START}
                 max={MEETUP_END}
                 onChange={(e) => {
-                  setTime(e.target.value);
-                  setErrors((prev) => ({ ...prev, time: null }));
+                  const v = e.target.value;
+                  setTime(v);
+                  // เลือกเวลานอกช่วงที่กำหนด → แจ้งทันทีเป็นภาษาไทย
+                  setErrors((prev) => ({
+                    ...prev,
+                    time: v && !isWithinMeetupHours(v) ? `⏰ ${MEETUP_HOURS_TEXT}` : null,
+                  }));
                 }}
                 className="block w-full rounded-xl border border-surface-border bg-white px-3 py-2.5 text-sm text-ink-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
               />
