@@ -121,6 +121,13 @@ function StarRow({ rating, size = 16 }) {
   );
 }
 
+// สีและป้ายของ Trust Score (เส้น 50 = เกณฑ์ที่ระบบบล็อกการซื้อขาย)
+function getTrustStyle(score) {
+  if (score >= 80) return { text: 'text-emerald-600', bar: 'bg-emerald-500', label: 'น่าเชื่อถือสูง' };
+  if (score >= 50) return { text: 'text-amber-500', bar: 'bg-amber-400', label: 'ปานกลาง' };
+  return { text: 'text-red-500', bar: 'bg-red-500', label: 'ควรระวัง' };
+}
+
 export function SelfProfilePage({ user, logout, navigate }) {
   const listings = useMyListingsStore((s) => s.listings);
   const setListings = useMyListingsStore((s) => s.setListings);
@@ -356,6 +363,23 @@ export function SelfProfilePage({ user, logout, navigate }) {
   const topReviewCount = Number(statsData?.reviewCount ?? combinedReviews.length ?? 0);
   const topAverageRating = Number(statsData?.averageRating ?? (combinedReviews.length ? combinedReviews.reduce((sum, r) => sum + r.rating, 0) / combinedReviews.length : 0));
 
+  // Trust Score: ใช้ค่าจาก /api/profile/me เป็นหลัก (ข้อมูลสดจาก DB) แล้วค่อย fallback
+  const trustScore = Math.max(
+    0,
+    Math.min(
+      100,
+      Number(
+        statsData?.trustScore ??
+          profileData?.trust_score ??
+          profileData?.trustScore ??
+          user?.trust_score ??
+          user?.trustScore ??
+          100
+      )
+    )
+  );
+  const trustStyle = getTrustStyle(trustScore);
+
   const cardReviewCount = combinedReviews.length;
   const cardAverageRating = cardReviewCount
     ? combinedReviews.reduce((sum, r) => sum + Number(r.rating || 0), 0) / cardReviewCount
@@ -533,6 +557,20 @@ export function SelfProfilePage({ user, logout, navigate }) {
                   </>
                 )}
               </div>
+
+              {/* Trust Score */}
+              <div className="text-center">
+                <p className="text-[11px] font-semibold text-gray-400">Trust Score</p>
+                <p className={`text-2xl font-black mt-0.5 ${trustStyle.text}`}>{trustScore}</p>
+                <div className="mx-auto mt-1 h-1.5 w-16 rounded-full bg-gray-100">
+                  <div
+                    className={`h-full rounded-full ${trustStyle.bar}`}
+                    style={{ width: `${trustScore}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-gray-400 mt-0.5">{trustStyle.label}</p>
+              </div>
+
               <div className="text-center">
                 <p className="text-[11px] font-semibold text-gray-400">การตอบกลับ</p>
                 <p className="text-xl font-black text-gray-300 mt-1">ยังไม่มีข้อมูล</p>

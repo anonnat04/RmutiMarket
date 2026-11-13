@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const listingController = require("../controllers/listingController");
 const { requireUserAuth, optionalAuth } = require("../middleware/userAuth");
-
+const { requireTrustScore } = require("../middleware/trustGuard");  // เพิ่มไว้ใต้ import อื่นๆ ด้านบนไฟล์
 // Public
 router.get("/", optionalAuth, listingController.getListings);
 router.get("/categories", listingController.getCategories);
@@ -17,9 +17,11 @@ router.get("/user/my", requireUserAuth, listingController.getMyListings);
 router.get("/:id", optionalAuth, listingController.getListingById);
 
 // Protected
-router.post("/", requireUserAuth, listingController.createListing);
+
+router.post("/", requireUserAuth, requireTrustScore, listingController.createListing);
 router.put("/:id", requireUserAuth, listingController.updateListing);
 router.delete("/:id", requireUserAuth, listingController.deleteListing);
 router.post("/:id/report", requireUserAuth, listingController.reportListing);
+
 
 module.exports = router;
