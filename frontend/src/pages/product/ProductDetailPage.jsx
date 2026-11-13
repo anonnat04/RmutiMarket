@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Heart, ImageOff, MessageCircle, ShieldCheck, Star,
   CalendarClock, ShieldAlert, ChevronLeft,
-  CheckCircle2, ShoppingBag, MapPin, Clock, ArrowRight, Flag
+  CheckCircle2, ShoppingBag, MapPin, Clock, ArrowRight, Flag, X
 } from 'lucide-react';
 import { fetchProductDetail } from '@/services/productService';
 import { formatCurrency } from '@/utils/formatCurrency';
@@ -16,6 +16,28 @@ import { useNotificationStore } from '@/store/notificationStore';
 import { meetupPoints } from '@/constants/meetupPoints';
 import { api } from '@/lib/api';
 
+// ─── ช่วงเวลาที่อนุญาตให้นัดรับ ─────────────────────────────────────────────
+const MEETUP_START = '08:00';
+const MEETUP_END = '20:00';
+const MEETUP_HOURS_TEXT = 'นัดรับได้เฉพาะเวลา 08:00 – 20:00 น. เท่านั้น';
+
+function isWithinMeetupHours(t) {
+  if (!t) return false;
+  const s = String(t).slice(0, 5);
+  return s >= MEETUP_START && s <= MEETUP_END;
+}
+
+// วันที่/เวลาตามเครื่องผู้ใช้ (toISOString ใช้ UTC ทำให้วันที่เพี้ยนช่วงเที่ยงคืนถึง 07:00 ตามเวลาไทย)
+function localDateString(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function localTimeString(d = new Date()) {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
 
 const conditionLabel = {
   new: 'มือหนึ่ง',
@@ -90,16 +112,13 @@ export function ProductDetailPage() {
   const [showActionChoiceModal, setShowActionChoiceModal] = useState(false);
   const [showBuyModal, setShowBuyModal] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(meetupPoints[0]?.name || 'โรงอาหารกลาง มทร.อีสาน');
-  const [meetupDate, setMeetupDate] = useState(() => {
-    return new Date().toISOString().split('T')[0];
-  });
+  const [meetupDate, setMeetupDate] = useState(() => localDateString());
   const [meetupTime, setMeetupTime] = useState(() => {
-    const now = new Date();
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
-    return `${hh}:${mm}`;
+    // ถ้าตอนนี้อยู่นอกช่วง 08:00–20:00 ให้เริ่มที่ 09:00 แทน
+    const now = localTimeString();
+    return isWithinMeetupHours(now) ? now : '09:00';
   });
-  const [meetupNote, setMeetupNote] = useState('');
+  const [timeError, setTimeError] = useState('');
   const [submittingBuy, setSubmittingBuy] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
 
@@ -142,7 +161,18 @@ export function ProductDetailPage() {
 
   const handleConfirmBuyAndMeetup = async (e) => {
     e.preventDefault();
-    if (!product) return;
+    if (!product || submittingBuy) return;
+
+    // ตรวจเวลานัดรับต้องอยู่ในช่วง 08:00 – 20:00
+    if (!meetupTime) {
+      setTimeError('กรุณาเลือกเวลานัดรับ');
+      return;
+    }
+    if (!isWithinMeetupHours(meetupTime)) {
+      setTimeError(`⏰ ${MEETUP_HOURS_TEXT}`);
+      return;
+    }
+    setTimeError('');
     setSubmittingBuy(true);
 
     const point = meetupPoints.find((p) => p.name === selectedLocation) || meetupPoints[0];
@@ -160,7 +190,9 @@ export function ProductDetailPage() {
         locationLng: point?.lng || null,
         date: meetupDate,
         time: meetupTime,
-        note: meetupNote || null,
+        // ไม่มีข้อความถึงผู้ขายแล้ว (ฐานข้อมูลไม่มีที่เก็บ) ส่งแค่ชื่อจุดนัดเหมือนหน้าเลือกแผนที่
+        note: `จุดนัด: ${selectedLocation}`,
+        locationDetail: selectedLocation,
       });
 
       const meetupId = res?.meetupId;
@@ -187,10 +219,14 @@ export function ProductDetailPage() {
       navigate('/meetups', { state: { justCreated: meetupId } });
     } catch (err) {
       console.error('Failed to submit meetup:', err);
-      alert(err.message || 'เกิดข้อผิดพลาดในการส่งคำขอนัดรับ');
+      const msg = err.message || 'เกิดข้อผิดพลาดในการส่งคำขอนัดรับ';
+      if (msg.includes('ซ้อนทับ') || msg.includes('เวลา')) {
+        setTimeError(msg);
+      } else {
+        alert(msg);
+      }
       setSubmittingBuy(false);
     }
-
   };
 
   if (loading) {
@@ -254,8 +290,11 @@ export function ProductDetailPage() {
     product
   );
 
+  const selectedPoint = meetupPoints.find((p) => p.name === selectedLocation);
+
   return (
-    <div className="space-y-4 max-w-6xl mx-auto">
+    // pb-24 บนมือถือ เพื่อไม่ให้แถบปุ่มด้านล่าง (fixed) บังเนื้อหา
+    <div className="mx-auto max-w-6xl space-y-4 pb-24 md:pb-0">
       {/* Top Back navigation */}
       <button
         onClick={() => navigate(-1)}
@@ -399,7 +438,8 @@ export function ProductDetailPage() {
               </Link>
             </div>
           ) : (
-            <div className="flex gap-2 sm:gap-2.5">
+            // ซ่อนบนมือถือ เพราะมีแถบปุ่มติดด้านล่างจอ (fixed) อยู่แล้ว ไม่ให้ปุ่มซ้ำกัน
+            <div className="hidden gap-2 sm:gap-2.5 md:flex">
               {/* ปุ่มซื้อสินค้า / นัดรับ */}
               <button
                 onClick={handleBuyClick}
@@ -523,21 +563,23 @@ export function ProductDetailPage() {
 
       {/* ─── Modal เลือกระหว่างทักแชทก่อน หรือ เลือกวันนัดรับเลย ─── */}
       {showActionChoiceModal && product && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl border border-orange-100 animate-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-xs sm:items-center sm:p-4 animate-in fade-in duration-150">
+          <div className="max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-3xl border border-orange-100 bg-white p-4 shadow-2xl sm:rounded-3xl sm:p-6 animate-in zoom-in-95 duration-150">
             {/* Header */}
-            <div className="flex items-start justify-between pb-3 border-b border-gray-100 mb-4">
-              <div>
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-gray-100 mb-4">
+              <div className="min-w-0">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-brand-600 bg-orange-50 px-2 py-0.5 rounded-md">
                   สั่งซื้อและนัดหมาย
                 </span>
                 <h3 className="text-lg font-black text-ink-900 mt-1">เลือกวิธีดำเนินการ</h3>
               </div>
               <button
+                type="button"
                 onClick={() => setShowActionChoiceModal(false)}
-                className="rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                aria-label="ปิด"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-500 transition-colors hover:border-orange-200 hover:text-[#f95721]"
               >
-                ✕
+                <X size={18} />
               </button>
             </div>
 
@@ -637,184 +679,208 @@ export function ProductDetailPage() {
         </div>
       )}
 
-      {/* ─── Modal ยืนยันการสั่งซื้อและนัดรับสินค้าทันที (Instant Buy & Meetup Modal) ─── */}
-
+      {/* ─── Modal ยืนยันการสั่งซื้อและนัดรับสินค้าทันที (Instant Buy & Meetup Modal) ───
+          มือถือ: เป็น bottom sheet เต็มความกว้าง หัว/ท้ายติดที่ เนื้อหากลางเลื่อนได้
+          เดสก์ท็อป: กล่องกลางจอ */}
       {showBuyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-lg rounded-3xl bg-white p-4 sm:p-6 shadow-2xl border border-orange-100 max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="flex items-start justify-between pb-4 border-b border-gray-100 mb-4">
-              <div>
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-xs sm:items-center sm:p-4 animate-in fade-in duration-150">
+          <div className="flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl border border-orange-100 bg-white shadow-2xl sm:rounded-3xl">
+
+            {/* Header (ติดบน) */}
+            <div className="flex shrink-0 items-start gap-3 border-b border-gray-100 px-4 py-3.5 sm:px-6 sm:py-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowBuyModal(false);
+                  setShowActionChoiceModal(true);
+                }}
+                aria-label="ย้อนกลับไปเลือกวิธีดำเนินการ"
+                title="ย้อนกลับ"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 transition-colors hover:border-orange-200 hover:text-[#f95721]"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <div className="min-w-0 flex-1">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-brand-600 bg-orange-50 px-2 py-0.5 rounded-md">
                   คำสั่งซื้อและการนัดหมาย
                 </span>
-                <h3 className="text-lg font-black text-ink-900 mt-1">ยืนยันการซื้อและส่งคำขอนัดรับ</h3>
+                <h3 className="mt-1 text-base font-black leading-snug text-ink-900 sm:text-lg">
+                  ยืนยันการซื้อและส่งคำขอนัดรับ
+                </h3>
               </div>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowBuyModal(false);
-                    setShowActionChoiceModal(true);
-                  }}
-                  className="text-xs font-bold text-gray-500 hover:text-brand-600 px-2 py-1 rounded-lg hover:bg-orange-50 transition-colors"
-                  title="ย้อนกลับไปเลือกวิธีดำเนินการ"
-                >
-                  ← ย้อนกลับ
-                </button>
-                <button
-                  onClick={() => setShowBuyModal(false)}
-                  className="rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-                >
-                  ✕
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setShowBuyModal(false)}
+                aria-label="ปิด"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-500 transition-colors hover:border-orange-200 hover:text-[#f95721]"
+              >
+                <X size={18} />
+              </button>
             </div>
 
-            {/* Product Summary */}
-            <div className="flex items-center gap-3.5 rounded-2xl bg-[#FAF6EC] p-3.5 border border-orange-200/60 mb-5">
-              <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-white shadow-xs">
-                {product.images?.[0]?.imageUrl ? (
-                  <img src={product.images[0].imageUrl} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center text-ink-300">
-                    <ShoppingBag size={24} />
+            <form onSubmit={handleConfirmBuyAndMeetup} className="flex min-h-0 flex-1 flex-col">
+              {/* เนื้อหา (เลื่อนได้) */}
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
+                {/* Product Summary */}
+                <div className="flex items-center gap-3 rounded-2xl border border-orange-200/60 bg-[#FAF6EC] p-3">
+                  <div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-white shadow-xs">
+                    {product.images?.[0]?.imageUrl ? (
+                      <img src={product.images[0].imageUrl} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-ink-300">
+                        <ShoppingBag size={22} />
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="font-extrabold text-sm text-ink-900 truncate">{product.title}</p>
-                <p className="text-base font-black text-[#f95721] mt-0.5">{formatCurrency(product.price)}</p>
-                <p className="text-xs text-ink-500">ผู้ขาย: <span className="font-semibold text-ink-700">{sellerDisplayName}</span></p>
-              </div>
-            </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-extrabold text-ink-900">{product.title}</p>
+                    <p className="mt-0.5 text-base font-black text-[#f95721]">{formatCurrency(product.price)}</p>
+                    <p className="truncate text-xs text-ink-500">
+                      ผู้ขาย: <span className="font-semibold text-ink-700">{sellerDisplayName}</span>
+                    </p>
+                  </div>
+                </div>
 
-            <form onSubmit={handleConfirmBuyAndMeetup} className="space-y-4">
-              {/* Safe Point Location */}
-              <div>
-                <label className="block text-xs font-bold text-ink-800 mb-1.5">
-                  📍 เลือกจุดนัดรับปลอดภัยใน มทร.อีสาน
-                </label>
-                <select
-                  value={selectedLocation}
-                  onChange={(e) => setSelectedLocation(e.target.value)}
-                  className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-ink-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                >
-                  {meetupPoints.map((point) => (
-                    <option key={point.id} value={point.name}>
-                      {point.icon || '📍'} {point.name} — {point.description}
-                    </option>
-                  ))}
-                </select>
-                <div className="mt-1.5 flex justify-end">
+                {/* Safe Point Location */}
+                <div>
+                  <label htmlFor="meetup-location" className="mb-1.5 block text-xs font-bold text-ink-800">
+                    📍 เลือกจุดนัดรับปลอดภัยใน มทร.อีสาน
+                  </label>
+                  <select
+                    id="meetup-location"
+                    value={selectedLocation}
+                    onChange={(e) => setSelectedLocation(e.target.value)}
+                    className="h-11 w-full min-w-0 truncate rounded-xl border border-gray-200 bg-white px-3.5 text-sm font-semibold text-ink-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+                  >
+                    {meetupPoints.map((point) => (
+                      <option key={point.id} value={point.name}>
+                        {point.icon || '📍'} {point.name}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedPoint?.description && (
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-gray-500">
+                      {selectedPoint.description}
+                    </p>
+                  )}
+                  <div className="mt-1.5 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowBuyModal(false);
+                        navigate(`/products/${product.id}/meetup`);
+                      }}
+                      className="inline-flex items-center gap-1 text-xs font-bold text-brand-600 hover:underline"
+                    >
+                      หรือเปิดแผนที่มหาวิทยาลัยแบบละเอียด <ArrowRight size={12} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Date & Time */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1 text-xs font-bold text-ink-800">
+                      📅 วันและเวลานัดรับ
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const now = new Date();
+                        const nowTime = localTimeString(now);
+                        setMeetupDate(localDateString(now));
+                        if (isWithinMeetupHours(nowTime)) {
+                          setMeetupTime(nowTime);
+                          setTimeError('');
+                        } else {
+                          setTimeError(`⏰ ตอนนี้อยู่นอกเวลานัดรับ — ${MEETUP_HOURS_TEXT}`);
+                        }
+                      }}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-orange-200/70 bg-orange-50 px-2.5 py-1 text-[11px] font-bold text-orange-600 transition-colors hover:bg-orange-100"
+                    >
+                      ⚡ นัดตอนนี้เลย
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2.5 min-[380px]:grid-cols-2">
+                    <div className="min-w-0">
+                      <label htmlFor="meetup-date" className="mb-1 block text-[11px] font-medium text-ink-500">วันที่สะดวก</label>
+                      <input
+                        id="meetup-date"
+                        type="date"
+                        value={meetupDate}
+                        min={localDateString()}
+                        onChange={(e) => setMeetupDate(e.target.value)}
+                        className="h-11 w-full min-w-0 rounded-xl border border-gray-200 bg-gray-50/50 px-3 text-sm font-semibold text-ink-900 outline-none focus:border-brand-500 focus:bg-white focus:ring-2 focus:ring-brand-100"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <label htmlFor="meetup-time" className="mb-1 block text-[11px] font-medium text-ink-500">เวลานัดรับ</label>
+                      <input
+                        id="meetup-time"
+                        type="time"
+                        value={meetupTime}
+                        min={MEETUP_START}
+                        max={MEETUP_END}
+                        onChange={(e) => {
+                          setMeetupTime(e.target.value);
+                          setTimeError('');
+                        }}
+                        className={`h-11 w-full min-w-0 rounded-xl border bg-gray-50/50 px-3 text-sm font-semibold text-ink-900 outline-none focus:bg-white focus:ring-2 focus:ring-brand-100 ${
+                          timeError ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-brand-500'
+                        }`}
+                      />
+                    </div>
+                  </div>
+
+                  {timeError ? (
+                    <p className="text-xs font-medium leading-relaxed text-red-500">{timeError}</p>
+                  ) : (
+                    <p className="text-[11px] text-gray-500">⏰ {MEETUP_HOURS_TEXT}</p>
+                  )}
+                </div>
+
+                {/* Safety Warning */}
+                <div className="rounded-xl border border-amber-200/80 bg-amber-50 p-3 text-xs leading-relaxed text-amber-900">
+                  <p className="mb-0.5 flex items-center gap-1 font-bold text-amber-800">
+                    <ShieldCheck size={14} className="text-amber-600" />
+                    ความปลอดภัยการซื้อขาย:
+                  </p>
+                  ตรวจสอบสินค้าให้ครบถ้วนต่อหน้าผู้ขาย ณ จุดนัดรับ ก่อนชำระเงินหรือโอนเงินเสมอ
+                </div>
+
+                {/* Prompt to chat first if needed */}
+                <div className="flex flex-col gap-1.5 rounded-xl border border-orange-100 bg-orange-50/60 p-3 text-xs text-gray-600 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
+                  <span>ยังไม่แน่ใจเรื่องวันเวลา? พูดคุยกับผู้ขายก่อน</span>
                   <button
                     type="button"
                     onClick={() => {
                       setShowBuyModal(false);
-                      navigate(`/products/${product.id}/meetup`);
+                      handleChatClick();
                     }}
-                    className="text-xs font-bold text-brand-600 hover:underline inline-flex items-center gap-1"
+                    className="flex shrink-0 items-center gap-1 font-bold text-[#f95721] hover:underline"
                   >
-                    หรือเปิดแผนที่มหาวิทยาลัยแบบละเอียด <ArrowRight size={12} />
+                    <MessageCircle size={13} />
+                    <span>ทักแชทตอนนี้</span>
                   </button>
                 </div>
               </div>
 
-              {/* Date & Time */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-ink-800 flex items-center gap-1">
-                    📅 วันและเวลานัดรับ
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const now = new Date();
-                      const hh = String(now.getHours()).padStart(2, '0');
-                      const mm = String(now.getMinutes()).padStart(2, '0');
-                      setMeetupDate(now.toISOString().split('T')[0]);
-                      setMeetupTime(`${hh}:${mm}`);
-                    }}
-                    className="inline-flex items-center gap-1 text-[11px] font-bold text-orange-600 bg-orange-50 hover:bg-orange-100 px-2.5 py-1 rounded-lg border border-orange-200/70 transition-colors"
-                  >
-                    ⚡ นัดตอนนี้เลย
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-2.5">
-                  <div>
-                    <label className="block text-[11px] font-medium text-ink-500 mb-1">วันที่สะดวก</label>
-                    <input
-                      type="date"
-                      value={meetupDate}
-                      onChange={(e) => setMeetupDate(e.target.value)}
-                      className="w-full rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 text-sm font-semibold text-ink-900 outline-none focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-medium text-ink-500 mb-1">เวลาโดยประมาณ</label>
-                    <input
-                      type="time"
-                      value={meetupTime}
-                      onChange={(e) => setMeetupTime(e.target.value)}
-                      className="w-full rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 text-sm font-semibold text-ink-900 outline-none focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                    />
-                  </div>
-                </div>
-              </div>
-              {/* Note to seller */}
-              <div>
-                <label className="block text-xs font-bold text-ink-800 mb-1.5">
-                  💬 ข้อความถึงผู้ขาย (ถ้ามี)
-                </label>
-                <input
-                  type="text"
-                  placeholder="เช่น สะดวกพักเที่ยง ใส่เสื้อสีดำครับ"
-                  value={meetupNote}
-                  onChange={(e) => setMeetupNote(e.target.value)}
-                  className="w-full rounded-xl border border-gray-200 px-3.5 py-2 text-sm text-ink-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                />
-              </div>
-
-              {/* Safety Warning */}
-              <div className="rounded-xl bg-amber-50 p-3 border border-amber-200/80 text-xs text-amber-900 leading-relaxed">
-                <p className="font-bold flex items-center gap-1 mb-0.5 text-amber-800">
-                  <ShieldCheck size={14} className="text-amber-600" />
-                  ความปลอดภัยการซื้อขาย:
-                </p>
-                ตรวจสอบสินค้าให้ครบถ้วนต่อหน้าผู้ขาย ณ จุดนัดรับ ก่อนชำระเงินหรือโอนเงินเสมอ
-              </div>
-
-              {/* Prompt to chat first if needed */}
-              <div className="flex items-center justify-between text-xs text-gray-600 bg-orange-50/60 p-2.5 rounded-xl border border-orange-100">
-                <span>ยังไม่แน่ใจเรื่องวันเวลา? พูดคุยกับผู้ขายก่อน</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowBuyModal(false);
-                    handleChatClick();
-                  }}
-                  className="font-bold text-[#f95721] hover:underline shrink-0 ml-2 flex items-center gap-1"
-                >
-                  <MessageCircle size={13} />
-                  <span>ทักแชทตอนนี้</span>
-                </button>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex gap-2.5 pt-1">
+              {/* Action Buttons (ติดล่าง) */}
+              <div className="flex shrink-0 gap-2.5 border-t border-gray-100 bg-white px-4 pt-3 pb-[calc(env(safe-area-inset-bottom,0px)+12px)] sm:px-6 sm:pb-4">
                 <button
                   type="button"
                   onClick={() => setShowBuyModal(false)}
-                  className="flex-1 rounded-xl border border-gray-200 bg-white py-3 text-sm font-bold text-ink-600 hover:bg-gray-50 transition-colors"
+                  className="h-12 flex-1 rounded-xl border border-gray-200 bg-white text-sm font-bold text-ink-600 transition-colors hover:bg-gray-50"
                 >
                   ยกเลิก
                 </button>
                 <button
                   type="submit"
                   disabled={submittingBuy}
-                  className="flex-1 rounded-xl bg-gradient-to-r from-brand-500 to-orange-500 py-3 text-sm font-extrabold text-white shadow-md hover:from-brand-600 hover:to-orange-600 active:scale-98 transition-all"
+                  className="h-12 flex-[1.6] rounded-xl bg-gradient-to-r from-brand-500 to-orange-500 px-2 text-sm font-extrabold text-white shadow-md transition-all hover:from-brand-600 hover:to-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {submittingBuy ? 'กำลังส่งคำขอ...' : 'ยืนยันสั่งซื้อและนัดรับ →'}
+                  {submittingBuy ? 'กำลังส่งคำขอ...' : 'ยืนยันสั่งซื้อและนัดรับ'}
                 </button>
               </div>
             </form>

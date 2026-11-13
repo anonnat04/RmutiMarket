@@ -1,4 +1,4 @@
-import { Heart, MessageCircle, Search, ShoppingBag, Tag, X, User, LogOut, LogIn, UserPlus, ShieldCheck } from 'lucide-react';
+import { Heart, MessageCircle, Search, ShoppingBag, Tag, X, User, LogOut, LogIn, UserPlus, ShieldCheck, ChevronDown } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useState, useRef, useEffect } from 'react';
 import { NotificationDropdown } from './NotificationDropdown';
@@ -9,7 +9,6 @@ import logoImg from '@/assets/logo.png';
 
 export function Navbar() {
   const [q, setQ] = useState('');
-  const [searchFocused, setSearchFocused] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const menuRef = useRef(null);
   const navigate = useNavigate();
@@ -65,26 +64,33 @@ export function Navbar() {
             />
           </Link>
 
-          {/* Search — desktop only */}
+          {/* Search — desktop only
+              ดีไซน์: กล่องขาวมนเดียว มี padding 4px ล้อมรอบ ปุ่มค้นหาเป็นก้อนสีส้มมนอยู่ข้างใน
+              จึงไม่มีขอบปุ่มโดนตัดมุม/เห็นเส้นขาวข้างปุ่มเหมือนเดิม และใช้สีส้มเดียวกับแถบ Navbar */}
           <form onSubmit={handleSearch} className="mx-3 hidden md:flex flex-1 max-w-2xl items-center">
-            <div className={`flex w-full items-center rounded-lg overflow-hidden bg-white transition-all duration-200 ${
-              searchFocused ? 'ring-2 ring-white/50 shadow-lg' : 'shadow-sm'
-            }`}>
-              <select
-                value={searchType}
-                onChange={(e) => setSearchType(e.target.value)}
-                aria-label="เลือกประเภทที่ต้องการค้นหา"
-                className="bg-orange-50/70 hover:bg-orange-100/70 text-xs font-bold text-ink-800 px-3 py-2.5 border-r border-gray-200 outline-none cursor-pointer transition-colors shrink-0"
-              >
-                <option value="all">ทั้งหมด</option>
-                <option value="products">สินค้า</option>
-                <option value="wantToBuy">โพสต์ตามหา</option>
-              </select>
+            <div className="flex h-11 w-full items-stretch gap-1 rounded-xl bg-white p-1 shadow-sm transition-shadow duration-200 focus-within:shadow-lg focus-within:ring-2 focus-within:ring-white/60">
+              {/* เลือกประเภท */}
+              <div className="relative shrink-0">
+                <select
+                  value={searchType}
+                  onChange={(e) => setSearchType(e.target.value)}
+                  aria-label="เลือกประเภทที่ต้องการค้นหา"
+                  className="h-full cursor-pointer appearance-none rounded-lg bg-orange-50 pl-3.5 pr-8 text-xs font-bold text-ink-800 outline-none transition-colors hover:bg-orange-100 focus-visible:ring-2 focus-visible:ring-brand-300"
+                >
+                  <option value="all">ทั้งหมด</option>
+                  <option value="products">สินค้า</option>
+                  <option value="wantToBuy">โพสต์ตามหา</option>
+                </select>
+                <ChevronDown
+                  size={14}
+                  className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-brand-500"
+                />
+              </div>
+
+              {/* ช่องค้นหา */}
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                onFocus={() => setSearchFocused(true)}
-                onBlur={() => setSearchFocused(false)}
                 placeholder={
                   searchType === 'wantToBuy'
                     ? 'ค้นหาโพสต์ตามหา, งบประมาณ, รายละเอียด...'
@@ -92,16 +98,25 @@ export function Navbar() {
                     ? 'ค้นหาชื่อสินค้า, ราคา, รายละเอียด...'
                     : 'ค้นหาสินค้า, ราคา, รายละเอียด หรือโพสต์ตามหา...'
                 }
-                className="w-full bg-transparent text-sm text-ink-900 outline-none placeholder:text-gray-400 px-4 py-2.5"
+                className="min-w-0 flex-1 bg-transparent px-3 text-sm text-ink-900 outline-none placeholder:text-gray-400"
               />
+
               {q && (
-                <button type="button" onClick={() => setQ('')} className="shrink-0 px-2 text-gray-400 hover:text-gray-700">
+                <button
+                  type="button"
+                  onClick={() => setQ('')}
+                  aria-label="ล้างคำค้นหา"
+                  className="shrink-0 self-center rounded-full p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                >
                   <X size={15} />
                 </button>
               )}
+
+              {/* ปุ่มค้นหา */}
               <button
                 type="submit"
-                className="shrink-0 flex items-center justify-center bg-brand-600 hover:bg-brand-700 text-white px-4 h-full py-2.5 transition-colors"
+                aria-label="ค้นหา"
+                className="flex w-12 shrink-0 items-center justify-center rounded-lg bg-brand-500 text-white outline-none transition-colors hover:bg-brand-600 active:bg-brand-700 focus-visible:ring-2 focus-visible:ring-brand-300"
               >
                 <Search size={18} />
               </button>
@@ -226,31 +241,32 @@ export function Navbar() {
           </div>
         </div>
 
-        {/* ── Row 2: Search bar — mobile only ── */}
+        {/* ── Row 2: Search bar — mobile only (สไตล์เดียวกับ desktop) ── */}
         <div className="pb-2.5 md:hidden">
           <form onSubmit={handleSearch} className="flex w-full items-center">
-            <div className={`flex w-full items-center rounded-xl overflow-hidden bg-white shadow-xs transition-all duration-200 ${
-              searchFocused ? 'ring-2 ring-white/60 shadow-md' : ''
-            }`}>
-              <div className="pl-3 text-gray-400 shrink-0">
+            <div className="flex h-11 w-full items-stretch gap-1 rounded-xl bg-white p-1 shadow-sm transition-shadow duration-200 focus-within:shadow-md focus-within:ring-2 focus-within:ring-white/60">
+              <div className="flex shrink-0 items-center pl-2.5 text-gray-400">
                 <Search size={16} />
               </div>
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                onFocus={() => setSearchFocused(true)}
-                onBlur={() => setSearchFocused(false)}
                 placeholder="ค้นหาสินค้า, ราคา, รายละเอียด..."
-                className="w-full bg-transparent text-[13px] text-ink-900 outline-none placeholder:text-gray-400 px-2.5 py-2.5"
+                className="min-w-0 flex-1 bg-transparent px-2 text-[13px] text-ink-900 outline-none placeholder:text-gray-400"
               />
               {q && (
-                <button type="button" onClick={() => setQ('')} className="shrink-0 px-2 text-gray-400 hover:text-gray-700">
+                <button
+                  type="button"
+                  onClick={() => setQ('')}
+                  aria-label="ล้างคำค้นหา"
+                  className="shrink-0 self-center rounded-full p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                >
                   <X size={15} />
                 </button>
               )}
               <button
                 type="submit"
-                className="shrink-0 flex items-center justify-center bg-brand-600 hover:bg-brand-700 active:scale-95 text-white px-3.5 py-2.5 transition-all text-xs font-bold"
+                className="shrink-0 rounded-lg bg-brand-500 px-4 text-xs font-bold text-white outline-none transition-colors hover:bg-brand-600 active:bg-brand-700 focus-visible:ring-2 focus-visible:ring-brand-300"
               >
                 ค้นหา
               </button>
