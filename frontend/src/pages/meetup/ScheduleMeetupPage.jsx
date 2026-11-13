@@ -9,6 +9,35 @@ import { getMeetupPointById, CAMPUS_CENTER, CAMPUS_BOUNDARY } from '@/constants/
 import { isPointInPolygon } from '@/utils/distance';
 import { api } from '@/lib/api';
 
+// ─── ช่วงเวลาที่อนุญาตให้นัดรับ ─────────────────────────────────────────────
+const MEETUP_START = '08:00';
+const MEETUP_END = '20:00';
+const MEETUP_HOURS_TEXT = 'นัดรับได้เฉพาะเวลา 08:00 – 20:00 น. เท่านั้น';
+
+// ช่องเวลาแนะนำ: 08:00 ถึง 20:00 ทุก 30 นาที (25 ช่อง จัดเป็นกริด 5 คอลัมน์พอดี)
+const TIME_SLOTS = Array.from({ length: 25 }, (_, i) => {
+  const m = 8 * 60 + i * 30;
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+});
+
+function isWithinMeetupHours(t) {
+  if (!t) return false;
+  const s = String(t).slice(0, 5);
+  return s >= MEETUP_START && s <= MEETUP_END;
+}
+
+// วันที่ตามเวลาเครื่อง (toISOString ใช้ UTC ทำให้วันที่เพี้ยนช่วงเที่ยงคืนถึงเช้าตามเวลาไทย)
+function localDateString(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function localTimeString(d = new Date()) {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 // ─── Step indicator ────────────────────────────────────────────────────────
 const STEPS = ['เลือกสินค้า', 'เลือกวัน/เวลา/สถานที่', 'ส่งคำขอนัดรับ'];
 
@@ -61,12 +90,11 @@ export function ScheduleMeetupPage() {
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [existingMeetups, setExistingMeetups] = useState([]);
-  const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(() => localDateString());
   const [time, setTime] = useState(() => {
-    const now = new Date();
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
-    return `${hh}:${mm}`;
+    // ถ้าตอนนี้อยู่นอกช่วง 08:00–20:00 ให้เริ่มที่ 09:00 แทน
+    const now = localTimeString();
+    return isWithinMeetupHours(now) ? now : '09:00';
   });
   const [locationValue, setLocationValue] = useState(null); // { type, id } | { type, lat, lng, name }
   const [errors, setErrors] = useState({});
@@ -129,10 +157,11 @@ export function ScheduleMeetupPage() {
     const next = {};
     if (!date) next.date = 'กรุณาเลือกวันที่';
     if (!time) next.time = 'กรุณาเลือกเวลา';
+    else if (!isWithinMeetupHours(time)) next.time = `⏰ ${MEETUP_HOURS_TEXT}`;
     if (!locationValue) next.location = 'กรุณาเลือกจุดนัดรับบนแผนที่';
 
     // ── ตรวจสอบเวลานัดหมายซ้อนทับ ──
-    if (date && time) {
+    if (date && time && !next.time) {
       const conflict = getConflictingMeetup(date, time);
       if (conflict) {
         const conflictTitle = conflict.productTitle || conflict.product?.title || 'รายการอื่น';
@@ -228,13 +257,6 @@ export function ScheduleMeetupPage() {
     }
   };
 
-  // สร้าง time slot แนะนำ
-  const timeSlots = [];
-  for (let h = 8; h <= 22; h++) {
-    timeSlots.push(`${String(h).padStart(2, '0')}:00`);
-    if (h < 22) timeSlots.push(`${String(h).padStart(2, '0')}:30`);
-  }
-
   return (
     <div className="mx-auto max-w-2xl">
       {/* ─── Header ─────────────────────────────────────────── */}
@@ -315,6 +337,9 @@ export function ScheduleMeetupPage() {
           <p className="mt-1">
             สามารถนัดรับสินค้าได้เฉพาะพื้นที่ภายในมหาวิทยาลัย (กรอบสีแดง) เท่านั้น ไม่อนุญาตนัดรับนอกเขตมหาวิทยาลัยเพื่อความปลอดภัยของทั้งผู้ซื้อและผู้ขาย โปรดเลือกจุดปักหมุดที่ระบบจัดเตรียมไว้
           </p>
+          <p className="mt-1 font-semibold text-orange-950">
+            ⏰ {MEETUP_HOURS_TEXT}
+          </p>
         </div>
       </div>
 
@@ -322,14 +347,14 @@ export function ScheduleMeetupPage() {
         {/* ─── วันที่และเวลา ──────────────────────────────────── */}
         <div className="cm-card p-4">
           <p className="mb-3 text-sm font-bold text-ink-900">📅 วันที่และเวลานัดรับ</p>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {/* วันที่ */}
             <div>
               <label className="mb-1.5 block text-xs font-medium text-ink-700">วันที่นัดรับ</label>
               <input
                 type="date"
                 value={date}
-                min={new Date().toISOString().split('T')[0]}
+                min={localDateString()}
                 onChange={(e) => setDate(e.target.value)}
                 className="block w-full rounded-xl border border-surface-border bg-white px-3 py-2.5 text-sm text-ink-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
               />
@@ -344,10 +369,14 @@ export function ScheduleMeetupPage() {
                   type="button"
                   onClick={() => {
                     const now = new Date();
-                    const hh = String(now.getHours()).padStart(2, '0');
-                    const mm = String(now.getMinutes()).padStart(2, '0');
-                    setDate(now.toISOString().split('T')[0]);
-                    setTime(`${hh}:${mm}`);
+                    const nowTime = localTimeString(now);
+                    setDate(localDateString(now));
+                    if (isWithinMeetupHours(nowTime)) {
+                      setTime(nowTime);
+                      setErrors((prev) => ({ ...prev, time: null }));
+                    } else {
+                      setErrors((prev) => ({ ...prev, time: `⏰ ตอนนี้อยู่นอกเวลานัดรับ — ${MEETUP_HOURS_TEXT}` }));
+                    }
                   }}
                   className="text-[11px] font-bold text-orange-600 hover:underline"
                 >
@@ -357,21 +386,30 @@ export function ScheduleMeetupPage() {
               <input
                 type="time"
                 value={time}
-                onChange={(e) => setTime(e.target.value)}
+                min={MEETUP_START}
+                max={MEETUP_END}
+                onChange={(e) => {
+                  setTime(e.target.value);
+                  setErrors((prev) => ({ ...prev, time: null }));
+                }}
                 className="block w-full rounded-xl border border-surface-border bg-white px-3 py-2.5 text-sm text-ink-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
               />
               {errors.time && <p className="mt-1 text-xs font-medium text-red-500">{errors.time}</p>}
-              <p className="mt-1 text-[10px] text-gray-400">เลือกเวลาใดก็ได้ตามที่ตกลงกันในแชท (ต้องไม่ซ้อนทับกับนัดรับอื่น)</p>
+              <p className="mt-1 text-[10px] text-gray-400">
+                {MEETUP_HOURS_TEXT} · ต้องไม่ซ้อนทับกับนัดรับอื่น
+              </p>
             </div>
           </div>
 
-          {/* Time Slot แนะนำ */}
+          {/* Time Slot แนะนำ (08:00 – 20:00) */}
           {date && (
-            <div className="mt-3">
-              <p className="mb-2 text-xs font-medium text-ink-500">⏰ เวลาที่แนะนำ</p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {timeSlots.map((t) => {
+            <div className="mt-4">
+              <p className="text-xs font-bold text-ink-700">⏰ เวลาที่แนะนำ</p>
+              <p className="mb-2 mt-0.5 text-[11px] text-gray-400">{MEETUP_HOURS_TEXT}</p>
+              <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
+                {TIME_SLOTS.map((t) => {
                   const isBusy = !!getConflictingMeetup(date, t);
+                  const selected = time === t;
                   return (
                     <button
                       key={t}
@@ -386,25 +424,20 @@ export function ScheduleMeetupPage() {
                       }}
                       disabled={isBusy}
                       title={isBusy ? `เวลา ${t} น. ติดนัดรับอื่นแล้ว` : `เลือกเวลา ${t} น.`}
-                      style={{
-                        padding: '4px 12px',
-                        borderRadius: 999,
-                        border: `1.5px solid ${isBusy ? '#e5e7eb' : time === t ? '#f97316' : '#e5e7eb'}`,
-                        background: isBusy ? '#f3f4f6' : time === t ? '#f97316' : '#fff',
-                        color: isBusy ? '#9ca3af' : time === t ? '#fff' : '#374151',
-                        fontSize: 11,
-                        fontWeight: 600,
-                        cursor: isBusy ? 'not-allowed' : 'pointer',
-                        textDecoration: isBusy ? 'line-through' : 'none',
-                        opacity: isBusy ? 0.6 : 1,
-                        transition: 'all 0.15s',
-                      }}
+                      className={`h-9 rounded-full border text-xs font-bold transition-colors ${
+                        isBusy
+                          ? 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400 line-through opacity-60'
+                          : selected
+                          ? 'border-[#f97316] bg-[#f97316] text-white'
+                          : 'border-gray-200 bg-white text-gray-700 hover:border-orange-300 hover:text-[#f97316]'
+                      }`}
                     >
-                      {t} {isBusy ? '(ไม่ว่าง)' : ''}
+                      {t}
                     </button>
                   );
                 })}
               </div>
+              <p className="mt-2 text-[10px] text-gray-400">ช่องที่ขีดฆ่า = ติดนัดรับอื่นของคุณแล้ว</p>
             </div>
           )}
         </div>
@@ -419,8 +452,8 @@ export function ScheduleMeetupPage() {
         </div>
 
         {/* ─── ส่งคำขอ ─────────────────────────────────────────── */}
-        <Button type="submit" size="lg" disabled={submitting}>
-          <span className="flex items-center justify-center gap-2">
+        <Button type="submit" size="lg" disabled={submitting} className="w-full">
+          <span className="flex w-full items-center justify-center gap-2">
             <CalendarClock size={18} />
             {submitting ? 'กำลังส่งคำขอ...' : 'ส่งคำขอนัดรับสินค้า'}
             {!submitting && <ChevronRight size={16} />}

@@ -423,8 +423,8 @@ async function getAdminReviews(req, res, next) {
       .from("reviews")
       .select(`
         id, transaction_id, reviewer_id, reviewee_id, rating, comment, created_at, updated_at,
-        reviewer:users!reviewer_id(id, username, full_name, avatar_url, profile_image_url),
-        reviewee:users!reviewee_id(id, username, full_name, avatar_url, profile_image_url),
+        reviewer:users!reviewer_id(id, username, full_name, university_email, avatar_url, profile_image_url),
+        reviewee:users!reviewee_id(id, username, full_name, university_email, avatar_url, profile_image_url),
         images:review_images(id, image_url),
         transactions(id, buyer_id, seller_id, products(id, title, price))
       `, { count: "exact" });
@@ -442,9 +442,12 @@ async function getAdminReviews(req, res, next) {
     const { data, error, count } = await query;
     if (error) throw error;
 
+    const nameOf = (u) => u?.username || u?.full_name || null;
+    const avatarOf = (u) => u?.avatar_url || u?.profile_image_url || null;
+
     const reviews = (data || []).map((r) => {
-      const reviewer = r.reviewer ? formatUser(r.reviewer) : {};
-      const reviewee = r.reviewee ? formatUser(r.reviewee) : {};
+      const rer = r.reviewer || {};
+      const ree = r.reviewee || {};
       const prod = r.transactions?.products || {};
 
       return {
@@ -454,15 +457,31 @@ async function getAdminReviews(req, res, next) {
         comment: r.comment || "",
         created_at: r.created_at,
         product_title: prod.title || "สินค้า",
+
+        // ฟิลด์แบน (หน้า AdminReviewsPage อ่านแบบนี้)
+        reviewer_id: r.reviewer_id,
+        reviewer_name: nameOf(rer),
+        reviewer_full_name: rer.full_name || null,
+        reviewer_email: rer.university_email || null,
+        reviewer_avatar: avatarOf(rer),
+        reviewee_id: r.reviewee_id,
+        reviewee_name: nameOf(ree),
+        reviewee_full_name: ree.full_name || null,
+        reviewee_email: ree.university_email || null,
+        reviewee_avatar: avatarOf(ree),
+
+        // ก้อนซ้อน (เผื่อที่อื่นใช้อยู่)
         reviewer: {
-          id: reviewer.id,
-          display_name: reviewer.displayName || reviewer.username,
-          avatar_url: reviewer.avatarUrl,
+          id: rer.id,
+          display_name: nameOf(rer),
+          email: rer.university_email || null,
+          avatar_url: avatarOf(rer),
         },
         reviewee: {
-          id: reviewee.id,
-          display_name: reviewee.displayName || reviewee.username,
-          avatar_url: reviewee.avatarUrl,
+          id: ree.id,
+          display_name: nameOf(ree),
+          email: ree.university_email || null,
+          avatar_url: avatarOf(ree),
         },
         images: (r.images || []).map((img) => img.image_url),
       };
@@ -549,6 +568,7 @@ async function rejectVerification(req, res) {
 
 
 // POST /api/admin/users/:userId/score — ปรับ/ตัดคะแนนความน่าเชื่อถือของผู้ใช้
+// POST /api/admin/users/:userId/score — ปรับ/ตัดคะแนนความน่าเชื่อถือของผู้ใช้
 async function adjustUserScore(req, res, next) {
   try {
     const { userId } = req.params;
@@ -570,35 +590,35 @@ async function adjustUserScore(req, res, next) {
 
     const currentScore = user.trust_score ?? 100;
     const newScore = Math.max(0, Math.min(100, currentScore + delta));
+    const actualChange = newScore - currentScore;
 
-    await supabase.from("users").update({ trust_score: newScore }).eq("id", targetUid);
+    const { error: updErr } = await supabase
+      .from("users")
+      .update({ trust_score: newScore, updated_at: new Date().toISOString() })
+      .eq("id", targetUid);
+    if (updErr) throw updErr;
 
-    // บันทึกประวัติคะแนน
-    await supabase.from("user_score_history").insert({
+    // บันทึกประวัติคะแนน (ค่า source_type ต้องเป็น PENALTY / RECOVERY / ADMIN_ADJUST ตาม CHECK ของตาราง)
+    const { error: histErr } = await supabase.from("user_score_history").insert({
       user_id: targetUid,
-      change_amount: delta,
+      change_amount: actualChange,
       score_after: newScore,
-      source_type: delta < 0 ? "PENALTY" : "ADMIN_ADJUSTMENT",
+      source_type: "ADMIN_ADJUST",
       reason: reason,
     });
+    if (histErr) console.warn("[adjustUserScore] history insert failed:", histErr.message);
 
-    if (delta < 0) {
-      await supabase.from("user_penalties").insert({
-        user_id: targetUid,
-        reason: reason,
-      });
-    }
-
-    // แจ้งเตือนผู้ใช้
-    const notifTitle = delta < 0 ? `⚠️ คุณถูกตัดคะแนนความน่าเชื่อถือ ${delta} คะแนน` : `🎉 คะแนนความน่าเชื่อถือของคุณเพิ่มขึ้น +${delta} คะแนน`;
-    const notifMsg = `เหตุผล: ${reason} (คะแนนปัจจุบัน: ${newScore}/100)`;
-    await supabase.from("notifications").insert({
+    // แจ้งเตือนผู้ใช้ (ตาราง notifications ไม่มีคอลัมน์ link)
+    const notifTitle = delta < 0
+      ? `⚠️ คุณถูกตัดคะแนนความน่าเชื่อถือ ${delta} คะแนน`
+      : `🎉 คะแนนความน่าเชื่อถือของคุณเพิ่มขึ้น +${delta} คะแนน`;
+    const { error: notifErr } = await supabase.from("notifications").insert({
       user_id: targetUid,
       type: "system",
       title: notifTitle,
-      message: notifMsg,
-      link: "/profile",
+      message: `เหตุผล: ${reason} (คะแนนปัจจุบัน: ${newScore}/100)`,
     });
+    if (notifErr) console.warn("[adjustUserScore] notification insert failed:", notifErr.message);
 
     await logAdminAction(req.admin?.id, "user.adjust_score", "user", targetUid, { delta, newScore, reason }, req.ip);
 
