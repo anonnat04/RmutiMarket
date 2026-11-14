@@ -26,7 +26,7 @@ const uploadRoutes = require("./routes/uploadRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 // ตอน require routes (ต่อจาก reportRoutes)
 const myRecordsRoutes = require("./routes/myRecordsRoutes");
-
+const supportRoutes = require("./routes/supportRoutes");
 
 // Middleware
 const { globalLimiter } = require("./middleware/rateLimiter");
