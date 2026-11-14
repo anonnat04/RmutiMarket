@@ -169,6 +169,36 @@ async function getMeetupPoints(req, res, next) {
 }
 
 // ----------------------------------------------------------------
+// Helper: ยกเลิกธุรกรรม + คืนสินค้าเป็นว่าง (AVAILABLE) พร้อมเช็ค error ไม่ให้พังเงียบ
+// ----------------------------------------------------------------
+async function cancelTransactionAndRelease(transactionId, productId, nowIso) {
+  let ok = true;
+  if (transactionId) {
+    const { error } = await supabase
+      .from("transactions")
+      .update({ status_id: 4, cancelled_at: nowIso }) // 4 = CANCELLED
+      .eq("id", transactionId)
+      .in("status_id", [1, 2]); // ไม่แตะธุรกรรมที่เสร็จสิ้น/ยกเลิกไปแล้ว
+    if (error) {
+      ok = false;
+      console.error(`[cancelTransactionAndRelease] cancel transaction #${transactionId} failed:`, error.message);
+    }
+  }
+  if (productId) {
+    const { error } = await supabase
+      .from("products")
+      .update({ status_id: 1 }) // 1 = AVAILABLE
+      .eq("id", productId)
+      .eq("status_id", 2); // คืนเฉพาะสินค้าที่ถูกจอง (RESERVED) ไม่ทับสถานะขายแล้ว
+    if (error) {
+      ok = false;
+      console.error(`[cancelTransactionAndRelease] release product #${productId} failed:`, error.message);
+    }
+  }
+  return ok;
+}
+
+// ----------------------------------------------------------------
 // Helper: Map Appointment to Frontend UI Model
 // ----------------------------------------------------------------
 function mapAppointment(a) {
@@ -286,10 +316,78 @@ function mapAppointment(a) {
 }
 
 // ----------------------------------------------------------------
+// Helper: ลบคำขอนัดที่ "เลยเวลานัดแล้วแต่ไม่มีใครกดยืนยัน" (PENDING = 1)
+// ไม่ตัดคะแนนใคร ยกเลิกธุรกรรม คืนสินค้าเป็นว่าง และแจ้งทั้งสองฝ่าย
+// ----------------------------------------------------------------
+async function expireStalePendingAppointments() {
+  try {
+    const { data: pending, error } = await supabase
+      .from("appointments")
+      .select("id, appointment_date, appointment_time, transaction_id, transactions(id, product_id, buyer_id, seller_id)")
+      .eq("status_id", 1)
+      .lte("appointment_date", todayInBangkok());
+
+    if (error || !pending?.length) return;
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+
+    for (const appt of pending) {
+      const apptDate = appointmentToDate(appt.appointment_date, appt.appointment_time);
+      if (isNaN(apptDate.getTime()) || apptDate > now) continue; // ยังไม่ถึงเวลานัด
+
+      // "จอง" การลบ เฉพาะแถวที่ยังเป็น PENDING กันประมวลผลซ้ำ/ชนกับการกดยืนยัน
+      const { data: removed } = await supabase
+        .from("appointments")
+        .delete()
+        .eq("id", appt.id)
+        .eq("status_id", 1)
+        .select("id");
+      if (!removed?.length) continue;
+
+      const txn = appt.transactions || {};
+      console.log(`🧹 [Expire Pending] Appointment #${appt.id} passed its time without confirmation — removed`);
+
+      await cancelTransactionAndRelease(appt.transaction_id, txn.product_id, nowIso);
+
+      for (const uid of [txn.buyer_id, txn.seller_id]) {
+        if (!uid) continue;
+        const notif = {
+          user_id: uid,
+          type: "meetup_cancelled",
+          title: "คำขอนัดรับหมดอายุ",
+          message: "คำขอนัดรับสินค้าถูกลบ เนื่องจากเลยเวลานัดโดยไม่มีการยืนยัน (ไม่มีการตัดคะแนน) สามารถขอนัดใหม่ได้",
+          reference_type: "meetup",
+          reference_id: appt.id,
+        };
+        try {
+          const { data: ins } = await supabase.from("notifications").insert(notif).select("*").single();
+          sendNotificationToUser(uid, ins || notif);
+        } catch (_) {
+          sendNotificationToUser(uid, notif);
+        }
+      }
+
+      emitMeetupUpdate(appt.id, {
+        meetupId: appt.id,
+        status: "expired",
+        statusCode: "EXPIRED",
+        buyerId: txn.buyer_id,
+        sellerId: txn.seller_id,
+      });
+    }
+  } catch (err) {
+    console.error("[expireStalePendingAppointments] error:", err.message);
+  }
+}
+
+// ----------------------------------------------------------------
 // Helper: ตรวจสอบและตัดจบนัดหมายที่เลยเวลา (threshold_minutes ของกฎ NO_SHOW) และตัดคะแนนคนไม่มาเช็คอิน
 // ----------------------------------------------------------------
 async function checkAndProcessNoShows() {
   try {
+    await expireStalePendingAppointments();
+
     const noShowRule = await getPenaltyRule("NO_SHOW");
     const graceMin = noShowRule?.threshold_minutes ?? NO_SHOW_GRACE_MINUTES;
 
@@ -354,18 +452,7 @@ async function checkAndProcessNoShows() {
         console.log(`🚨 [NO_SHOW Auto-Close] Appointment #${appt.id} passed ${graceMin}m deadline. Buyer checked in: ${buyerCheckedIn}, Seller checked in: ${sellerCheckedIn}`);
 
         // 2. ยกเลิก Transaction และนำสินค้ากลับมาวางขายใหม่ (AVAILABLE)
-        if (appt.transaction_id) {
-          await supabase.from("transactions").update({
-            status_id: 4, // CANCELLED
-            cancelled_at: nowIso,
-          }).eq("id", appt.transaction_id);
-        }
-
-        if (txn.product_id) {
-          await supabase.from("products").update({
-            status_id: 1, // AVAILABLE
-          }).eq("id", txn.product_id);
-        }
+        await cancelTransactionAndRelease(appt.transaction_id, txn.product_id, nowIso);
 
         // 3. ตัดคะแนนความน่าเชื่อถือของผู้ที่ไม่มาเช็คอิน
         if (!buyerCheckedIn && txn.buyer_id) {
@@ -1113,14 +1200,7 @@ async function cancelMeetup(req, res, next) {
       return res.status(400).json({ error: "นัดหมายนี้สิ้นสุดแล้ว ไม่สามารถยกเลิกได้" });
     }
 
-    await supabase.from("transactions").update({
-      status_id: 4,
-      cancelled_at: nowIso,
-    }).eq("id", appt.transaction_id);
-
-    if (appt.transactions?.product_id) {
-      await supabase.from("products").update({ status_id: 1 }).eq("id", appt.transactions.product_id);
-    }
+    await cancelTransactionAndRelease(appt.transaction_id, appt.transactions?.product_id, nowIso);
 
     // ── ตัดคะแนนเฉพาะคนที่กดยกเลิก + แจ้งเตือน ──
     if (lateRule) {

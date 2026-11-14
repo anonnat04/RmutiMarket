@@ -24,6 +24,9 @@ const returnRoutes = require("./routes/returnRoutes");
 const wantToBuyRoutes = require("./routes/wantToBuyRoutes");
 const uploadRoutes = require("./routes/uploadRoutes");
 const reportRoutes = require("./routes/reportRoutes");
+// ตอน require routes (ต่อจาก reportRoutes)
+const myRecordsRoutes = require("./routes/myRecordsRoutes");
+
 
 // Middleware
 const { globalLimiter } = require("./middleware/rateLimiter");
@@ -94,7 +97,8 @@ app.use("/api/returns", returnRoutes);
 app.use("/api/want-to-buy", wantToBuyRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/reports", reportRoutes);
-
+app.use("/api/me", myRecordsRoutes);
+app.use("/api/support", supportRoutes);
 // ── Health Check & Debug Error Test ──────────────────────────────
 app.get("/api/health", (_req, res) => res.json({
   ok: true,

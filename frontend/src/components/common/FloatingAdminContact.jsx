@@ -2,12 +2,17 @@ import { useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Headset, X, Send, CheckCircle2, QrCode, ArrowLeft } from 'lucide-react';
 import { useNotificationStore } from '@/store/notificationStore';
-import { useReportStore } from '@/store/reportStore';
 import { useAuthStore } from '@/store/authStore';
 import { api } from '@/lib/api';
 import { TermsModal } from '@/components/views/TermsModal';
 import iconRules from '@/assets/iconrlues.png';
 import qrCodeImg from '@/assets/QR.jpg';
+
+const ISSUE_TYPES = [
+  { key: 'general', label: 'สอบถามทั่วไป' },
+  { key: 'scam', label: 'แจ้งโกง/มิจฉาชีพ' },
+  { key: 'system', label: 'แจ้งปัญหาระบบ' },
+];
 
 export function FloatingAdminContact() {
   const [open, setOpen] = useState(false);
@@ -17,6 +22,7 @@ export function FloatingAdminContact() {
   const [message, setMessage] = useState('');
   const [sentSuccess, setSentSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
   const addNotification = useNotificationStore((s) => s.addNotification);
   const location = useLocation();
@@ -26,47 +32,34 @@ export function FloatingAdminContact() {
     e.preventDefault();
     if (!message.trim() || submitting) return;
 
-    setSubmitting(true);
-
     const user = useAuthStore.getState().user;
-    const catLabel =
-      issueType === 'scam'
-        ? 'แจ้งโกง/มิจฉาชีพ'
-        : issueType === 'system'
-        ? 'แจ้งปัญหาระบบ'
-        : 'สอบถามทั่วไป';
-    const reporterName =
-      user?.name || user?.full_name || user?.display_name || user?.username || 'ผู้ใช้ในระบบ';
-    const reporterEmail = user?.email || 'student@rmuti.ac.th';
-
-    try {
-      await api.createReport({
-        targetType: 'support_ticket',
-        targetId: Date.now(),
-        targetTitle: `ศูนย์ช่วยเหลือ: ${catLabel}`,
-        targetUserName: '-',
-        category: catLabel,
-        description: message.trim(),
-      });
-    } catch (err) {
-      console.warn('API support_ticket error (saved to localStore):', err?.message);
+    if (!user) {
+      setErrorMsg('กรุณาเข้าสู่ระบบก่อนส่งเรื่องถึงแอดมิน');
+      return;
     }
 
-    useReportStore.getState().submitReport({
-      targetType: 'support_ticket',
-      targetId: Date.now(),
-      targetTitle: `ศูนย์ช่วยเหลือ: ${catLabel}`,
-      targetUser: 'ฝ่ายสนับสนุน',
-      reporterName,
-      reporterEmail,
-      category: catLabel,
-      description: message.trim(),
-    });
+    const catLabel = ISSUE_TYPES.find((t) => t.key === issueType)?.label || 'สอบถามทั่วไป';
+
+    setSubmitting(true);
+    setErrorMsg('');
+
+    try {
+      await api.createSupportTicket({
+        category: catLabel,
+        message: message.trim(),
+      });
+    } catch (err) {
+      setSubmitting(false);
+      setErrorMsg(
+        err?.response?.data?.message || err?.message || 'ส่งไม่สำเร็จ กรุณาลองใหม่อีกครั้ง'
+      );
+      return; // ไม่แสดงว่าสำเร็จถ้าบันทึกลง database ไม่ได้
+    }
 
     addNotification({
       userId: 'me',
       title: '📩 ส่งเรื่องถึงแอดมินเรียบร้อยแล้ว',
-      message: `แอดมินได้รับเรื่องเกี่ยวกับ "${catLabel}" แล้ว จะตรวจสอบในหน้าจัดการและติดต่อกลับโดยเร็ว`,
+      message: `แอดมินได้รับเรื่องเกี่ยวกับ "${catLabel}" แล้ว จะตรวจสอบและติดต่อกลับโดยเร็ว`,
       type: 'security',
       link: '/notifications',
     });
@@ -80,13 +73,18 @@ export function FloatingAdminContact() {
     }, 2000);
   };
 
+  const closeModal = () => {
+    setOpen(false);
+    setView('form');
+    setErrorMsg('');
+  };
+
   return (
     <>
       {/* Floating Action Buttons Container */}
       <div className="fixed bottom-20 md:bottom-6 right-3.5 md:right-6 z-40 flex flex-col items-center gap-2.5">
         {/* Rules Button */}
         <div className="group relative">
-          {/* Tooltip */}
           <span className="pointer-events-none absolute bottom-full right-0 mb-2 whitespace-nowrap rounded-lg bg-gray-800 px-2.5 py-1 text-[11px] font-bold text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 select-none">
             กฎของเว็บไซต์
           </span>
@@ -97,17 +95,12 @@ export function FloatingAdminContact() {
             className="flex items-center justify-center w-11 h-11 sm:w-14 sm:h-14 md:w-16 md:h-16 hover:scale-110 active:scale-95 transition-all duration-200 drop-shadow-md hover:drop-shadow-xl"
             aria-label="กฎของเว็บไซต์"
           >
-            <img
-              src={iconRules}
-              alt="กฎของเว็บไซต์"
-              className="w-full h-full object-contain"
-            />
+            <img src={iconRules} alt="กฎของเว็บไซต์" className="w-full h-full object-contain" />
           </button>
         </div>
 
         {/* Floating Action Button — Admin Contact */}
         <div className="group relative">
-          {/* Tooltip */}
           <span className="pointer-events-none absolute bottom-full right-0 mb-2 whitespace-nowrap rounded-lg bg-gray-800 px-2.5 py-1 text-[11px] font-bold text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 select-none">
             ติดต่อแอดมิน
           </span>
@@ -130,16 +123,13 @@ export function FloatingAdminContact() {
       </div>
 
       {/* Rules Modal */}
-      <TermsModal
-        open={rulesOpen}
-        onClose={() => setRulesOpen(false)}
-      />
+      <TermsModal open={rulesOpen} onClose={() => setRulesOpen(false)} />
 
       {/* Admin Help Modal */}
       {open && (
         <div
           className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs p-0 sm:p-4"
-          onClick={() => setOpen(false)}
+          onClick={closeModal}
         >
           <div
             className="w-full max-w-md rounded-t-3xl sm:rounded-3xl bg-white shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
@@ -173,16 +163,15 @@ export function FloatingAdminContact() {
                     {view === 'qr' ? 'กลุ่มไลน์แจ้งปัญหา & ช่วยเหลือ' : 'ศูนย์ช่วยเหลือ & ติดต่อแอดมิน'}
                   </h3>
                   <p className="text-[11px] text-white/85">
-                    {view === 'qr' ? 'สแกนเพื่อเข้าร่วมกลุ่ม Line OpenChat' : 'ทีมงาน RmutiMarket พร้อมดูแลตลอดเวลา'}
+                    {view === 'qr'
+                      ? 'สแกนเพื่อเข้าร่วมกลุ่ม Line OpenChat'
+                      : 'ทีมงาน RmutiMarket พร้อมดูแลตลอดเวลา'}
                   </p>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setOpen(false);
-                  setView('form');
-                }}
+                onClick={closeModal}
                 className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors cursor-pointer"
                 aria-label="ปิด"
               >
@@ -203,9 +192,7 @@ export function FloatingAdminContact() {
                   </div>
 
                   <div className="space-y-1">
-                    <p className="text-xs font-bold text-gray-800">
-                      สแกน QR Code ด้วยแอป LINE
-                    </p>
+                    <p className="text-xs font-bold text-gray-800">สแกน QR Code ด้วยแอป LINE</p>
                     <p className="text-[11px] text-gray-500 leading-relaxed max-w-xs">
                       เข้าร่วมกลุ่มแจ้งปัญหา ข้อสงสัย หรือติดต่อทีมงาน RmutiMarket พร้อมดูแลตลอดเวลา
                     </p>
@@ -221,10 +208,7 @@ export function FloatingAdminContact() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        setOpen(false);
-                        setView('form');
-                      }}
+                      onClick={closeModal}
                       className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-xs font-bold text-white transition-colors cursor-pointer shadow-xs"
                     >
                       ปิดหน้าต่าง
@@ -237,20 +221,20 @@ export function FloatingAdminContact() {
                     <CheckCircle2 size={32} />
                   </div>
                   <h4 className="text-base font-bold text-ink-900">ส่งข้อความถึงแอดมินสำเร็จ!</h4>
-                  <p className="text-xs text-gray-500">ทีมงานกำลังตรวจสอบและจะติดต่อกลับโดยเร็วที่สุด</p>
+                  <p className="text-xs text-gray-500">
+                    ทีมงานกำลังตรวจสอบและจะติดต่อกลับโดยเร็วที่สุด
+                  </p>
                 </div>
               ) : (
                 <>
                   <form onSubmit={handleSubmit} className="space-y-3.5">
                     {/* Issue Type */}
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1.5">เรื่องที่ต้องการแจ้ง</label>
+                      <label className="block text-xs font-bold text-gray-700 mb-1.5">
+                        เรื่องที่ต้องการแจ้ง
+                      </label>
                       <div className="grid grid-cols-3 gap-1.5 text-xs">
-                        {[
-                          { key: 'general', label: 'สอบถามทั่วไป' },
-                          { key: 'scam', label: 'แจ้งโกง/มิจฉาชีพ' },
-                          { key: 'system', label: 'แจ้งปัญหาระบบ' },
-                        ].map((t) => (
+                        {ISSUE_TYPES.map((t) => (
                           <button
                             key={t.key}
                             type="button"
@@ -275,12 +259,19 @@ export function FloatingAdminContact() {
                       <textarea
                         required
                         rows={3}
+                        maxLength={2000}
                         value={message}
                         onChange={(e) => setMessage(e.target.value)}
                         placeholder="อธิบายปัญหาที่พบ เช่น ชื่อผู้ใช้ที่ต้องการรายงาน หรือปัญหาที่เกิดขึ้น..."
                         className="w-full rounded-xl border border-gray-200 bg-gray-50/60 p-3 text-xs text-ink-900 outline-none focus:border-[#f95721] focus:bg-white transition-all"
                       />
                     </div>
+
+                    {errorMsg && (
+                      <p className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs font-bold text-red-600">
+                        {errorMsg}
+                      </p>
+                    )}
 
                     <button
                       type="submit"

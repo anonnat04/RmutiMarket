@@ -34,7 +34,8 @@ import { AdminListingsPage } from '@/pages/admin/AdminListingsPage';
 import { AdminReviewsPage } from '@/pages/admin/AdminReviewsPage';
 import { AdminCategoriesPage } from '@/pages/admin/AdminCategoriesPage';
 import { AdminDisputesPage } from '@/pages/admin/AdminDisputesPage';
-
+import { MyScorePage } from '@/pages/profile/MyScorePage';
+import { MyReportsPage } from '@/pages/profile/MyReportsPage';
 export function AppRoutes() {
   return (
     <Routes>
@@ -63,6 +64,8 @@ export function AppRoutes() {
           <Route path="/profile/:id" element={<ProfilePage />} />
           <Route path="/reviews" element={<ReviewsPage />} />
           <Route path="/profile/:userId/reviews" element={<ReviewsPage />} />
+          <Route path="/my-score" element={<MyScorePage />} />
+          <Route path="/my-reports" element={<MyReportsPage />} />
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/products/:id/meetup" element={<ScheduleMeetupPage />} />
