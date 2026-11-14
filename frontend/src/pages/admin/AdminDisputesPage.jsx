@@ -49,8 +49,13 @@ export function AdminDisputesPage() {
   // 1) รายงานสินค้าและโพสต์ (product / wanted_post)
   // 2) รายการแจ้งปัญหาจากศูนย์ช่วยเหลือ (support_ticket / user / scam / general)
   const isSupportItem = (r) => {
-    return (r.target_type || r.type) === 'support_ticket';
+    const type = r.target_type || r.type;
+    const title = r.target_title || r.targetTitle || '';
+    // รายการเก่าบางส่วนถูกบันทึกใน reports ก่อนแยก support_tickets
+    return type === 'support_ticket' || /ศูนย์ช่วยเหลือ|แจ้งปัญหาจากผู้ใช้/i.test(title);
   };
+
+  const isSupportTicketRecord = (r) => (r.target_type || r.type) === 'support_ticket';
 
   const productAndPostReports = allReports.filter((r) => !isSupportItem(r));
   const supportTicketReports = allReports.filter((r) => isSupportItem(r));
@@ -86,7 +91,7 @@ export function AdminDisputesPage() {
   // Action: จัดการสถานะ (resolved หรือ dismissed)
   const handleResolve = async (report, resolution) => {
     const isDismiss = resolution === 'dismissed';
-    const note = isSupportItem(report)
+    const note = isSupportTicketRecord(report)
       ? ''
       : prompt(
           isDismiss
@@ -98,7 +103,7 @@ export function AdminDisputesPage() {
 
     setActionLoadingId(report.id);
     try {
-      if (isSupportItem(report)) {
+      if (isSupportTicketRecord(report)) {
         await api.adminResolveSupportTicket(token, report.id, { status: resolution, adminNote: note });
       } else {
         await api.adminResolveReport(token, report.id, { status: resolution, adminNote: note });
