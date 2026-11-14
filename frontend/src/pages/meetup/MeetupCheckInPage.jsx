@@ -530,7 +530,6 @@ export function MeetupCheckInPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
-  const checkIn = useMeetupStore((s) => s.checkIn);
   const cancelRequest = useMeetupStore((s) => s.cancelRequest);
   const hydrateMeetup = useMeetupStore((s) => s.hydrateMeetup);
 
@@ -543,7 +542,10 @@ export function MeetupCheckInPage() {
   const [showDeliveryConfirm, setShowDeliveryConfirm] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showReviewModal, setShowReviewModal] = useState(false);
+  const [feedback, setFeedback] = useState(null);
   const [, forceTick] = useState(0);
+  const checkInInFlightRef = useRef(false);
+  const feedbackTimerRef = useRef(null);
 
   // ── GPS & ระยะห่าง ──
   const [myDistance, setMyDistance] = useState(null);       // เมตร จากจุดนัดรับ
@@ -554,6 +556,16 @@ export function MeetupCheckInPage() {
   const watchIdRef = useRef(null);
 
   const myId = user?.id ?? 'me';
+
+  const showFeedback = useCallback((type, title, message) => {
+    setFeedback({ type, title, message });
+    if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    feedbackTimerRef.current = setTimeout(() => setFeedback(null), type === 'success' ? 4500 : 7000);
+  }, []);
+
+  useEffect(() => () => {
+    if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+  }, []);
 
   // Tick ทุก 30 วิ เพื่ออัปเดต badge ช่วงเวลา
   useEffect(() => {
@@ -752,74 +764,78 @@ export function MeetupCheckInPage() {
 
   // ── เช็คอิน ──
   const handleCheckIn = async () => {
-    if (checkingIn) return;
+    if (checkInInFlightRef.current) return;
+    checkInInFlightRef.current = true;
     setCheckingIn(true);
-
-    const finalize = async (coords = null) => {
-      try {
-        const localRes = checkIn(meetup.id, role, coords || {});
-        if (!localRes.success) {
-          alert(localRes.reason);
-          setCheckingIn(false);
-          return;
-        }
-
-        const now = new Date().toISOString();
-
-        // 1. บันทึกลง Backend / Supabase
-        try {
-          await api.checkInMeetup(meetup.id);
-        } catch (apiErr) {
-          console.warn('api.checkInMeetup warning:', apiErr);
-        }
-
-        // 2. อัปเดตสถานะของตนเองทันทีบนหน้าจอ
-        setMeetup((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            buyerCheckedIn: role === 'buyer' ? true : prev.buyerCheckedIn,
-            sellerCheckedIn: role === 'seller' ? true : prev.sellerCheckedIn,
-            buyerCheckedInAt: role === 'buyer' ? now : prev.buyerCheckedInAt,
-            sellerCheckedInAt: role === 'seller' ? now : prev.sellerCheckedInAt,
-          };
-        });
-
-        // 3. ส่งสัญญาณ Realtime ผ่าน Socket ไปยังอีกฝ่ายทันที
-        const socket = getSocket();
-        if (socket && socket.connected) {
-          socket.emit('meetup_checkin', {
-            meetupId: meetup.id,
-            userId: myId,
-            role,
-            checkedInAt: now,
-          });
-        }
-      } catch (err) {
-        alert(err.message || 'เกิดข้อผิดพลาดในการเช็คอิน');
-      } finally {
-        setCheckingIn(false);
-      }
-    };
-
-    if (!navigator.geolocation) {
-      finalize();
-      return;
-    }
-
-    // ขอ GPS location — maximumAge: 0 บังคับ permission dialog บนมือถือ
     try {
+      if (!navigator.geolocation) {
+        throw new Error('อุปกรณ์นี้ไม่รองรับ GPS กรุณาเปิดตำแหน่งที่ตั้งบนอุปกรณ์แล้วลองอีกครั้ง');
+      }
+
       const pos = await new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0,
+          timeout: 18000,
+          maximumAge: 15000,
         });
       });
-      finalize({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-    } catch (geoErr) {
-      // PERMISSION_DENIED / TIMEOUT / UNAVAILABLE — ยังให้เช็คอินได้โดยไม่ใช้ GPS
-      finalize();
+      const coordinates = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      if (!Number.isFinite(coordinates.lat) || !Number.isFinite(coordinates.lng)) {
+        throw new Error('อ่านพิกัด GPS ไม่สำเร็จ กรุณาลองใหม่');
+      }
+
+      // ให้ backend เป็นผู้ตรวจเวลาและระยะ 200 เมตร แล้วค่อยอัปเดต UI เมื่อบันทึกสำเร็จ
+      const result = await api.checkInMeetup(meetup.id, coordinates);
+      const checkInData = result.checkInData || {};
+      const checkedInAt = role === 'buyer'
+        ? checkInData.buyerCheckedInAt
+        : checkInData.sellerCheckedInAt;
+      const nextMeetup = {
+        ...meetup,
+        ...checkInData,
+        id: meetup.id,
+        buyerCheckedIn: checkInData.buyerCheckedIn ?? (role === 'buyer' || meetup.buyerCheckedIn),
+        sellerCheckedIn: checkInData.sellerCheckedIn ?? (role === 'seller' || meetup.sellerCheckedIn),
+        buyerCheckedInAt: checkInData.buyerCheckedInAt || (role === 'buyer' ? new Date().toISOString() : meetup.buyerCheckedInAt),
+        sellerCheckedInAt: checkInData.sellerCheckedInAt || (role === 'seller' ? new Date().toISOString() : meetup.sellerCheckedInAt),
+      };
+      hydrateMeetup(nextMeetup);
+      setMeetup(nextMeetup);
+
+      const socket = getSocket();
+      if (socket?.connected) {
+        socket.emit('meetup_checkin', {
+          meetupId: meetup.id,
+          userId: myId,
+          role,
+          checkedInAt: checkedInAt || new Date().toISOString(),
+        });
+      }
+      showFeedback('success', 'เช็คอินสำเร็จ', 'บันทึกเวลาและตำแหน่งของคุณแล้ว');
+    } catch (err) {
+      const geoMessage = err?.code === 1
+        ? 'กรุณาอนุญาตให้เว็บไซต์เข้าถึงตำแหน่ง แล้วลองเช็คอินอีกครั้ง'
+        : err?.code === 2
+          ? 'อุปกรณ์หาตำแหน่ง GPS ไม่พบ กรุณาเปิด GPS แล้วลองอีกครั้ง'
+          : err?.code === 3
+            ? 'ค้นหาตำแหน่งใช้เวลานานเกินไป กรุณาเปิด GPS แล้วลองอีกครั้ง'
+            : null;
+      const message = geoMessage || err?.message || 'เกิดข้อผิดพลาดในการเช็คอิน กรุณาลองอีกครั้ง';
+      const distance = message.match(/([\d,]+)\s*เมตร/);
+      if (message.includes('200 เมตร') || message.includes('TOO_FAR') || distance) {
+        showFeedback(
+          'warning',
+          'คุณยังอยู่นอกระยะเช็คอิน',
+          `${distance ? `ตอนนี้อยู่ห่างประมาณ ${distance[1]} เมตร ` : ''}กรุณาเข้าใกล้จุดนัดรับให้อยู่ภายใน 200 เมตร แล้วลองเช็คอินอีกครั้ง`
+        );
+      } else if (/location|position|gps|พิกัด|ตำแหน่ง/i.test(message)) {
+        showFeedback('warning', 'อ่านตำแหน่งไม่สำเร็จ', `${message} ตรวจสอบการอนุญาตใช้ตำแหน่งและลองใหม่อีกครั้ง`);
+      } else {
+        showFeedback('error', 'เช็คอินไม่สำเร็จ', message);
+      }
+    } finally {
+      checkInInFlightRef.current = false;
+      setCheckingIn(false);
     }
   };
 
@@ -835,7 +851,7 @@ export function MeetupCheckInPage() {
       // เด้งหน้ารีวิวทันทีตามที่ผู้ใช้ร้องขอ
       setShowReviewModal(true);
     } catch (err) {
-      alert(err.message || 'เกิดข้อผิดพลาดในการยืนยันรับสินค้า');
+      showFeedback('warning', 'ยังยืนยันส่งมอบไม่ได้', err.message || 'เกิดข้อผิดพลาดในการยืนยันรับสินค้า');
     } finally {
       setCompleting(false);
     }
@@ -898,7 +914,7 @@ export function MeetupCheckInPage() {
       setShowCancelConfirm(false);
       navigate('/meetups');
     } catch (err) {
-      alert(err.message || 'เกิดข้อผิดพลาดในการยกเลิกนัด');
+      showFeedback('error', 'ยกเลิกนัดไม่สำเร็จ', err.message || 'เกิดข้อผิดพลาดในการยกเลิกนัด');
     } finally {
       setCancelling(false);
     }
@@ -909,6 +925,31 @@ export function MeetupCheckInPage() {
 
   return (
     <div className="mx-auto max-w-2xl">
+
+      {feedback && (
+        <div className="fixed inset-x-4 top-4 z-[100] mx-auto max-w-lg animate-in fade-in slide-in-from-top-2 duration-200" role={feedback.type === 'success' ? 'status' : 'alert'}>
+          <div className={`flex items-start gap-3 rounded-2xl border p-4 shadow-xl backdrop-blur ${
+            feedback.type === 'success'
+              ? 'border-emerald-200 bg-white/95 text-emerald-900'
+              : feedback.type === 'warning'
+                ? 'border-amber-200 bg-white/95 text-amber-950'
+                : 'border-rose-200 bg-white/95 text-rose-950'
+          }`}>
+            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+              feedback.type === 'success' ? 'bg-emerald-100 text-emerald-600' : feedback.type === 'warning' ? 'bg-amber-100 text-amber-600' : 'bg-rose-100 text-rose-600'
+            }`}>
+              {feedback.type === 'success' ? <CheckCircle2 size={20} /> : feedback.type === 'warning' ? <MapPin size={20} /> : <AlertTriangle size={20} />}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-extrabold">{feedback.title}</p>
+              <p className="mt-1 text-xs leading-relaxed text-gray-600">{feedback.message}</p>
+            </div>
+            <button type="button" onClick={() => setFeedback(null)} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700" aria-label="ปิดข้อความแจ้งเตือน">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <div className="mb-6 flex items-center gap-3">
@@ -1216,10 +1257,10 @@ export function MeetupCheckInPage() {
           <p className="text-xs text-ink-500">
             กดปุ่มนี้เมื่อได้รับ/ส่งมอบสินค้าเรียบร้อยแล้วเท่านั้น — เมื่อกดแล้วจะถือว่าดีลนี้เสร็จสมบูรณ์ทันที ไม่สามารถย้อนกลับได้
           </p>
-          <Button onClick={() => setShowDeliveryConfirm(true)} disabled={completing}>
+          <Button onClick={() => setShowDeliveryConfirm(true)} disabled={completing || !bothCheckedIn}>
             <span className="flex items-center gap-1.5">
               <PackageCheck size={16} />
-              {completing ? 'กำลังยืนยัน...' : role === 'buyer' ? 'ยืนยันรับสินค้าแล้ว' : 'ยืนยันส่งมอบสินค้าแล้ว'}
+              {completing ? 'กำลังยืนยัน...' : !bothCheckedIn ? 'รอทั้งสองฝ่ายเช็คอินก่อน' : role === 'buyer' ? 'ยืนยันรับสินค้าแล้ว' : 'ยืนยันส่งมอบสินค้าแล้ว'}
             </span>
           </Button>
         </div>

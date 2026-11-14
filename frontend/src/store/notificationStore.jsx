@@ -11,6 +11,8 @@ export function buildNotificationLink(n) {
   const refType = String(n.reference_type || n.ref_type || '').toLowerCase();
   const refId = n.reference_id || n.referenceId || n.ref_id;
   const title = String(n.title || '').toLowerCase();
+  const message = String(n.message || '').toLowerCase();
+  const meetupTarget = (tab) => `/meetups?tab=${tab}${refId ? `&highlight=${encodeURIComponent(refId)}` : ''}`;
 
   // 1. แชท (พาไปหน้าแชท พร้อมเปิดห้องแชทนั้นถ้ามี id)
   if (type.includes('chat') || type.includes('message') || refType === 'conversation') {
@@ -43,23 +45,24 @@ export function buildNotificationLink(n) {
     refType === 'appointment' ||
     refType === 'transaction'
   ) {
-    // นัดรับใหม่ / ขอนัดรับ -> ไปแท็บ pending (รอดำเนินการ)
-    if (type.includes('scheduled') || title.includes('การนัดหมาย') || title.includes('ขอนัดรับ') || title.includes('คำขอ')) {
-      return refId ? `/meetups?tab=pending&highlight=${refId}` : '/meetups?tab=pending';
+    // ตรวจสถานะปลายทางก่อนคำกว้าง ๆ เช่น “คำขอ” หรือ “นัดหมาย”
+    if (type.includes('no_show') || type.includes('noshow') || type.includes('missed') || title.includes('ไม่มาตามนัด') || title.includes('no-show') || message.includes('ไม่มาตามนัด')) {
+      return meetupTarget('no_show');
     }
-    // ยืนยันนัดรับแล้ว -> ไปแท็บ confirmed (นัดหมายแล้ว)
-    if (type.includes('confirmed') || title.includes('ยืนยันการนัดรับ')) {
-      return refId ? `/meetups?tab=confirmed&highlight=${refId}` : '/meetups?tab=confirmed';
+    if (type.includes('completed') || title.includes('เสร็จสมบูรณ์') || title.includes('เสร็จสิ้น') || title.includes('ส่งมอบสำเร็จ') || title.includes('รับสินค้าเรียบร้อย')) {
+      return meetupTarget('completed');
     }
-    // ซื้อขายเสร็จสิ้น / ส่งมอบสำเร็จ -> ไปแท็บ completed (เสร็จสิ้น)
-    if (type.includes('completed') || title.includes('เสร็จสมบูรณ์') || title.includes('สำเร็จ')) {
-      return refId ? `/meetups?tab=completed&highlight=${refId}` : '/meetups?tab=completed';
+    if (type.includes('cancel') || type.includes('reject') || title.includes('ยกเลิก') || title.includes('ปฏิเสธ') || title.includes('หมดอายุ') || title.includes('ตัดจบ')) {
+      return meetupTarget('cancelled');
     }
-    // ยกเลิก / ปฏิเสธ -> ไปแท็บ cancelled (ยกเลิกแล้ว)
-    if (type.includes('cancel') || type.includes('reject') || title.includes('ยกเลิก') || title.includes('ปฏิเสธ')) {
-      return refId ? `/meetups?tab=cancelled&highlight=${refId}` : '/meetups?tab=cancelled';
+    if (type.includes('confirmed') || type.includes('checkin') || type.includes('check_in') || title.includes('ยืนยันการนัดรับ') || title.includes('เดินทางมาถึง')) {
+      return meetupTarget('confirmed');
     }
-    return refId ? `/meetups?highlight=${refId}` : '/meetups';
+    if (type.includes('scheduled') || title.includes('นัดหมายรับสินค้าใหม่') || title.includes('ขอนัดรับ') || title.includes('คำขอนัดรับ')) {
+      return meetupTarget('pending');
+    }
+    // แจ้งเตือนที่อ้างถึงนัดรับแต่ไม่มีสถานะชัดเจน แสดงในทั้งหมดเพื่อไม่พาไปผิดแท็บ
+    return meetupTarget('all');
   }
 
   if (n.link && n.link !== '#' && n.link !== '') return n.link;

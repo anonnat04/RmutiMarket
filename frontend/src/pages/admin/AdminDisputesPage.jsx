@@ -299,14 +299,6 @@ export function AdminDisputesPage() {
               >
                 ปัญหาระบบ
               </button>
-              <button
-                onClick={() => setSubTypeFilter('ทั่วไป')}
-                className={`rounded-xl px-2.5 py-1 text-xs font-semibold ${
-                  subTypeFilter === 'ทั่วไป' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                สอบถามทั่วไป
-              </button>
             </>
           )}
         </div>
@@ -345,7 +337,7 @@ export function AdminDisputesPage() {
             const reporter = item.reporter_name || item.reporterName || 'ผู้ใช้ในระบบ';
             const reporterEmail = item.reporter_email || item.reporterEmail || '';
             const targetUser = item.target_user_name || item.targetUser || '-';
-            const category = item.category || (isSupport ? 'สอบถามทั่วไป' : 'พฤติกรรมไม่เหมาะสม');
+            const category = item.category || (isSupport ? 'รายงานปัญหา' : 'พฤติกรรมไม่เหมาะสม');
             const description = item.description || '';
             const createdAt = item.created_at || item.createdAt;
             const adminNote = item.admin_note || item.adminNote;
@@ -467,7 +459,7 @@ export function AdminDisputesPage() {
                     {isSupport && (
                       <div className="text-[11px] text-gray-500 flex items-center gap-1">
                         <AlertCircle size={13} className="text-orange-500" />
-                        ติดต่อกลับผู้ใช้ตามช่องทางที่ระบุ แล้วกดทำเครื่องหมายจัดการแล้ว
+                        ตรวจสอบรายงานปัญหาแล้วทำเครื่องหมายจัดการเมื่อดำเนินการเสร็จ ไม่จำเป็นต้องตอบกลับผู้แจ้ง
                       </div>
                     )}
 

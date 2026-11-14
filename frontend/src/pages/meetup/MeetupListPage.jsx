@@ -235,6 +235,7 @@ function MiniMap({ meetup }) {
 
 // ─── Tabs ────────────────────────────────────────────────────────────────────
 const TABS = [
+  { key: 'all',       label: 'ทั้งหมด',       statuses: [] },
   { key: 'pending',   label: 'รอดำเนินการ',  statuses: ['pending', 'return_requested'] },
   { key: 'confirmed', label: 'นัดหมายแล้ว',  statuses: ['confirmed'] },
   { key: 'completed', label: 'เสร็จสิ้น',    statuses: ['completed', 'return_accepted', 'return_rejected'] },
@@ -244,6 +245,7 @@ const TABS = [
 
 function tabMatches(tab, status) {
   if (!tab) return false;
+  if (tab.key === 'all') return true;
   return tab.statuses?.includes(status);
 }
 
@@ -254,7 +256,6 @@ export function MeetupListPage() {
   const meetups = useMeetupStore((s) => s.meetups);
   const respondToRequest = useMeetupStore((s) => s.respondToRequest);
   const cancelRequest = useMeetupStore((s) => s.cancelRequest);
-  const checkIn = useMeetupStore((s) => s.checkIn);
   const submitReview = useMeetupStore((s) => s.submitReview);
 
   const addNotification = useNotificationStore((s) => s.addNotification);
@@ -265,11 +266,9 @@ export function MeetupListPage() {
   const [activeTab, setActiveTab] = useState(() => { const p = searchParams.get('tab'); return (p && TABS.some(t => t.key === p)) ? p : 'pending'; });
   const [highlightId, setHighlightId] = useState(() => searchParams.get('highlight') || null);
   const [expandedMap, setExpandedMap] = useState(null);
-  const [checkInLoading, setCheckInLoading] = useState(null); // meetup id ที่กำลังเช็คอิน
   const [cancelLoading, setCancelLoading] = useState(null);   // meetup id ที่กำลังยกเลิก
   const [cancelTarget, setCancelTarget] = useState(null);     // { meetup, role } สำหรับ confirm dialog
   const [rejectTarget, setRejectTarget] = useState(null);     // meetup สำหรับ confirm ปฏิเสธนัด
-  const [checkInTarget, setCheckInTarget] = useState(null);   // { meetup, role } สำหรับ confirm เช็คอิน
 
   // ── จดจำรายการนัดรับที่เคยกดเปิดดูแล้ว (เพื่อให้ตัวเลขแจ้งเตือนบนแท็บหายไปเมื่อกดดูแล้ว) ──
   const [seenMeetupIds, setSeenMeetupIds] = useState(() => {
@@ -527,50 +526,10 @@ export function MeetupListPage() {
     }
   };
 
-  // ── เช็คอิน ณ จุดนัดพบ (ทั้งผู้ซื้อและผู้ขาย) ──────────────────────
-  const handleCheckIn = (m, role) => {
-    setCheckInTarget({ meetup: m, role });
-  };
-
-  const executeCheckIn = async () => {
-    if (!checkInTarget) return;
-    const { meetup: m, role } = checkInTarget;
-
-    try {
-      setCheckInLoading(m.id);
-      const now = new Date().toISOString();
-
-      // อัปเดต local store ทันที (optimistic)
-      checkIn(m.id, role, {});
-
-      // อัปเดต dbMeetups ทันที
-      setDbMeetups((prev) => prev.map((x) => {
-        if (x.id !== m.id) return x;
-        return {
-          ...x,
-          buyerCheckedIn: role === 'buyer' ? true : x.buyerCheckedIn,
-          sellerCheckedIn: role === 'seller' ? true : x.sellerCheckedIn,
-          buyerCheckedInAt: role === 'buyer' ? now : x.buyerCheckedInAt,
-          sellerCheckedInAt: role === 'seller' ? now : x.sellerCheckedInAt,
-        };
-      }));
-
-      // บันทึกไป backend ด้วย (ถ้า column มีอยู่ใน DB)
-      await api.checkInMeetup(m.id);
-    } catch (err) {
-      console.error('API checkInMeetup error:', err);
-    } finally {
-      setCheckInLoading(null);
-      setCheckInTarget(null);
-    }
-  };
-
-
-
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex items-center justify-between border-b border-surface-border pb-4">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-3 border-b border-surface-border pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
           <button
             onClick={() => navigate(-1)}
             className="flex h-9 w-9 items-center justify-center rounded-xl bg-white border border-gray-200 text-gray-600 hover:text-[#f95721] transition-colors shadow-2xs"
@@ -579,11 +538,11 @@ export function MeetupListPage() {
             <ArrowLeft size={18} />
           </button>
           <div>
-            <h1 className="text-xl font-extrabold text-ink-900">📅 นัดรับสินค้าของฉัน</h1>
+            <h1 className="text-lg font-extrabold text-ink-900 sm:text-xl">📅 นัดรับสินค้าของฉัน</h1>
             <p className="text-xs text-ink-500">ติดตามสถานะการนัดพบและส่งมอบสินค้า</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-end gap-2">
           <button
             type="button"
             onClick={() => fetchMeetups()}
@@ -600,7 +559,7 @@ export function MeetupListPage() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 6, background: '#f3f4f6', borderRadius: 14, padding: 4, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }} className="scrollbar-none">
+      <div className="scrollbar-none -mx-1 flex gap-1.5 overflow-x-auto rounded-2xl border border-gray-100 bg-white p-1.5 shadow-sm sm:mx-0 sm:flex-wrap sm:overflow-visible">
         {TABS.map((tab) => {
           const isCancelledTab = tab.key === 'cancelled';
           const isNoShowTab = tab.key === 'no_show';
@@ -624,12 +583,12 @@ export function MeetupListPage() {
                 markTabAsSeen(tab.key);
               }}
               style={{
-                flexShrink: 0, padding: '7px 12px', borderRadius: 10, border: 'none',
+                flexShrink: 0, padding: '9px 14px', borderRadius: 12, border: 'none',
                 background: activeTab === tab.key ? '#fff' : 'transparent',
                 color: activeTab === tab.key ? (isCancelledTab ? '#dc2626' : isNoShowTab ? '#e11d48' : '#f97316') : '#6b7280',
                 fontWeight: activeTab === tab.key ? 700 : 500,
-                fontSize: 12, cursor: 'pointer',
-                boxShadow: activeTab === tab.key ? '0 1px 4px rgba(0,0,0,0.12)' : 'none',
+                fontSize: 12, cursor: 'pointer', minHeight: 40,
+                boxShadow: activeTab === tab.key ? '0 2px 8px rgba(15,23,42,0.12)' : 'none',
                 transition: 'all 0.15s', whiteSpace: 'nowrap',
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
               }}
@@ -1037,18 +996,6 @@ export function MeetupListPage() {
         variant="warning"
       />
 
-      {/* Confirm Check-in Dialog */}
-      <ConfirmDialog
-        open={!!checkInTarget}
-        onClose={() => setCheckInTarget(null)}
-        onConfirm={executeCheckIn}
-        title="ยืนยันการเช็คอิน ณ จุดนัดพบ?"
-        description="กรุณาตรวจสอบว่าคุณอยู่ที่จุดนัดพบเรียบร้อยแล้วเพื่อบันทึกเวลาและแจ้งเตือนคู่ค้า"
-        confirmLabel="ยืนยันเช็คอิน"
-        cancelLabel="ยกเลิก"
-        variant="info"
-        loading={!!checkInLoading}
-      />
     </div>
   );
 }

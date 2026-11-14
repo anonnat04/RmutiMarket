@@ -1,24 +1,38 @@
 import { useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Headset, X, Send, CheckCircle2, QrCode, ArrowLeft } from 'lucide-react';
+import { Headset, X, Send, CheckCircle2, QrCode, ArrowLeft, Plus } from 'lucide-react';
 import { useNotificationStore } from '@/store/notificationStore';
 import { useAuthStore } from '@/store/authStore';
-import { api } from '@/lib/api';
 import { TermsModal } from '@/components/views/TermsModal';
 import iconRules from '@/assets/iconrlues.png';
 import qrCodeImg from '@/assets/QR.jpg';
 
 const ISSUE_TYPES = [
-  { key: 'general', label: 'สอบถามทั่วไป' },
-  { key: 'scam', label: 'แจ้งโกง/มิจฉาชีพ' },
+  { key: 'scam', label: 'รายงานโกง/มิจฉาชีพ' },
   { key: 'system', label: 'แจ้งปัญหาระบบ' },
 ];
 
+async function submitSupportTicket({ category, message, token }) {
+  const apiBase = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000').replace(/\/$/, '');
+  const response = await fetch(`${apiBase}/api/support`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ category, message }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.message || result.error || `ส่งไม่สำเร็จ (${response.status})`);
+  return result;
+}
+
 export function FloatingAdminContact() {
   const [open, setOpen] = useState(false);
+  const [floatingActionsOpen, setFloatingActionsOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [view, setView] = useState('form'); // 'form' | 'qr'
-  const [issueType, setIssueType] = useState('general');
+  const [issueType, setIssueType] = useState('scam');
   const [message, setMessage] = useState('');
   const [sentSuccess, setSentSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -38,15 +52,17 @@ export function FloatingAdminContact() {
       return;
     }
 
-    const catLabel = ISSUE_TYPES.find((t) => t.key === issueType)?.label || 'สอบถามทั่วไป';
+    const catLabel = ISSUE_TYPES.find((t) => t.key === issueType)?.label || 'แจ้งปัญหาระบบ';
 
     setSubmitting(true);
     setErrorMsg('');
 
     try {
-      await api.createSupportTicket({
+      const token = useAuthStore.getState().token || localStorage.getItem('cm_token') || localStorage.getItem('token');
+      await submitSupportTicket({
         category: catLabel,
         message: message.trim(),
+        token,
       });
     } catch (err) {
       setSubmitting(false);
@@ -83,6 +99,7 @@ export function FloatingAdminContact() {
     <>
       {/* Floating Action Buttons Container */}
       <div className="fixed bottom-20 md:bottom-6 right-3.5 md:right-6 z-40 flex flex-col items-center gap-2.5">
+        <div className={`flex-col items-center gap-2.5 ${floatingActionsOpen ? 'flex' : 'hidden sm:flex'}`}>
         {/* Rules Button */}
         <div className="group relative">
           <span className="pointer-events-none absolute bottom-full right-0 mb-2 whitespace-nowrap rounded-lg bg-gray-800 px-2.5 py-1 text-[11px] font-bold text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 select-none">
@@ -91,7 +108,10 @@ export function FloatingAdminContact() {
 
           <button
             type="button"
-            onClick={() => setRulesOpen(true)}
+            onClick={() => {
+              setRulesOpen(true);
+              setFloatingActionsOpen(false);
+            }}
             className="flex items-center justify-center w-11 h-11 sm:w-14 sm:h-14 md:w-16 md:h-16 hover:scale-110 active:scale-95 transition-all duration-200 drop-shadow-md hover:drop-shadow-xl"
             aria-label="กฎของเว็บไซต์"
           >
@@ -107,7 +127,10 @@ export function FloatingAdminContact() {
 
           <button
             type="button"
-            onClick={() => setOpen(true)}
+            onClick={() => {
+              setOpen(true);
+              setFloatingActionsOpen(false);
+            }}
             className="flex items-center justify-center w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-gradient-to-r from-[#ff5722] to-[#f4511e] text-white shadow-lg hover:shadow-2xl hover:scale-105 active:scale-95 transition-all duration-200"
             aria-label="ติดต่อแอดมิน"
           >
@@ -120,6 +143,17 @@ export function FloatingAdminContact() {
             </div>
           </button>
         </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setFloatingActionsOpen((isOpen) => !isOpen)}
+          className="sm:hidden flex h-11 w-11 items-center justify-center rounded-full bg-gray-900/85 text-white shadow-lg ring-2 ring-white/80 transition-transform active:scale-95"
+          aria-label={floatingActionsOpen ? 'ซ่อนปุ่มช่วยเหลือ' : 'แสดงปุ่มช่วยเหลือ'}
+          aria-expanded={floatingActionsOpen}
+        >
+          <Plus size={20} className={`transition-transform duration-200 ${floatingActionsOpen ? 'rotate-45' : ''}`} />
+        </button>
       </div>
 
       {/* Rules Modal */}
@@ -231,7 +265,7 @@ export function FloatingAdminContact() {
                     {/* Issue Type */}
                     <div>
                       <label className="block text-xs font-bold text-gray-700 mb-1.5">
-                        เรื่องที่ต้องการแจ้ง
+                        เลือกปัญหาที่ต้องการรายงาน
                       </label>
                       <div className="grid grid-cols-3 gap-1.5 text-xs">
                         {ISSUE_TYPES.map((t) => (
@@ -249,6 +283,9 @@ export function FloatingAdminContact() {
                           </button>
                         ))}
                       </div>
+                      <p className="mt-1.5 text-[10px] text-gray-400">
+                        ช่องนี้สำหรับรายงานปัญหาเท่านั้น หากต้องการสอบถามทั่วไป กรุณาใช้กลุ่ม LINE
+                      </p>
                     </div>
 
                     {/* Message details */}

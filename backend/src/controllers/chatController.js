@@ -42,19 +42,10 @@ async function getConversations(req, res, next) {
       }
 
       if (!convErr && convs) {
-        // กรองเฉพาะห้องแชทที่สินค้ายังมีอยู่จริงในระบบ (ถ้าสินค้าถูกลบไปแล้ว ให้ตัดออกและล้างห้องแชททิ้ง)
-        const validConvs = (convs || []).filter((c) => c.product_id && c.products);
-        const invalidConvIds = (convs || [])
-          .filter((c) => !c.product_id || !c.products)
-          .map((c) => c.id);
-
-        if (invalidConvIds.length > 0) {
-          deleteConversations(invalidConvIds).catch((err) =>
-            console.warn("[getConversations] cleanup invalid conversations error:", err)
-          );
-        }
-
-        const validConvIds = validConvs.map((c) => c.id);
+        // ห้องแชทอาจไม่มีสินค้าแนบอยู่ หรือสินค้าอาจถูกลบภายหลัง
+        // อย่าลบ/ซ่อนห้องเหล่านั้น เพราะสมาชิกยังต้องเปิดอ่านข้อความเดิมได้
+        const conversationRows = convs || [];
+        const validConvIds = conversationRows.map((c) => c.id);
         if (validConvIds.length === 0) {
           return res.json({ conversations: [] });
         }
@@ -82,7 +73,7 @@ async function getConversations(req, res, next) {
           myMembershipMap[m.conversation_id] = m;
         });
 
-        const formatted = (validConvs || []).map((c) => {
+        const formatted = conversationRows.map((c) => {
           const members = (allMembers || []).filter((m) => m.conversation_id === c.id);
           const partner = members.find((m) => String(m.user_id) !== String(myId));
           const myMem = myMembershipMap[c.id];

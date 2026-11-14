@@ -114,14 +114,13 @@ export function ChatPage() {
     try {
       const res = await api.getConversations();
       if (res?.conversations && Array.isArray(res.conversations)) {
-        // กรองเฉพาะห้องที่มีข้อมูลสินค้าจริง (ไม่เอาห้องที่สินค้าถูกลบไปแล้ว)
-        const validList = res.conversations.filter((c) => c.product_id && c.product);
-        // Deduplicate: สินค้าเดียวกัน + partner เดียวกัน = ห้องเดียว
+        const validList = res.conversations;
+        // Deduplicate เฉพาะห้องที่ผูกสินค้า; ห้องทั่วไปให้ยึด conversationId
         const dedupeKeyR = new Set();
         const backendConvs = validList
           .map(mapBackendConversation)
           .filter((c) => {
-            const key = `${c.productId}-${c.partnerId}`;
+            const key = c.productId ? `${c.productId}-${c.partnerId}` : `conversation-${c.id}`;
             if (dedupeKeyR.has(key)) return false;
             dedupeKeyR.add(key);
             return true;
@@ -173,7 +172,7 @@ export function ChatPage() {
         try {
           const res = await api.getConversations();
           if (res?.conversations && Array.isArray(res.conversations)) {
-            const validList = res.conversations.filter((c) => c.product_id && c.product);
+            const validList = res.conversations;
             backendConvs = validList.map(mapBackendConversation);
           }
         } catch (apiErr) {
@@ -183,7 +182,7 @@ export function ChatPage() {
         // Deduplicate: สินค้าเดียวกัน + partner เดียวกัน = แสดงเพียงห้องเดียว (ห้องแรกที่เจอ)
         const dedupeKey = new Set();
         let convList = backendConvs.filter((c) => {
-          const key = `${c.productId}-${c.partnerId}`;
+          const key = c.productId ? `${c.productId}-${c.partnerId}` : `conversation-${c.id}`;
           if (dedupeKey.has(key)) return false;
           dedupeKey.add(key);
           return true;
@@ -295,7 +294,7 @@ export function ChatPage() {
         }
 
         setConversations(convList);
-        if (!activeId && convList.length > 0 && !queryProductId) {
+        if (!queryConvId && !activeId && convList.length > 0 && !queryProductId) {
           setActiveId(String(convList[0].id));
         }
       } catch (err) {

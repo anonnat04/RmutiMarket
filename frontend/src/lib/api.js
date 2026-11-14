@@ -182,7 +182,8 @@ export const api = {
   completeMeetup: (id) => request(`/api/meetups/${id}/complete`, { method: "POST" }),
   rescheduleMeetup: (id, data) => request(`/api/meetups/${id}/reschedule`, { method: "POST", body: data }),
   cancelMeetup: (id, reason) => request(`/api/meetups/${id}/cancel`, { method: "POST", body: { reason } }),
-  checkInMeetup: (id) => request(`/api/meetups/${id}/checkin`, { method: "POST" }),
+  checkInMeetup: (id, coordinates) =>
+    request(`/api/meetups/${id}/checkin`, { method: "POST", body: coordinates }),
 
   // ─── Chat APIs ───
   getConversations: () => request("/api/chat/conversations"),

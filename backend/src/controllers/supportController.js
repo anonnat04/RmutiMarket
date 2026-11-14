@@ -28,6 +28,13 @@ exports.createTicket = async (req, res, next) => {
     const category = String(req.body.category || '').trim();
     const message = String(req.body.message || '').trim();
 
+    if (/สอบถามทั่วไป|general inquiry/i.test(category)) {
+      return res.status(400).json({
+        success: false,
+        message: 'ช่องนี้รับเฉพาะรายงานปัญหา กรุณาใช้กลุ่ม LINE สำหรับสอบถามทั่วไป',
+      });
+    }
+
     if (!message) {
       return res.status(400).json({ success: false, message: 'กรุณาระบุรายละเอียดปัญหา' });
     }
@@ -85,7 +92,7 @@ exports.getAdminTickets = async (_req, res, next) => {
         id: ticket.id,
         target_type: 'support_ticket',
         target_title: ticket.subject,
-        category: category?.name || 'สอบถามทั่วไป',
+        category: category?.name || 'รายงานปัญหา',
         description: ticket.message,
         status: normalizeStatus(status?.code, status?.name),
         status_label: status?.name || null,

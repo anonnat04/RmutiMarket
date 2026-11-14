@@ -14,6 +14,7 @@ export function RecommendedProducts({ products = [], loading }) {
   const searchKeywords = useFeedStore((s) => s.searchKeywords);
   const seededInterests = useFeedStore((s) => s.seededInterests);
   const interests = useAuthStore((s) => s.interests);
+  const userId = useAuthStore((s) => s.user?.id);
 
   // แก้ไข: เดิม import "interestCategories" จาก constants/categories.jsx
   // ซึ่งถูกลบไปแล้ว (เพราะใช้ id ปลอมแบบ "cat-electronics" ไม่ตรงกับ
@@ -31,8 +32,14 @@ export function RecommendedProducts({ products = [], loading }) {
   // Compute smart personalized sorting for recommended products
   const smartProducts = useMemo(() => {
     if (!products || products.length === 0) return [];
-    return useFeedStore.getState().getRecommendedFeed(products, wishlistIds);
-  }, [products, wishlistIds, viewCounts, likedCategories, searchKeywords, seededInterests]);
+    const eligibleProducts = userId == null
+      ? products
+      : products.filter((product) => {
+          const sellerId = product.seller?.id ?? product.seller_id ?? product.sellerId;
+          return sellerId == null || String(sellerId) !== String(userId);
+        });
+    return useFeedStore.getState().getRecommendedFeed(eligibleProducts, wishlistIds);
+  }, [products, wishlistIds, viewCounts, likedCategories, searchKeywords, seededInterests, userId]);
 
   // ตรวจสอบว่ามีการ personalize แล้วหรือยัง
   const hasInterests = interests && interests.length > 0;
