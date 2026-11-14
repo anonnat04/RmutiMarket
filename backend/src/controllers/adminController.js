@@ -324,20 +324,62 @@ async function getAdminListings(req, res, next) {
     const { data, error, count } = await query;
     if (error) throw error;
 
+    // แปลง URL รูปที่เป็น path สัมพัทธ์ให้เป็น URL เต็ม (URL เต็มปล่อยตามเดิม)
+    const publicBase = (
+      process.env.API_PUBLIC_URL ||
+      `${req.get("x-forwarded-proto") || req.protocol}://${req.get("host")}`
+    ).replace(/\/$/, "");
+    const resolveImg = (u) => {
+      if (!u) return null;
+      if (/^(https?:)?\/\//i.test(u) || u.startsWith("data:")) return u;
+      return `${publicBase}${u.startsWith("/") ? "" : "/"}${u}`;
+    };
+
     const listings = (data || []).map((p) => {
-      const seller = p.users ? formatUser(p.users) : {};
+      // ผู้ลงประกาศ: ส่งชื่อครบทุกรูปแบบที่หน้าจออาจอ่าน
+      const rawSeller = Array.isArray(p.users) ? p.users[0] : p.users;
+      const fmt = rawSeller ? formatUser(rawSeller) || {} : {};
+      const sellerName =
+        rawSeller?.full_name || rawSeller?.username || fmt.name || fmt.display_name || "ไม่ทราบผู้ขาย";
+      const sellerAvatar = resolveImg(
+        rawSeller?.avatar_url || rawSeller?.profile_image_url || fmt.avatar_url
+      );
+      const seller = {
+        ...fmt,
+        id: rawSeller?.id ?? p.seller_id,
+        username: rawSeller?.username || fmt.username || null,
+        full_name: rawSeller?.full_name || fmt.full_name || null,
+        name: sellerName,
+        display_name: sellerName,
+        avatar_url: sellerAvatar,
+        avatar: sellerAvatar,
+        profile_image_url: sellerAvatar,
+        trust_score: rawSeller?.trust_score ?? fmt.trust_score ?? null,
+      };
+
       const prodStatus = formatStatus("product_status", p.product_status || p.status_id);
       const cond = formatStatus("product_conditions", p.product_conditions || p.condition_id);
       const cat = formatCategory(p.categories);
-      const images = (p.product_images || []).map((img, i) => ({
-        id: img.id,
-        url: img.image_url,
-        imageUrl: img.image_url,
-        is_cover: img.is_primary ?? (i === 0),
-        isCover: img.is_primary ?? (i === 0),
-      }));
 
-      const conditionName = p.product_conditions?.name || cond.name || (p.condition_id === 1 ? "มือหนึ่ง" : "มือสอง");
+      // รูป: เรียงรูปหลักก่อน และแปลง URL
+      const sortedImgs = [...(p.product_images || [])].sort(
+        (a, b) => Number(!!b.is_primary) - Number(!!a.is_primary) || a.id - b.id
+      );
+      const images = sortedImgs.map((img, i) => {
+        const url = resolveImg(img.image_url);
+        return {
+          id: img.id,
+          url,
+          imageUrl: url,
+          image_url: url,
+          is_cover: img.is_primary ?? i === 0,
+          isCover: img.is_primary ?? i === 0,
+        };
+      });
+      const primaryImage = images[0]?.url || null;
+
+      const conditionName =
+        p.product_conditions?.name || cond.name || (p.condition_id === 1 ? "มือหนึ่ง" : "มือสอง");
 
       return {
         id: String(p.id),
@@ -356,8 +398,14 @@ async function getAdminListings(req, res, next) {
         categories: cat,
         view_count: p.view_count || 0,
         created_at: p.created_at,
+        seller_id: p.seller_id,
+        seller_name: sellerName,
         users: seller,
         seller,
+        primary_image: primaryImage,
+        image_url: primaryImage,
+        cover_image: primaryImage,
+        image_count: images.length,
         images,
         listing_images: images,
       };
@@ -566,8 +614,6 @@ async function rejectVerification(req, res) {
   res.json({ message: "ปฏิเสธเรียบร้อยแล้ว" });
 }
 
-
-// POST /api/admin/users/:userId/score — ปรับ/ตัดคะแนนความน่าเชื่อถือของผู้ใช้
 // POST /api/admin/users/:userId/score — ปรับ/ตัดคะแนนความน่าเชื่อถือของผู้ใช้
 async function adjustUserScore(req, res, next) {
   try {
