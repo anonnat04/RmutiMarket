@@ -46,6 +46,22 @@ function resolvePartnerName(partner) {
   return partner?.username || partner?.displayName || partner?.full_name || "เจ้าของสินค้า";
 }
 
+function mapBackendMessage(message, currentUserId) {
+  const senderUser = message.users;
+  return {
+    id: message.id,
+    from: String(message.sender_id) === String(currentUserId) ? "me" : "them",
+    senderName: senderUser?.username || senderUser?.full_name || null,
+    text: message.content || "",
+    type: message.message_type || "TEXT",
+    image: message.message_attachments?.[0]?.file_url || null,
+    isRead: !!message.is_read,
+    time: message.created_at
+      ? new Date(message.created_at).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })
+      : "เมื่อสักครู่",
+  };
+}
+
 export function ChatPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -59,6 +75,12 @@ export function ChatPage() {
   const [conversations, setConversations] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [loadingConvs, setLoadingConvs] = useState(true);
+  const [messagesLoadError, setMessagesLoadError] = useState("");
+  const [reloadMessagesKey, setReloadMessagesKey] = useState(0);
+  const [messageTotal, setMessageTotal] = useState(0);
+  const [messagePage, setMessagePage] = useState(1);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const [olderMessagesError, setOlderMessagesError] = useState("");
   const [draft, setDraft] = useState("");
   const [localMessages, setLocalMessages] = useState({});
 
@@ -71,6 +93,7 @@ export function ChatPage() {
 
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const messageListRef = useRef(null);
   const typingTimeoutRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -340,6 +363,12 @@ export function ChatPage() {
       if (String(msg.sender?.id) === String(user?.id)) return;
 
       const cId = String(msg.conversationId);
+      if (String(activeId) === cId && !(localMessages[cId] || []).some((item) => String(item.id) === String(msg.id))) {
+        setMessageTotal((count) => count + 1);
+      }
+      if (String(activeId) === cId && user?.id) {
+        markConversationAsRead(cId, user.id);
+      }
       setLocalMessages((prev) => {
         const currentList = prev[cId] || [];
         if (currentList.some((m) => m.id === msg.id)) return prev;
@@ -442,37 +471,33 @@ export function ChatPage() {
   // ตอนนี้ "เขียนทับ" ด้วยผลลัพธ์จาก backend เสมอ ไม่ว่าจะมีข้อความหรือว่างเปล่าก็ตาม
   useEffect(() => {
     if (!activeId) return;
+    setMessagePage(1);
+    setMessageTotal(0);
+    setOlderMessagesError("");
     joinConversation(activeId);
     setIsOtherTyping(false);
 
     async function loadMessages() {
+      setMessagesLoadError("");
       try {
         if (activeId && user?.id) {
           markConversationAsRead(activeId, user.id);
         }
 
         const res = await api.getMessages(activeId);
-        const formatted = (res?.messages || []).map((m) => {
-          const senderUser = m.users; // join ที่ backend ส่งมา: users!sender_id(id, username, full_name, ...)
-          return {
-            id: m.id,
-            from: String(m.sender_id) === String(user?.id) ? "me" : "them",
-            senderName: senderUser?.username || senderUser?.full_name || null,
-            text: m.content || "",
-            type: m.message_type || "TEXT",
-            image: m.message_attachments?.[0]?.file_url || null,
-            isRead: !!m.is_read,
-            time: m.created_at
-              ? new Date(m.created_at).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })
-              : "เมื่อสักครู่",
-          };
-        });
+        const formatted = (res?.messages || []).map((m) => mapBackendMessage(m, user?.id));
+        setMessagePage(1);
+        setMessageTotal(Number(res?.total) || formatted.length);
 
         // เขียนทับข้อความของห้องนี้ด้วยข้อมูลจริงจากฐานข้อมูลเสมอ (รวมถึงกรณีเหลือ 0 ข้อความ)
-        setLocalMessages((prev) => ({
-          ...prev,
-          [activeId]: formatted,
-        }));
+        setLocalMessages((prev) => {
+          const liveMessages = prev[activeId] || [];
+          const knownIds = new Set(formatted.map((m) => String(m.id)));
+          return {
+            ...prev,
+            [activeId]: [...formatted, ...liveMessages.filter((m) => !knownIds.has(String(m.id)))],
+          };
+        });
 
         // อัปเดตสถานะ unread ในรายการห้องแชทของหน้าจอ
         setConversations((prev) =>
@@ -495,6 +520,7 @@ export function ChatPage() {
         setTimeout(scrollToBottom, 100);
       } catch (err) {
         console.warn("Failed to load messages from backend:", err);
+        setMessagesLoadError(err?.message || "โหลดข้อความไม่สำเร็จ กรุณาลองอีกครั้ง");
       }
     }
 
@@ -503,10 +529,40 @@ export function ChatPage() {
     return () => {
       leaveConversation(activeId);
     };
-  }, [activeId, user?.id]);
+  }, [activeId, user?.id, reloadMessagesKey]);
 
   const active = conversations.find((c) => String(c.id) === String(activeId));
   const activeMessages = active ? (localMessages[active.id] ?? active.messages ?? []) : [];
+
+  const loadOlderMessages = async () => {
+    if (!activeId || loadingOlderMessages || activeMessages.length >= messageTotal) return;
+    const requestedConversationId = activeId;
+    const nextPage = messagePage + 1;
+    const scrollContainer = messageListRef.current;
+    const previousHeight = scrollContainer?.scrollHeight || 0;
+    setLoadingOlderMessages(true);
+    setOlderMessagesError("");
+    try {
+      const res = await api.getMessages(requestedConversationId, { page: nextPage });
+      if (String(requestedConversationId) !== String(activeId)) return;
+      const olderMessages = (res?.messages || []).map((m) => mapBackendMessage(m, user?.id));
+      setLocalMessages((prev) => {
+        const current = prev[requestedConversationId] || [];
+        const currentIds = new Set(current.map((m) => String(m.id)));
+        const uniqueOlder = olderMessages.filter((m) => !currentIds.has(String(m.id)));
+        return { ...prev, [requestedConversationId]: [...uniqueOlder, ...current] };
+      });
+      setMessagePage(nextPage);
+      setMessageTotal(Math.max(Number(res?.total) || 0, activeMessages.length + olderMessages.length));
+      window.requestAnimationFrame(() => {
+        if (scrollContainer) scrollContainer.scrollTop = scrollContainer.scrollHeight - previousHeight;
+      });
+    } catch (err) {
+      setOlderMessagesError(err?.message || "โหลดข้อความเก่าไม่สำเร็จ");
+    } finally {
+      setLoadingOlderMessages(false);
+    }
+  };
 
   // Handle Typing indicator
   const handleInputChange = (e) => {
@@ -560,13 +616,20 @@ export function ChatPage() {
 
     // บันทึกผ่าน Socket.IO และรอ ack จากฐานข้อมูลก่อนถือว่าส่งสำเร็จ
     try {
-      await sendRealtimeMessage({
+      const savedMessage = await sendRealtimeMessage({
         conversationId: active.id,
         text,
         message_type,
         imageUrl: image,
         sender,
       });
+      setLocalMessages((prev) => ({
+        ...prev,
+        [active.id]: (prev[active.id] || []).map((message) => message.id === tempId
+          ? { ...message, id: savedMessage.id, time: savedMessage.time || message.time }
+          : message),
+      }));
+      setMessageTotal((count) => count + 1);
     } catch (err) {
       setLocalMessages((prev) => ({
         ...prev,
@@ -854,8 +917,32 @@ export function ChatPage() {
                 </div>
               );
             })()}
-            <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4 bg-surface-muted/20">
-              {activeMessages.length === 0 ? (
+            <div ref={messageListRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4 bg-surface-muted/20">
+              {activeMessages.length < messageTotal && (
+                <div className="flex flex-col items-center gap-1 pb-2">
+                  <button
+                    type="button"
+                    disabled={loadingOlderMessages}
+                    onClick={loadOlderMessages}
+                    className="rounded-full border border-surface-border bg-white px-3 py-1.5 text-xs font-semibold text-ink-600 shadow-sm hover:border-brand-300 hover:text-brand-600 disabled:opacity-60"
+                  >
+                    {loadingOlderMessages ? "กำลังโหลดข้อความเก่า..." : "โหลดข้อความก่อนหน้า"}
+                  </button>
+                  {olderMessagesError && <span className="text-[11px] text-red-500">{olderMessagesError}</span>}
+                </div>
+              )}
+              {messagesLoadError ? (
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-red-600">
+                  <p>{messagesLoadError}</p>
+                  <button
+                    type="button"
+                    onClick={() => setReloadMessagesKey((key) => key + 1)}
+                    className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-bold hover:bg-red-50"
+                  >
+                    ลองโหลดข้อความอีกครั้ง
+                  </button>
+                </div>
+              ) : activeMessages.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center text-center p-6 text-ink-400 space-y-2">
                   <div className="p-3 bg-brand-50 rounded-full text-brand-500">
                     <MessageCircle size={28} />

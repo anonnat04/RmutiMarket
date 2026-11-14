@@ -34,7 +34,7 @@ async function getConversationsFromMessageHistory(userId) {
   const ids = convRows.map((c) => c.id);
   const [{ data: allMessages }, { data: members }] = await Promise.all([
     supabase.from("messages")
-      .select("conversation_id, sender_id, content, message_type, created_at")
+      .select("conversation_id, sender_id, content, message_type, created_at, is_read")
       .in("conversation_id", ids)
       .order("created_at", { ascending: false }),
     supabase.from("conversation_members")
@@ -118,7 +118,9 @@ async function getConversationsFromMessageHistory(userId) {
       || product?.product_images?.[0]?.image_url || null;
     const lastReadAt = myMember?.last_read_at ? new Date(myMember.last_read_at).getTime() : 0;
     const unreadCount = roomMessages.filter((m) => String(m.sender_id) !== String(userId)
-      && new Date(m.created_at).getTime() > lastReadAt).length;
+      && (myMember?.last_read_at
+        ? new Date(m.created_at).getTime() > lastReadAt
+        : m.is_read === false)).length;
     return {
       id: c.id,
       product_id: c.product_id,
@@ -195,7 +197,7 @@ async function getConversations(req, res, next) {
 
         const { data: lastMsgs } = await supabase
           .from("messages")
-          .select("conversation_id, content, message_type, created_at, sender_id")
+          .select("conversation_id, content, message_type, created_at, sender_id, is_read")
           .in("conversation_id", validConvIds)
           .order("created_at", { ascending: false });
 
@@ -217,11 +219,13 @@ async function getConversations(req, res, next) {
           const myMem = myMembershipMap[c.id];
           const lastMsg = lastMsgMap[c.id];
 
-          const myLastRead = myMem?.last_read_at ? new Date(myMem.last_read_at) : new Date(0);
+          const myLastRead = myMem?.last_read_at ? new Date(myMem.last_read_at).getTime() : null;
           const unreadCount = (lastMsgs || []).filter(
             (m) => m.conversation_id === c.id &&
               String(m.sender_id) !== String(myId) &&
-              new Date(m.created_at) > myLastRead
+              (myLastRead != null
+                ? new Date(m.created_at).getTime() > myLastRead
+                : m.is_read === false)
           ).length;
 
           const product = c.products;
@@ -303,9 +307,6 @@ async function getConversations(req, res, next) {
     // 2. Recover existing rooms from the user's persisted message history if old
     // records have no membership rows, or a nested PostgREST relationship failed.
     const historyConversations = await getConversationsFromMessageHistory(myId);
-    if (historyConversations?.length) {
-      return res.json({ conversations: historyConversations });
-    }
 
     // 3. Fallback: ถ้ายังเป็น schema เดิมที่มี buyer_id, seller_id, listings
     const { data: oldConvs, error: oldErr } = await supabase
@@ -326,6 +327,18 @@ async function getConversations(req, res, next) {
     }
 
     if (!oldErr && oldConvs) {
+      const oldConversationIds = oldConvs.map((conversation) => conversation.id);
+      const { data: oldMessages, error: oldMessagesErr } = oldConversationIds.length
+        ? await supabase.from("messages")
+          .select("conversation_id, sender_id, is_read")
+          .in("conversation_id", oldConversationIds)
+        : { data: [], error: null };
+      const unreadByConversation = new Map();
+      (oldMessages || []).forEach((message) => {
+        if (String(message.sender_id) === String(myId) || message.is_read !== false) return;
+        const key = String(message.conversation_id);
+        unreadByConversation.set(key, (unreadByConversation.get(key) || 0) + 1);
+      });
       const formattedOld = oldConvs.map((c) => {
         const isBuyer = String(c.buyer_id) === String(myId);
         const partner = isBuyer ? c.seller : c.buyer;
@@ -352,14 +365,31 @@ async function getConversations(req, res, next) {
             createdAt: c.last_message_at,
             senderId: null,
           } : null,
-          unreadCount: isBuyer ? (c.buyer_unread_count || 0) : (c.seller_unread_count || 0),
+          unreadCount: !oldMessagesErr
+            ? (unreadByConversation.get(String(c.id)) || 0)
+            : (isBuyer ? (c.buyer_unread_count || 0) : (c.seller_unread_count || 0)),
           createdAt: c.created_at,
         };
       });
 
-      return res.json({ conversations: formattedOld });
+      const historyById = new Map((historyConversations || []).map((row) => [String(row.id), row]));
+      const merged = formattedOld.map((row) => {
+        const recovered = historyById.get(String(row.id));
+        if (!recovered) return row;
+        historyById.delete(String(row.id));
+        return {
+          ...row,
+          ...recovered,
+          partner: recovered.partner || row.partner,
+          product: recovered.product || row.product,
+          lastMessage: recovered.lastMessage || row.lastMessage,
+          unreadCount: Math.max(Number(row.unreadCount) || 0, Number(recovered.unreadCount) || 0),
+        };
+      });
+      return res.json({ conversations: [...merged, ...historyById.values()] });
     }
 
+    if (historyConversations?.length) return res.json({ conversations: historyConversations });
     return res.json({ conversations: [] });
   } catch (err) {
     console.error("[getConversations] unexpected error:", err);
@@ -401,8 +431,22 @@ async function getMessages(req, res, next) {
     }
 
     let myMembership = (convMembers || []).find((m) => String(m.user_id) === String(myId));
-    // Some older rows have messages but were created before conversation_members
-    // was populated. Allow only users with their own persisted message in that room.
+    const hasMembershipRecord = Boolean(myMembership);
+    // Support the legacy conversation schema when membership rows are absent.
+    if (!myMembership) {
+      const { data: oldConversation, error: oldConversationErr } = await supabase
+        .from("conversations")
+        .select("buyer_id, seller_id")
+        .eq("id", convId)
+        .maybeSingle();
+      if (oldConversationErr) console.error("[getMessages] oldConversationErr:", oldConversationErr);
+      if (oldConversation && [oldConversation.buyer_id, oldConversation.seller_id]
+        .some((participantId) => String(participantId) === String(myId))) {
+        myMembership = { user_id: myId, last_read_at: null };
+      }
+    }
+    // Some historical rows have messages but neither membership nor participant
+    // columns; the user's persisted message is still safe proof of participation.
     if (!myMembership) {
       const { data: ownMessage, error: ownMessageErr } = await supabase
         .from("messages")
@@ -441,6 +485,7 @@ async function getMessages(req, res, next) {
 
       if (msgErr) {
         console.error("[getMessages] msgErr (ดึงข้อความล้มเหลว):", msgErr);
+        throw msgErr;
       }
 
       if (!msgErr && rawMsgs) {
@@ -509,6 +554,17 @@ async function getMessages(req, res, next) {
         if (readErr) {
           console.error("[getMessages] readErr (อัปเดต last_read_at ล้มเหลว):", readErr);
         }
+        if (!hasMembershipRecord) {
+          // Legacy one-to-one chats have no per-member read cursor. Mark only
+          // the other participant's messages read so the badge can clear.
+          const { error: legacyReadErr } = await supabase
+            .from("messages")
+            .update({ is_read: true })
+            .eq("conversation_id", convId)
+            .neq("sender_id", myId)
+            .eq("is_read", false);
+          if (legacyReadErr) console.warn("[getMessages] legacyReadErr:", legacyReadErr);
+        }
 
         // เคลียร์การแจ้งเตือนของห้องนี้ใน notifications table
         supabase
@@ -527,11 +583,11 @@ async function getMessages(req, res, next) {
     }
 
     // Fallback: ไม่ใช่สมาชิก หรือ query schema ใหม่ล้มเหลวทุกขั้น
-    console.warn(`[getMessages] ไม่พบสมาชิกภาพหรือข้อความสำหรับ conversation ${convId}, user ${myId}`);
-    res.json({ messages: [], total: 0 });
+    console.warn(`[getMessages] user ${myId} is not a participant in conversation ${convId}`);
+    return res.status(403).json({ error: "ไม่มีสิทธิ์อ่านข้อความในห้องนี้" });
   } catch (err) {
     console.error("[getMessages] unexpected error:", err);
-    res.json({ messages: [], total: 0 });
+    next(err);
   }
 }
 
@@ -703,8 +759,16 @@ async function notifyConversationMembers(conversationId, senderId, senderName, m
       .select("user_id")
       .eq("conversation_id", conversationId);
 
-    const recipientIds = (members || [])
-      .map((m) => m.user_id)
+    let memberIds = (members || []).map((m) => m.user_id);
+    if (memberIds.length === 0) {
+      const { data: oldConversation } = await supabase
+        .from("conversations")
+        .select("buyer_id, seller_id")
+        .eq("id", conversationId)
+        .maybeSingle();
+      memberIds = [oldConversation?.buyer_id, oldConversation?.seller_id].filter(Boolean);
+    }
+    const recipientIds = memberIds
       .filter((uid) => String(uid) !== String(senderId));
 
     if (recipientIds.length === 0) return;

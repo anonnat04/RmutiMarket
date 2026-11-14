@@ -52,7 +52,9 @@ socket.on('new_message', (msg) => {
   const senderId = msg?.sender?.id || msg?.sender_id;
   // ถ้าไม่ใช่ข้อความที่ตัวเองส่ง ให้ดึงยอด unread ใหม่ทันที
   if (!currentUser || String(senderId) !== String(currentUser?.id)) {
-    useChatStore.getState().fetchUnreadCount();
+    // Let the open chat mark the message read first, then reconcile the badge
+    // against the database's per-member last_read_at value.
+    window.setTimeout(() => useChatStore.getState().fetchUnreadCount(), 350);
   }
 });
 
@@ -61,7 +63,15 @@ socket.on('connect', () => {
 });
 
 socket.on('new_notification', (n) => {
-  if (n?.type === 'message' || n?.type === 'chat_message') {
+  if (['message', 'chat_message'].includes(String(n?.type || ''))) {
+    useChatStore.getState().fetchUnreadCount();
+  }
+});
+
+// Refresh the badge immediately after login/account switch, not only on the
+// first Socket.IO connection (which can happen before authentication finishes).
+useAuthStore.subscribe((state, previousState) => {
+  if (state.token !== previousState.token) {
     useChatStore.getState().fetchUnreadCount();
   }
 });

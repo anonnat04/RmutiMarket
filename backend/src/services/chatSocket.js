@@ -351,8 +351,16 @@ function setupChatSocket(httpServer, allowedOrigin) {
                 .select("user_id")
                 .eq("conversation_id", parseInt(conversationId));
 
-              const recipientIds = (members || [])
-                .map((m) => m.user_id)
+              let memberIds = (members || []).map((m) => m.user_id);
+              if (memberIds.length === 0) {
+                const { data: oldConversation } = await supabase
+                  .from("conversations")
+                  .select("buyer_id, seller_id")
+                  .eq("id", convId)
+                  .maybeSingle();
+                memberIds = [oldConversation?.buyer_id, oldConversation?.seller_id].filter(Boolean);
+              }
+              const recipientIds = memberIds
                 .filter((uid) => String(uid) !== String(senderId));
 
               if (recipientIds.length > 0) {
@@ -419,11 +427,19 @@ function setupChatSocket(httpServer, allowedOrigin) {
       try {
         const now = new Date().toISOString();
 
-        await supabase
+        const { data: updatedMembers, error: memberUpdateErr } = await supabase
           .from("conversation_members")
           .update({ last_read_at: now })
           .eq("conversation_id", convId)
-          .eq("user_id", userId);
+          .eq("user_id", userId)
+          .select("user_id");
+        if ((!updatedMembers || updatedMembers.length === 0) && !memberUpdateErr) {
+          await supabase.from("messages")
+            .update({ is_read: true })
+            .eq("conversation_id", convId)
+            .neq("sender_id", userId)
+            .eq("is_read", false);
+        }
 
         // ทำเครื่องหมายแจ้งเตือนของห้องนี้ว่าอ่านแล้วด้วย
         await supabase
