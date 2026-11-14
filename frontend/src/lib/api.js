@@ -39,7 +39,12 @@ async function request(path, { method = "GET", body, token } = {}) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `คำขอไม่สำเร็จ (${res.status})`);
+  if (!res.ok) {
+    const error = new Error(data.error || `คำขอไม่สำเร็จ (${res.status})`);
+    error.status = res.status;
+    error.data = data;
+    throw error;
+  }
   return data;
 }
 
@@ -181,7 +186,7 @@ export const api = {
   acceptMeetup: (id) => request(`/api/meetups/${id}/accept`, { method: "POST" }),
   completeMeetup: (id) => request(`/api/meetups/${id}/complete`, { method: "POST" }),
   rescheduleMeetup: (id, data) => request(`/api/meetups/${id}/reschedule`, { method: "POST", body: data }),
-  cancelMeetup: (id, reason) => request(`/api/meetups/${id}/cancel`, { method: "POST", body: { reason } }),
+  cancelMeetup: (id, reason, options = {}) => request(`/api/meetups/${id}/cancel`, { method: "POST", body: { reason, ...options } }),
   checkInMeetup: (id, coordinates) =>
     request(`/api/meetups/${id}/checkin`, { method: "POST", body: coordinates }),
 

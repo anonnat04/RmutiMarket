@@ -19,6 +19,28 @@ export function buildNotificationLink(n) {
     return refId ? `/chat?conversationId=${refId}` : '/chat';
   }
 
+  // คะแนนความน่าเชื่อถือ (รวมแจ้งเตือน penalty ที่อ้างอิง meetup)
+  if (
+    type.includes('penalty') || type.includes('score') || type.includes('trust') ||
+    title.includes('คะแนนความน่าเชื่อถือ') || title.includes('ถูกตัดคะแนน') ||
+    title.includes('คะแนนของคุณเพิ่ม') || message.includes('คะแนนความน่าเชื่อถือ')
+  ) {
+    return '/my-score';
+  }
+
+  // รายงาน/แจ้งปัญหา: ผู้ดูแลไปหน้าจัดการโดยเปิดแท็บที่ตรงประเภท
+  const isAdmin = useAuthStore.getState().user?.role === 'admin';
+  const isSupportNotice =
+    type.includes('support') || type.includes('ticket') ||
+    refType.includes('support') || refType.includes('ticket') ||
+    title.includes('แจ้งปัญหา') || message.includes('แจ้งปัญหา');
+  if (isSupportNotice) {
+    return isAdmin ? '/admin/disputes?tab=support' : '/my-reports';
+  }
+  if (type.includes('report') || refType.includes('report') || title.includes('รายงาน') || message.includes('รายงาน')) {
+    return isAdmin ? '/admin/disputes?tab=reports' : '/my-reports';
+  }
+
   // 2. รีวิว (พาไปหน้ารวมรีวิว)
   if (type.includes('review') || refType === 'review') {
     return '/reviews';

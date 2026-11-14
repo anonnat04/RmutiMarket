@@ -18,11 +18,8 @@ async function getConversations(req, res, next) {
       console.error("[getConversations] memErr (query conversation_members ล้มเหลว):", memErr);
     }
 
-    if (!memErr && myMemberships) {
-      if (myMemberships.length === 0) {
-        return res.json({ conversations: [] });
-      }
-
+    // ถ้าไม่มี membership ให้ลองอ่าน schema เดิมด้านล่าง แทนการตอบรายการว่างทันที
+    if (!memErr && myMemberships?.length > 0) {
       const convIds = myMemberships.map((m) => m.conversation_id);
 
       const { data: convs, error: convErr } = await supabase
@@ -31,7 +28,7 @@ async function getConversations(req, res, next) {
           id, product_id, created_at, updated_at,
           products(id, title, price, seller_id, status_id,
             product_images(image_url, is_primary),
-            transactions(id, status_id, completed_at, updated_at)
+            transactions(id, buyer_id, seller_id, status_id, completed_at, cancelled_at, updated_at)
           )
         `)
         .in("id", convIds)
@@ -91,12 +88,20 @@ async function getConversations(req, res, next) {
             || product?.product_images?.[0]?.image_url
             || null;
 
-          // หา transaction ล่าสุดของสินค้านี้ (เรียงตาม updated_at ล่าสุด)
+          // ผูกสถานะปิดการขายกับคู่สนทนาคู่นี้เท่านั้น ไม่ใช้ transaction ล่าสุดของสินค้านี้
+          // เพราะสินค้าเดียวกันอาจมีผู้ซื้อหลายคนและไม่ควรทำให้ห้องอื่นถูกซ่อน/หมดอายุ
+          const memberIds = members.map((m) => String(m.user_id)).sort();
           const txList = product?.transactions || [];
-          const latestTx = txList.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0] || null;
+          const relatedTxs = txList.filter((tx) =>
+            [String(tx.buyer_id), String(tx.seller_id)].sort().join(":") === memberIds.join(":")
+          );
+          const latestTx = relatedTxs.sort((a, b) =>
+            new Date(b.completed_at || b.cancelled_at || b.updated_at || 0) -
+            new Date(a.completed_at || a.cancelled_at || a.updated_at || 0)
+          )[0] || null;
           // status_id: 1=PENDING, 2=CONFIRMED, 3=COMPLETED, 4=CANCELLED, 5=NO_SHOW
-          const txStatus = latestTx?.status_id || null;
-          const txCompletedAt = latestTx?.completed_at || latestTx?.updated_at || null;
+          const txStatus = latestTx?.status_id != null ? Number(latestTx.status_id) : null;
+          const txCompletedAt = latestTx?.completed_at || latestTx?.cancelled_at || latestTx?.updated_at || null;
           // ถือว่าปิดการขายแล้วถ้า status 3=COMPLETED, 4=CANCELLED, 5=NO_SHOW
           const isDealClosed = txStatus === 3 || txStatus === 4 || txStatus === 5;
 
@@ -144,8 +149,8 @@ async function getConversations(req, res, next) {
         buyer_unread_count, seller_unread_count,
         buyer_id, seller_id, created_at,
         listings(id, title, price, seller_id, listing_images(url, is_cover)),
-        users!buyer_id(id, display_name, avatar_url),
-        users!seller_id(id, display_name, avatar_url)
+        buyer:users!buyer_id(id, display_name, avatar_url),
+        seller:users!seller_id(id, display_name, avatar_url)
       `)
       .or(`buyer_id.eq.${myId},seller_id.eq.${myId}`)
       .order("created_at", { ascending: false });
@@ -157,7 +162,7 @@ async function getConversations(req, res, next) {
     if (!oldErr && oldConvs) {
       const formattedOld = oldConvs.map((c) => {
         const isBuyer = String(c.buyer_id) === String(myId);
-        const partner = isBuyer ? c.users_seller_id || c.users : c.users_buyer_id || c.users;
+        const partner = isBuyer ? c.seller : c.buyer;
         const coverImg = c.listings?.listing_images?.find((i) => i.is_cover)?.url
           || c.listings?.listing_images?.[0]?.url
           || null;
@@ -378,6 +383,14 @@ async function createOrGetConversation(req, res, next) {
         // หากไม่ส่งมา แสดงว่าเป็นผู้ซื้อทักหาผู้ขาย (ค่าเริ่มต้นคือ product.seller_id)
         const explicitPartnerId = partnerId || buyerId;
         const targetPartnerId = explicitPartnerId ? parseInt(explicitPartnerId) : product.seller_id;
+        const isSeller = String(product.seller_id) === String(myId);
+
+        if (!isSeller && String(targetPartnerId) !== String(product.seller_id)) {
+          return res.status(403).json({ error: "ผู้ซื้อเริ่มแชทได้เฉพาะกับเจ้าของสินค้านี้" });
+        }
+        if (isSeller && !Number.isInteger(targetPartnerId)) {
+          return res.status(400).json({ error: "กรุณาระบุผู้ซื้อที่ต้องการเริ่มแชทด้วย" });
+        }
 
         if (String(targetPartnerId) === String(myId)) {
           return res.status(400).json({ error: "ไม่สามารถแชทกับตัวเองได้" });
@@ -450,12 +463,19 @@ async function createOrGetConversation(req, res, next) {
     if (listing) {
       const explicitPartnerId = partnerId || buyerId;
       const targetPartnerId = explicitPartnerId ? explicitPartnerId : listing.seller_id;
+      const isSeller = String(listing.seller_id) === String(myId);
+
+      if (!isSeller && String(targetPartnerId) !== String(listing.seller_id)) {
+        return res.status(403).json({ error: "ผู้ซื้อเริ่มแชทได้เฉพาะกับเจ้าของสินค้านี้" });
+      }
+      if (isSeller && !explicitPartnerId) {
+        return res.status(400).json({ error: "กรุณาระบุผู้ซื้อที่ต้องการเริ่มแชทด้วย" });
+      }
 
       if (String(targetPartnerId) === String(myId)) {
         return res.status(400).json({ error: "ไม่สามารถแชทกับตัวเองได้" });
       }
 
-      const isSeller = String(listing.seller_id) === String(myId);
       const buyer_id = isSeller ? targetPartnerId : myId;
       const seller_id = isSeller ? myId : listing.seller_id;
 
@@ -545,13 +565,34 @@ async function sendMessage(req, res, next) {
     const finalImageUrl = fileUrl || imageUrl || null;
     const myId = req.user.id;
     const msgType = (message_type || "TEXT").toUpperCase();
+    const convId = parseInt(id, 10);
 
-    const isNum = !isNaN(parseInt(id));
-    if (isNum) {
+    if (!Number.isInteger(convId) || convId <= 0) {
+      return res.status(400).json({ error: "รหัสห้องแชทไม่ถูกต้อง" });
+    }
+
+    // ต้องเป็นสมาชิกห้องก่อนส่งข้อความ ไม่ fallback เป็นข้อความจำลองเมื่อเขียน DB ไม่สำเร็จ
+    const { data: memberships } = await supabase
+      .from("conversation_members")
+      .select("user_id")
+      .eq("conversation_id", convId);
+    let isMember = (memberships || []).some((m) => String(m.user_id) === String(myId));
+    if (!isMember) {
+      // รองรับ conversation schema เก่า โดยตรวจ buyer_id/seller_id จากฐานข้อมูล
+      const { data: oldConv } = await supabase
+        .from("conversations")
+        .select("buyer_id, seller_id")
+        .eq("id", convId)
+        .maybeSingle();
+      isMember = !!oldConv && [oldConv.buyer_id, oldConv.seller_id].some((uid) => String(uid) === String(myId));
+    }
+    if (!isMember) return res.status(403).json({ error: "คุณไม่มีสิทธิ์ส่งข้อความในห้องแชทนี้" });
+
+    {
       const { data: msg, error: msgErr } = await supabase
         .from("messages")
         .insert({
-          conversation_id: parseInt(id),
+          conversation_id: convId,
           sender_id: myId,
           message_type: msgType,
           content: content || null,
@@ -571,11 +612,11 @@ async function sendMessage(req, res, next) {
         await supabase
           .from("conversations")
           .update({ updated_at: new Date().toISOString() })
-          .eq("id", parseInt(id));
+          .eq("id", convId);
 
-        await notifyConversationMembers(parseInt(id), myId, req.user?.display_name || req.user?.full_name, msgType, content);
+        await notifyConversationMembers(convId, myId, req.user?.display_name || req.user?.full_name, msgType, content);
 
-        emitNewMessage(parseInt(id), {
+        emitNewMessage(convId, {
           id: msg.id,
           conversationId: parseInt(id),
           text: content,
@@ -598,10 +639,11 @@ async function sendMessage(req, res, next) {
       }
     }
 
+    // Legacy schema fallback is still permitted only after the membership check above.
     const { data: oldMsg, error: oldErr } = await supabase
       .from("messages")
       .insert({
-        conversation_id: id,
+        conversation_id: convId,
         sender_id: myId,
         type: msgType.toLowerCase(),
         content: content || null,
@@ -609,35 +651,13 @@ async function sendMessage(req, res, next) {
       })
       .select("*")
       .single();
+    if (!oldErr && oldMsg) return res.status(201).json({ message: oldMsg });
+    if (oldErr) console.error("[sendMessage] insert ข้อความล้มเหลว (schema เก่า):", oldErr);
 
-    if (!oldErr && oldMsg) {
-      return res.status(201).json({ message: oldMsg });
-    }
-    if (oldErr) {
-      console.error("[sendMessage] insert ข้อความล้มเหลว (fallback schema เก่า):", oldErr);
-    }
-
-    return res.status(201).json({
-      message: {
-        id: `msg-${Date.now()}`,
-        conversation_id: id,
-        sender_id: myId,
-        message_type: msgType,
-        content: content || null,
-        created_at: new Date().toISOString(),
-      },
-    });
+    return res.status(500).json({ error: "บันทึกข้อความไม่สำเร็จ กรุณาลองใหม่อีกครั้ง" });
   } catch (err) {
     console.error("[sendMessage error]", err);
-    res.status(201).json({
-      message: {
-        id: `msg-${Date.now()}`,
-        conversation_id: req.params.id,
-        sender_id: req.user?.id,
-        content: req.body?.content,
-        created_at: new Date().toISOString(),
-      },
-    });
+    next(err);
   }
 }
 
@@ -722,36 +742,42 @@ async function deleteConversation(req, res, next) {
 // ----------------------------------------------------------------
 // Background Job: ลบแชทที่หมดอายุ (เกิน 7 วันหลังจาก deal ปิด)
 // ระบบนี้จะลบห้องแชทที่:
-//   - สินค้ามี transaction ที่ status = COMPLETED(3) / CANCELLED(4) / NO_SHOW(5)
-//   - และ updated_at ของ transaction นั้นเกิน 7 วันแล้ว
+//   - มี transaction ที่ status = COMPLETED(3) / CANCELLED(4) / NO_SHOW(5)
+//   - และเวลาปิดรายการของ transaction นั้นเกิน 7 วันแล้ว
 // ----------------------------------------------------------------
 async function deleteExpiredChats() {
   try {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    // หา transactions ที่ปิดแล้วเกิน 7 วัน
-    const { data: expiredTxs, error: txErr } = await supabase
+    // ใช้ completed_at/cancelled_at เป็นเวลาปิดจริง; updated_at เป็น fallback สำหรับ schema เก่า
+    const { data: terminalTxs, error: txErr } = await supabase
       .from("transactions")
-      .select("id, product_id, status_id, updated_at, completed_at")
-      .in("status_id", [3, 4, 5]) // COMPLETED, CANCELLED, NO_SHOW
-      .lt("updated_at", sevenDaysAgo);
+      .select("id, product_id, buyer_id, seller_id, status_id, updated_at, completed_at, cancelled_at")
+      .in("status_id", [3, 4, 5]); // COMPLETED, CANCELLED, NO_SHOW
 
     if (txErr) {
       console.error("[deleteExpiredChats] ดึง transactions หมดอายุล้มเหลว:", txErr);
       return;
     }
 
-    if (!expiredTxs || expiredTxs.length === 0) return;
+    const expiredTxs = (terminalTxs || []).filter((tx) => {
+      const closedAt = Number(tx.status_id) === 3
+        ? (tx.completed_at || tx.updated_at)
+        : (tx.cancelled_at || tx.updated_at);
+      const closedAtMs = closedAt ? Date.parse(closedAt) : NaN;
+      return Number.isFinite(closedAtMs) && closedAtMs < Date.parse(sevenDaysAgo);
+    });
+    if (expiredTxs.length === 0) return;
 
     // หา product_id ที่มี transaction หมดอายุ
     const expiredProductIds = [...new Set(expiredTxs.map((t) => t.product_id).filter(Boolean))];
 
     if (expiredProductIds.length === 0) return;
 
-    // หา conversations ที่เกี่ยวกับสินค้าเหล่านั้น
-    const { data: expiredConvs, error: convErr } = await supabase
+    // หาเฉพาะห้องของสินค้าเหล่านั้น แล้วจับคู่สมาชิกกับ buyer/seller ของ transaction
+    const { data: productConvs, error: convErr } = await supabase
       .from("conversations")
-      .select("id")
+      .select("id, product_id")
       .in("product_id", expiredProductIds);
 
     if (convErr) {
@@ -759,9 +785,34 @@ async function deleteExpiredChats() {
       return;
     }
 
-    if (!expiredConvs || expiredConvs.length === 0) return;
+    if (!productConvs || productConvs.length === 0) return;
+    const convIds = productConvs.map((c) => c.id);
+    const { data: members, error: membersErr } = await supabase
+      .from("conversation_members")
+      .select("conversation_id, user_id")
+      .in("conversation_id", convIds);
+    if (membersErr) {
+      console.error("[deleteExpiredChats] ดึงสมาชิกห้องแชทล้มเหลว:", membersErr);
+      return;
+    }
 
-    const expiredConvIds = expiredConvs.map((c) => c.id);
+    const membersByConversation = new Map();
+    (members || []).forEach((member) => {
+      const list = membersByConversation.get(String(member.conversation_id)) || [];
+      list.push(String(member.user_id));
+      membersByConversation.set(String(member.conversation_id), list);
+    });
+    const expiredConvIds = productConvs
+      .filter((conv) => {
+        const participantIds = (membersByConversation.get(String(conv.id)) || []).sort();
+        if (participantIds.length !== 2) return false;
+        return expiredTxs.some((tx) =>
+          String(tx.product_id) === String(conv.product_id) &&
+          [String(tx.buyer_id), String(tx.seller_id)].sort().join(":") === participantIds.join(":")
+        );
+      })
+      .map((conv) => conv.id);
+    if (expiredConvIds.length === 0) return;
     console.log(`🧹 [Chat Retention] พบห้องแชทหมดอายุ ${expiredConvIds.length} ห้อง → กำลังลบ...`);
 
     await deleteConversations(expiredConvIds);

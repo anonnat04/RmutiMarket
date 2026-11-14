@@ -178,7 +178,7 @@ async function createTransaction(req, res, next) {
 
     const { data: product } = await supabase
       .from("products")
-      .select("id, seller_id, price, title")
+      .select("id, seller_id, price, title, status_id")
       .eq("id", targetProductId)
       .single();
 
@@ -191,10 +191,20 @@ async function createTransaction(req, res, next) {
       .select("id")
       .eq("product_id", targetProductId)
       .eq("buyer_id", req.user.id)
-      .neq("status_id", 4) // 4 = ยกเลิก (CANCELLED)
+      .in("status_id", [1, 2]) // บล็อกเฉพาะรายการที่ยังดำเนินการอยู่
       .limit(1);
 
     if (existing?.length) return res.status(409).json({ error: "คุณมีรายการซื้อขายสินค้านี้อยู่แล้ว" });
+
+    // จองสินค้าแบบ compare-and-set ก่อนสร้าง transaction เพื่อกันผู้ซื้อหลายคนแย่งซื้อพร้อมกัน
+    const { data: claimed, error: claimErr } = await supabase
+      .from("products")
+      .update({ status_id: 2 })
+      .eq("id", targetProductId)
+      .eq("status_id", 1)
+      .select("id");
+    if (claimErr) throw claimErr;
+    if (!claimed?.length) return res.status(409).json({ error: "สินค้านี้ถูกจองหรือขายไปแล้ว" });
 
     const { data: txn, error } = await supabase
       .from("transactions")
@@ -207,10 +217,11 @@ async function createTransaction(req, res, next) {
       .select("id")
       .single();
 
-    if (error) throw error;
-
-    // Mark product as reserved (2 = ติดจอง)
-    await supabase.from("products").update({ status_id: 2 }).eq("id", targetProductId);
+    if (error) {
+      // ปล่อยจองกลับเฉพาะสินค้าที่ยังเป็น RESERVED
+      await supabase.from("products").update({ status_id: 1 }).eq("id", targetProductId).eq("status_id", 2);
+      throw error;
+    }
 
     // Notify seller
     const notifData = {
@@ -244,8 +255,16 @@ async function confirmTransaction(req, res, next) {
 
     if (!txn) return res.status(404).json({ error: "ไม่พบรายการ" });
     if (txn.seller_id !== req.user.id) return res.status(403).json({ error: "เฉพาะผู้ขายเท่านั้น" });
+    if (txn.status_id !== 1) return res.status(400).json({ error: "รายการนี้ไม่อยู่ในสถานะรอยืนยัน" });
 
-    await supabase.from("transactions").update({ status_id: 2 }).eq("id", id); // 2 = ยืนยันแล้ว (CONFIRMED)
+    const { data: accepted, error: acceptErr } = await supabase
+      .from("transactions")
+      .update({ status_id: 2 }) // 2 = ยืนยันแล้ว (CONFIRMED)
+      .eq("id", id)
+      .eq("status_id", 1)
+      .select("id");
+    if (acceptErr) throw acceptErr;
+    if (!accepted?.length) return res.status(409).json({ error: "รายการนี้ถูกดำเนินการไปแล้ว" });
 
     const notifData = {
       user_id: txn.buyer_id,
@@ -272,56 +291,20 @@ async function completeTransaction(req, res, next) {
     const { id } = req.params;
     const { data: txn } = await supabase
       .from("transactions")
-      .select("id, product_id, buyer_id, seller_id, buyer_received, seller_handed_over")
+      .select("id, buyer_id, seller_id, status_id")
       .eq("id", id)
       .single();
 
     if (!txn) return res.status(404).json({ error: "ไม่พบรายการ" });
     if (txn.buyer_id !== req.user.id && txn.seller_id !== req.user.id)
       return res.status(403).json({ error: "ไม่มีสิทธิ์" });
-
-    const isBuyer = txn.buyer_id === req.user.id;
-    const updateField = isBuyer ? { buyer_received: true } : { seller_handed_over: true };
-
-    const otherConfirmed = isBuyer ? txn.seller_handed_over : txn.buyer_received;
-
-    if (otherConfirmed) {
-      updateField.status_id = 3; // 3 = ซื้อขายเสร็จ (COMPLETED)
-      updateField.completed_at = new Date().toISOString();
-
-      // Mark product as sold
-      await supabase.from("products").update({ status_id: 3 }).eq("id", txn.product_id);
-
-      // Increment successful_deal_count on both
-      const { data: bUser } = await supabase.from("users").select("successful_deal_count").eq("id", txn.buyer_id).single();
-      await supabase.from("users").update({ successful_deal_count: (bUser?.successful_deal_count || 0) + 1 }).eq("id", txn.buyer_id);
-
-      const { data: sUser } = await supabase.from("users").select("successful_deal_count").eq("id", txn.seller_id).single();
-      await supabase.from("users").update({ successful_deal_count: (sUser?.successful_deal_count || 0) + 1 }).eq("id", txn.seller_id);
+    // Legacy endpoint once let either participant close the deal without checking in.
+    // Closing must go through the appointment flow, which validates both check-ins and
+    // applies score/recovery exactly once.
+    if (Number(txn.status_id) !== 2) {
+      return res.status(409).json({ error: "รายการนี้ไม่ได้อยู่ระหว่างนัดรับ" });
     }
-
-    let finalTxnId = id;
-    const { error: updErr } = await supabase.from("transactions").update(updateField).eq("id", id);
-
-    if (updErr && (updErr.message?.includes("code") || updErr.code === "42703") && otherConfirmed) {
-      const { data: replacementTxn } = await supabase.from("transactions").insert({
-        product_id: txn.product_id,
-        buyer_id: txn.buyer_id,
-        seller_id: txn.seller_id,
-        status_id: 3,
-        buyer_received: true,
-        seller_handed_over: true,
-        completed_at: updateField.completed_at,
-      }).select().single();
-
-      if (replacementTxn) {
-        finalTxnId = replacementTxn.id;
-        await supabase.from("appointments").update({ transaction_id: replacementTxn.id }).eq("transaction_id", id);
-        await supabase.from("transactions").delete().eq("id", id);
-      }
-    }
-
-    res.json({ message: otherConfirmed ? "การซื้อขายเสร็จสมบูรณ์แล้ว 🎉" : "บันทึกการยืนยันแล้ว รออีกฝ่ายยืนยัน", transactionId: finalTxnId });
+    return res.status(400).json({ error: "กรุณายืนยันรับสินค้าจากหน้านัดรับหลังทั้งสองฝ่ายเช็คอินแล้ว" });
   } catch (err) {
     next(err);
   }
@@ -344,24 +327,37 @@ async function cancelTransaction(req, res, next) {
     if (!txn) return res.status(404).json({ error: "ไม่พบรายการ" });
     if (txn.buyer_id !== req.user.id && txn.seller_id !== req.user.id && req.user.role !== "admin")
       return res.status(403).json({ error: "ไม่มีสิทธิ์" });
+    if ([3, 4, 5].includes(Number(txn.status_id))) {
+      return res.status(400).json({ error: "รายการนี้สิ้นสุดแล้ว ไม่สามารถยกเลิกซ้ำได้" });
+    }
+    const { data: activeAppointments, error: apptErr } = await supabase
+      .from("appointments")
+      .select("id, status_id")
+      .eq("transaction_id", id)
+      .in("status_id", [1, 2]);
+    if (apptErr) throw apptErr;
+    if ((activeAppointments || []).some((appt) => Number(appt.status_id) === 2)) {
+      return res.status(400).json({ error: "นัดรับได้รับการยืนยันแล้ว กรุณายกเลิกจากหน้านัดรับเพื่อให้ระบบตรวจเงื่อนไขการตัดคะแนน" });
+    }
 
     const now = new Date().toISOString();
 
-    await supabase.from("transactions").update({
+    const { data: cancelled, error: cancelErr } = await supabase.from("transactions").update({
       status_id: 4, // 4 = ยกเลิก (CANCELLED)
       cancelled_at: now,
-    }).eq("id", id);
+    }).eq("id", id).in("status_id", [1, 2]).select("id");
+    if (cancelErr) throw cancelErr;
+    if (!cancelled?.length) return res.status(409).json({ error: "รายการนี้ถูกดำเนินการไปแล้ว" });
 
     // Cancel related appointments
     await supabase.from("appointments").update({
       status_id: 4,
       cancelled_at: now,
-      cancelled_by: req.user.id,
       cancellation_reason: reason || "ยกเลิกการซื้อขาย",
-    }).eq("transaction_id", id);
+    }).eq("transaction_id", id).eq("status_id", 1);
 
     // Release product back to AVAILABLE
-    await supabase.from("products").update({ status_id: 1 }).eq("id", txn.product_id);
+    await supabase.from("products").update({ status_id: 1 }).eq("id", txn.product_id).eq("status_id", 2);
 
     res.json({ message: "ยกเลิกรายการซื้อขายแล้ว" });
   } catch (err) {

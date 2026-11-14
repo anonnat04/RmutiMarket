@@ -69,10 +69,23 @@ async function getPenaltyRule(actionType) {
 // ----------------------------------------------------------------
 // Helper: ตัดคะแนนความน่าเชื่อถือ (Trust Score) ตามกฎในตาราง penalty_rules
 // ----------------------------------------------------------------
-async function recordPenalty(userId, actionType, reason) {
+async function recordPenalty(userId, actionType, reason, sourceId = null) {
   try {
     const rule = await getPenaltyRule(actionType);
-    if (!rule || !rule.is_active) return; // ไม่มีกฎหรือปิดกฎ = ไม่ตัดคะแนน
+    if (!rule || !rule.is_active) return { penalized: false, pointsDeducted: 0 }; // ไม่มีกฎหรือปิดกฎ = ไม่ตัดคะแนน
+
+    // Trigger ในฐานข้อมูลอาจบันทึกโทษรายการเดียวกันไปแล้ว ตรวจ source_id ก่อนกันหักซ้ำ
+    if (sourceId != null) {
+      const { data: existingPenalty, error: historyCheckErr } = await supabase
+        .from("user_score_history")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("source_type", "PENALTY")
+        .eq("source_id", sourceId)
+        .maybeSingle();
+      if (historyCheckErr) throw historyCheckErr;
+      if (existingPenalty) return { penalized: true, alreadyApplied: true, pointsDeducted: rule.points_deducted };
+    }
     const pointsDeducted = rule.points_deducted;
 
     const { data: user } = await supabase
@@ -86,24 +99,42 @@ async function recordPenalty(userId, actionType, reason) {
     const currentScore = user.trust_score ?? 100;
     const newScore = Math.max(0, currentScore - pointsDeducted);
 
-    await supabase.from("users").update({ trust_score: newScore }).eq("id", userId);
+    const { error: userUpdateErr } = await supabase.from("users").update({ trust_score: newScore }).eq("id", userId);
+    if (userUpdateErr) throw userUpdateErr;
 
-    await supabase.from("user_penalties").insert({
+    const { error: penaltyInsertErr } = await supabase.from("user_penalties").insert({
       user_id: userId,
       penalty_rule_id: rule.id,
       reason: reason || actionType,
     });
+    if (penaltyInsertErr) throw penaltyInsertErr;
 
-    await supabase.from("user_score_history").insert({
+    const { error: historyInsertErr } = await supabase.from("user_score_history").insert({
       user_id: userId,
       change_amount: -(currentScore - newScore),
       score_after: newScore,
       source_type: "PENALTY",
+      source_id: sourceId,
       reason: reason || actionType,
     });
+    if (historyInsertErr) throw historyInsertErr;
     console.log(`⚠️ [TrustScore Penalty] User ${userId} penalized -${pointsDeducted} pts for ${actionType} (New score: ${newScore})`);
+    return { penalized: true, pointsDeducted: currentScore - newScore };
   } catch (err) {
     console.error("[recordPenalty] error:", err);
+    return { penalized: false, pointsDeducted: 0, error: err?.message };
+  }
+}
+
+async function persistAndSendNotification(userId, notification) {
+  const payload = { ...notification, user_id: userId };
+  try {
+    const { data, error } = await supabase.from("notifications").insert(payload).select("*").single();
+    if (error) throw error;
+    sendNotificationToUser(userId, data || payload);
+  } catch (err) {
+    console.warn("[meetup notification] persist failed:", err?.message || err);
+    sendNotificationToUser(userId, payload);
   }
 }
 
@@ -112,6 +143,15 @@ async function recordPenalty(userId, actionType, reason) {
 // ----------------------------------------------------------------
 async function recoverScoreOnDeal(sellerId, transactionId) {
   try {
+    const { data: existingRecovery } = await supabase
+      .from("user_score_history")
+      .select("id")
+      .eq("user_id", sellerId)
+      .eq("source_type", "RECOVERY")
+      .eq("source_id", transactionId)
+      .maybeSingle();
+    if (existingRecovery) return;
+
     const { data: user } = await supabase
       .from("users")
       .select("trust_score")
@@ -131,6 +171,7 @@ async function recoverScoreOnDeal(sellerId, transactionId) {
         change_amount: pointsAdded,
         score_after: newScore,
         source_type: "RECOVERY",
+        source_id: transactionId,
         reason: "SUCCESSFUL_DEAL",
       });
       if (histErr) {
@@ -456,32 +497,36 @@ async function checkAndProcessNoShows() {
 
         // 3. ตัดคะแนนความน่าเชื่อถือของผู้ที่ไม่มาเช็คอิน
         if (!buyerCheckedIn && txn.buyer_id) {
-          await recordPenalty(
+          const penalty = await recordPenalty(
             txn.buyer_id,
             "NO_SHOW",
-            `ผู้ซื้อไม่มาตามนัดรับสินค้า (เกินเวลา ${graceMin} นาที) - นัดหมาย #${appt.id}`
+            `ผู้ซื้อไม่มาตามนัดรับสินค้า (เกินเวลา ${graceMin} นาที) - นัดหมาย #${appt.id}`,
+            appt.id
           );
-          sendNotificationToUser(txn.buyer_id, {
-            user_id: txn.buyer_id,
-            type: "penalty",
-            title: "⚠️ คุณถูกตัดคะแนนเนื่องจากไม่มาตามนัด",
-            message: `ระบบตัดคะแนนความน่าเชื่อถือของคุณเนื่องจากไม่มาเช็คอินตามจุดนัดพบภายใน ${graceMin} นาที`,
+          await persistAndSendNotification(txn.buyer_id, {
+            type: penalty.penalized ? "penalty" : "meetup_cancelled",
+            title: penalty.penalized ? "⚠️ คุณถูกตัดคะแนนเนื่องจากไม่มาตามนัด" : "นัดรับสิ้นสุดเนื่องจากไม่เช็คอิน",
+            message: penalty.penalized
+              ? `ระบบหัก ${penalty.pointsDeducted} คะแนนความน่าเชื่อถือ เนื่องจากไม่มาเช็คอินภายใน ${graceMin} นาที`
+              : `นัดสิ้นสุดหลังเลยเวลาเช็คอิน ${graceMin} นาที โดยกฎคะแนนปัจจุบันไม่ได้บันทึกการหักคะแนน`,
             reference_type: "meetup",
             reference_id: appt.id,
           });
         }
 
         if (!sellerCheckedIn && txn.seller_id) {
-          await recordPenalty(
+          const penalty = await recordPenalty(
             txn.seller_id,
             "NO_SHOW",
-            `ผู้ขายไม่มาตามนัดรับสินค้า (เกินเวลา ${graceMin} นาที) - นัดหมาย #${appt.id}`
+            `ผู้ขายไม่มาตามนัดรับสินค้า (เกินเวลา ${graceMin} นาที) - นัดหมาย #${appt.id}`,
+            appt.id
           );
-          sendNotificationToUser(txn.seller_id, {
-            user_id: txn.seller_id,
-            type: "penalty",
-            title: "⚠️ คุณถูกตัดคะแนนเนื่องจากไม่มาตามนัด",
-            message: `ระบบตัดคะแนนความน่าเชื่อถือของคุณเนื่องจากไม่มาเช็คอินตามจุดนัดพบภายใน ${graceMin} นาที`,
+          await persistAndSendNotification(txn.seller_id, {
+            type: penalty.penalized ? "penalty" : "meetup_cancelled",
+            title: penalty.penalized ? "⚠️ คุณถูกตัดคะแนนเนื่องจากไม่มาตามนัด" : "นัดรับสิ้นสุดเนื่องจากไม่เช็คอิน",
+            message: penalty.penalized
+              ? `ระบบหัก ${penalty.pointsDeducted} คะแนนความน่าเชื่อถือ เนื่องจากไม่มาเช็คอินภายใน ${graceMin} นาที`
+              : `นัดสิ้นสุดหลังเลยเวลาเช็คอิน ${graceMin} นาที โดยกฎคะแนนปัจจุบันไม่ได้บันทึกการหักคะแนน`,
             reference_type: "meetup",
             reference_id: appt.id,
           });
@@ -489,8 +534,7 @@ async function checkAndProcessNoShows() {
 
         // แจ้งเตือนคู่ค้าที่มาเช็คอินตามนัด
         if (buyerCheckedIn && !sellerCheckedIn && txn.buyer_id) {
-          sendNotificationToUser(txn.buyer_id, {
-            user_id: txn.buyer_id,
+          await persistAndSendNotification(txn.buyer_id, {
             type: "meetup_cancelled",
             title: "นัดหมายถูกตัดจบ (ผู้ขายไม่มาตามนัด)",
             message: `เนื่องจากผู้ขายไม่ได้มาเช็คอินภายใน ${graceMin} นาที ระบบจึงตัดจบนัดหมายและตัดคะแนนผู้ขาย`,
@@ -498,8 +542,7 @@ async function checkAndProcessNoShows() {
             reference_id: appt.id,
           });
         } else if (sellerCheckedIn && !buyerCheckedIn && txn.seller_id) {
-          sendNotificationToUser(txn.seller_id, {
-            user_id: txn.seller_id,
+          await persistAndSendNotification(txn.seller_id, {
             type: "meetup_cancelled",
             title: "นัดหมายถูกตัดจบ (ผู้ซื้อไม่มาตามนัด)",
             message: `เนื่องจากผู้ซื้อไม่ได้มาเช็คอินภายใน ${graceMin} นาที ระบบจึงตัดจบนัดหมายและนำสินค้ากลับสู่สถานะว่างขายใหม่`,
@@ -716,7 +759,7 @@ async function createMeetup(req, res, next) {
     } else if (targetProductId) {
       const { data: product } = await supabase
         .from("products")
-        .select("id, seller_id, price, title")
+        .select("id, seller_id, price, title, status_id")
         .eq("id", targetProductId)
         .single();
 
@@ -724,6 +767,9 @@ async function createMeetup(req, res, next) {
       if (product.seller_id === req.user.id) return res.status(400).json({ error: "ไม่สามารถซื้อสินค้าของตนเองได้" });
 
       const targetSellerId = sellerId ? parseInt(sellerId) : product.seller_id;
+      if (String(targetSellerId) !== String(product.seller_id)) {
+        return res.status(400).json({ error: "ผู้ขายไม่ตรงกับเจ้าของสินค้าจริง" });
+      }
 
       // หาธุรกรรมที่ยังไม่ถูกยกเลิก (ยกเลิกแล้วจะไม่เจอ -> เปิดใหม่ได้)
       const { data: existingTxns } = await supabase
@@ -1023,7 +1069,7 @@ async function completeMeetup(req, res, next) {
     const { id } = req.params;
     const { data: appt } = await supabase
       .from("appointments")
-      .select("id, transaction_id, status_id, buyer_checked_in, seller_checked_in, transactions(id, product_id, buyer_id, seller_id)")
+      .select("id, transaction_id, status_id, buyer_checked_in, seller_checked_in, transactions(id, product_id, buyer_id, seller_id, status_id)")
       .eq("id", id)
       .single();
 
@@ -1033,7 +1079,7 @@ async function completeMeetup(req, res, next) {
     }
 
     // ต้องเช็คอินครบทั้งสองฝ่ายและนัดต้องอยู่ในสถานะ CONFIRMED ก่อนจึงจะปิดดีลได้
-    if (appt.status_id !== 2 || !appt.buyer_checked_in || !appt.seller_checked_in) {
+    if (Number(appt.status_id) !== 2 || !appt.buyer_checked_in || !appt.seller_checked_in || Number(appt.transactions?.status_id) !== 2) {
       return res.status(400).json({ error: "ต้องเช็คอินที่จุดนัดรับให้ครบทั้งสองฝ่ายก่อน จึงจะยืนยันส่งมอบสินค้าได้" });
     }
 
@@ -1042,16 +1088,16 @@ async function completeMeetup(req, res, next) {
 
     // Complete transaction
     let completedTxnId = txn.id;
-    const { error: txUpdErr } = await supabase.from("transactions").update({
+    const { data: completedRows, error: txUpdErr } = await supabase.from("transactions").update({
       status_id: 3, // 3 = ซื้อขายเสร็จ (COMPLETED)
       buyer_received: true,
       seller_handed_over: true,
       completed_at: now,
-    }).eq("id", txn.id);
+    }).eq("id", txn.id).eq("status_id", 2).select("id");
 
     if (txUpdErr && (txUpdErr.message?.includes("code") || txUpdErr.code === "42703")) {
       // Fallback if database trigger recover_score_on_deal failed due to missing 'code' column in transaction_status
-      const { data: replacementTxn } = await supabase.from("transactions").insert({
+      const { data: replacementTxn, error: replacementErr } = await supabase.from("transactions").insert({
         product_id: txn.product_id,
         buyer_id: txn.buyer_id,
         seller_id: txn.seller_id,
@@ -1063,14 +1109,21 @@ async function completeMeetup(req, res, next) {
 
       if (replacementTxn) {
         completedTxnId = replacementTxn.id;
-        await supabase.from("appointments").update({ transaction_id: replacementTxn.id, status_id: 3 }).eq("id", id);
+        const { data: closedAppt } = await supabase.from("appointments").update({ transaction_id: replacementTxn.id, status_id: 3 }).eq("id", id).eq("status_id", 2).select("id");
+        if (!closedAppt?.length) throw new Error("ไม่สามารถปิดสถานะนัดรับได้ กรุณารีเฟรชแล้วลองใหม่");
         await supabase.from("transactions").delete().eq("id", txn.id);
+      } else {
+        throw replacementErr || new Error("ปิดรายการซื้อขายไม่สำเร็จ");
       }
     } else {
+      if (txUpdErr) throw txUpdErr;
+      if (!completedRows?.length) return res.status(409).json({ error: "รายการนี้ถูกปิดการขายไปแล้ว" });
       // Complete appointment
-      await supabase.from("appointments").update({
+      const { data: closedAppt, error: closeApptErr } = await supabase.from("appointments").update({
         status_id: 3, // 3 = นัดรับเสร็จ (COMPLETED)
-      }).eq("id", id);
+      }).eq("id", id).eq("status_id", 2).select("id");
+      if (closeApptErr) throw closeApptErr;
+      if (!closedAppt?.length) throw new Error("ปิดสถานะนัดรับไม่สำเร็จ กรุณาติดต่อผู้ดูแลระบบ");
     }
 
     // Complete product (mark SOLD)
@@ -1084,8 +1137,7 @@ async function completeMeetup(req, res, next) {
       await supabase.from("users").update({ successful_deal_count: (bUser?.successful_deal_count || 0) + 1 }).eq("id", txn.buyer_id);
     }
     if (txn.seller_id) {
-      const { data: sUser } = await supabase.from("users").select("successful_deal_count").eq("id", txn.seller_id).single();
-      await supabase.from("users").update({ successful_deal_count: (sUser?.successful_deal_count || 0) + 1 }).eq("id", txn.seller_id);
+      // successful_deal_count ฝั่งผู้ขายนับโดย DB trigger ตอน transaction เปลี่ยนเป็น COMPLETED
       await recoverScoreOnDeal(txn.seller_id, completedTxnId);
     }
 
@@ -1190,7 +1242,8 @@ async function cancelMeetup(req, res, next) {
       .update({
         status_id: 4,
         cancelled_at: nowIso,
-        cancelled_by: req.user.id,
+        // ให้ DB trigger ตัดคะแนนเฉพาะเมื่อ backend คำนวณแล้วว่าตรงตาม LATE_CANCEL
+        cancelled_by: lateRule ? req.user.id : null,
         cancellation_reason: reason,
       })
       .eq("id", id)
@@ -1203,28 +1256,24 @@ async function cancelMeetup(req, res, next) {
     await cancelTransactionAndRelease(appt.transaction_id, appt.transactions?.product_id, nowIso);
 
     // ── ตัดคะแนนเฉพาะคนที่กดยกเลิก + แจ้งเตือน ──
+    let penaltyResult = { penalized: false, pointsDeducted: 0 };
     if (lateRule) {
       const threshold = lateRule.threshold_minutes ?? LATE_CANCEL_THRESHOLD_MINUTES;
-      await recordPenalty(
+      penaltyResult = await recordPenalty(
         req.user.id,
         "LATE_CANCEL",
-        `ยกเลิกนัด #${id} ก่อนเวลานัดน้อยกว่า ${threshold} นาที: ${reason}`
+        `ยกเลิกนัด #${id} ก่อนเวลานัดน้อยกว่า ${threshold} นาที: ${reason}`,
+        Number(id)
       );
-      const penaltyNotif = {
-        user_id: req.user.id,
-        type: "penalty",
-        title: "⚠️ คุณถูกตัดคะแนนจากการยกเลิกนัดกระชั้นชิด",
-        message: `คุณยกเลิกนัดที่ยืนยันแล้วก่อนเวลานัดน้อยกว่า ${threshold} นาที ระบบตัด ${lateRule.points_deducted} คะแนนความน่าเชื่อถือ`,
+      await persistAndSendNotification(req.user.id, {
+        type: penaltyResult.penalized ? "penalty" : "meetup_cancelled",
+        title: penaltyResult.penalized ? "⚠️ คุณถูกตัดคะแนนจากการยกเลิกนัดกระชั้นชิด" : "ยกเลิกนัดรับแล้ว",
+        message: penaltyResult.penalized
+          ? `คุณยกเลิกนัดที่ยืนยันแล้วก่อนเวลานัดน้อยกว่า ${threshold} นาที ระบบหัก ${penaltyResult.pointsDeducted} คะแนนตามกฎคะแนน`
+          : "ระบบไม่สามารถยืนยันการบันทึกคะแนนได้ กรุณาตรวจสอบประวัติคะแนนหรือติดต่อผู้ดูแลระบบ",
         reference_type: "meetup",
         reference_id: Number(id),
-      };
-      try {
-        const { data: ins } = await supabase.from("notifications").insert(penaltyNotif).select("*").single();
-        sendNotificationToUser(req.user.id, ins || penaltyNotif);
-      } catch (nErr) {
-        console.warn("[cancelMeetup] penalty notification warning:", nErr.message);
-        sendNotificationToUser(req.user.id, penaltyNotif);
-      }
+      });
     }
 
     // ── แจ้งคู่ค้า (ไม่โดนตัดคะแนน) ──
@@ -1232,21 +1281,13 @@ async function cancelMeetup(req, res, next) {
       ? appt.transactions.seller_id
       : appt.transactions.buyer_id;
     if (partnerId) {
-      const partnerNotif = {
-        user_id: partnerId,
+      await persistAndSendNotification(partnerId, {
         type: "meetup_cancelled",
         title: "คู่ค้ายกเลิกนัดรับ",
         message: `เหตุผล: ${reason}`,
         reference_type: "meetup",
         reference_id: Number(id),
-      };
-      try {
-        const { data: ins } = await supabase.from("notifications").insert(partnerNotif).select("*").single();
-        sendNotificationToUser(partnerId, ins || partnerNotif);
-      } catch (nErr) {
-        console.warn("[cancelMeetup] partner notification warning:", nErr.message);
-        sendNotificationToUser(partnerId, partnerNotif);
-      }
+      });
     }
 
     emitMeetupUpdate(id, {
@@ -1259,8 +1300,8 @@ async function cancelMeetup(req, res, next) {
 
     res.json({
       message: "ยกเลิกนัดรับสำเร็จ",
-      penalized: !!lateRule,
-      pointsDeducted: lateRule ? lateRule.points_deducted : 0,
+      penalized: penaltyResult.penalized,
+      pointsDeducted: penaltyResult.pointsDeducted,
     });
   } catch (err) {
     next(err);

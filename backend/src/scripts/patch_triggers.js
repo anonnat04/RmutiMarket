@@ -87,26 +87,40 @@ CREATE OR REPLACE FUNCTION check_late_cancellation()
 RETURNS TRIGGER AS $$
 DECLARE
   v_cancelled_id    integer;
+  v_points          integer;
+  v_threshold      integer;
+  v_grace          integer;
+  v_rule_active    boolean;
   v_current_score   integer;
   v_new_score       integer;
   v_appt_datetime   timestamp with time zone;
 BEGIN
   SELECT id INTO v_cancelled_id FROM public.appointment_status WHERE name = 'ยกเลิก' LIMIT 1;
+  SELECT points_deducted, threshold_minutes, grace_minutes, is_active
+    INTO v_points, v_threshold, v_grace, v_rule_active
+    FROM public.penalty_rules WHERE action_type = 'LATE_CANCEL' LIMIT 1;
 
-  IF v_cancelled_id IS NULL THEN
+  IF v_cancelled_id IS NULL OR COALESCE(v_rule_active, false) = false THEN
     RETURN NEW;
   END IF;
 
-  IF NEW.status_id = v_cancelled_id AND (OLD.status_id IS DISTINCT FROM v_cancelled_id) THEN
-    v_appt_datetime := (NEW.appointment_date::text || ' ' || NEW.appointment_time::text)::timestamp with time zone;
+  IF NEW.status_id = v_cancelled_id AND OLD.status_id = 2 AND NEW.cancelled_by IS NOT NULL THEN
+    v_appt_datetime := (NEW.appointment_date + NEW.appointment_time) AT TIME ZONE 'Asia/Bangkok';
 
-    IF v_appt_datetime - now() < INTERVAL '2 hours' AND NEW.cancelled_by IS NOT NULL THEN
+    IF v_appt_datetime - now() < make_interval(mins => COALESCE(v_threshold, 120))
+       AND now() - COALESCE(NEW.confirmed_at, '-infinity'::timestamptz) > make_interval(mins => COALESCE(v_grace, 15))
+       AND NOT COALESCE(NEW.buyer_checked_in, false)
+       AND NOT COALESCE(NEW.seller_checked_in, false)
+       AND NOT EXISTS (
+         SELECT 1 FROM public.user_score_history
+          WHERE user_id = NEW.cancelled_by AND source_type = 'PENALTY' AND source_id = NEW.id
+       ) THEN
       SELECT trust_score INTO v_current_score FROM public.users WHERE id = NEW.cancelled_by;
-      v_new_score := GREATEST(0, v_current_score - 10);
+      v_new_score := GREATEST(0, v_current_score - COALESCE(v_points, 10));
       UPDATE public.users SET trust_score = v_new_score, updated_at = now() WHERE id = NEW.cancelled_by;
 
       INSERT INTO public.user_score_history (user_id, change_amount, score_after, source_type, source_id, reason)
-      VALUES (NEW.cancelled_by, -10, v_new_score, 'PENALTY', NEW.id, 'LATE_CANCEL')
+      VALUES (NEW.cancelled_by, -(v_current_score - v_new_score), v_new_score, 'PENALTY', NEW.id, 'LATE_CANCEL')
       ON CONFLICT DO NOTHING;
     END IF;
   END IF;
@@ -122,13 +136,19 @@ DECLARE
   rec             RECORD;
   v_confirmed_id  integer;
   v_no_show_id    integer;
+  v_points        integer;
+  v_threshold     integer;
+  v_rule_active   boolean;
   v_current_score integer;
   v_new_score     integer;
 BEGIN
   SELECT id INTO v_confirmed_id FROM public.appointment_status WHERE name = 'นัดหมายเรียบร้อย' LIMIT 1;
   SELECT id INTO v_no_show_id   FROM public.appointment_status WHERE name = 'ไม่มาตามนัด' LIMIT 1;
+  SELECT points_deducted, threshold_minutes, is_active
+    INTO v_points, v_threshold, v_rule_active
+    FROM public.penalty_rules WHERE action_type = 'NO_SHOW' LIMIT 1;
 
-  IF v_confirmed_id IS NULL OR v_no_show_id IS NULL THEN RETURN; END IF;
+  IF v_confirmed_id IS NULL OR v_no_show_id IS NULL OR COALESCE(v_rule_active, false) = false THEN RETURN; END IF;
 
   FOR rec IN
     SELECT a.id AS appointment_id, t.buyer_id, t.seller_id,
@@ -136,24 +156,31 @@ BEGIN
       FROM public.appointments a
       JOIN public.transactions t ON a.transaction_id = t.id
      WHERE a.status_id = v_confirmed_id
-       AND ((a.appointment_date::text || ' ' || a.appointment_time::text)::timestamp with time zone + INTERVAL '30 minutes') < now()
+       AND (((a.appointment_date::text || ' ' || a.appointment_time::text)::timestamp AT TIME ZONE 'Asia/Bangkok')
+         + make_interval(mins => COALESCE(v_threshold, 45))) < now()
        AND (a.buyer_checked_in = false OR a.seller_checked_in = false)
   LOOP
-    IF rec.buyer_checked_in = false THEN
-      SELECT trust_score INTO v_current_score FROM public.users WHERE id = rec.buyer_id;
-      v_new_score := GREATEST(0, v_current_score - 30);
+    IF rec.buyer_checked_in = false AND NOT EXISTS (
+      SELECT 1 FROM public.user_score_history
+       WHERE user_id = rec.buyer_id AND source_type = 'PENALTY' AND source_id = rec.appointment_id
+    ) THEN
+      SELECT trust_score INTO v_current_score FROM public.users WHERE id = rec.buyer_id FOR UPDATE;
+      v_new_score := GREATEST(0, COALESCE(v_current_score, 100) - COALESCE(v_points, 30));
       UPDATE public.users SET trust_score = v_new_score, updated_at = now() WHERE id = rec.buyer_id;
       INSERT INTO public.user_score_history (user_id, change_amount, score_after, source_type, source_id, reason)
-      VALUES (rec.buyer_id, -30, v_new_score, 'PENALTY', rec.appointment_id, 'NO_SHOW')
+      VALUES (rec.buyer_id, v_new_score - COALESCE(v_current_score, 100), v_new_score, 'PENALTY', rec.appointment_id, 'NO_SHOW')
       ON CONFLICT DO NOTHING;
     END IF;
 
-    IF rec.seller_checked_in = false THEN
-      SELECT trust_score INTO v_current_score FROM public.users WHERE id = rec.seller_id;
-      v_new_score := GREATEST(0, v_current_score - 30);
+    IF rec.seller_checked_in = false AND NOT EXISTS (
+      SELECT 1 FROM public.user_score_history
+       WHERE user_id = rec.seller_id AND source_type = 'PENALTY' AND source_id = rec.appointment_id
+    ) THEN
+      SELECT trust_score INTO v_current_score FROM public.users WHERE id = rec.seller_id FOR UPDATE;
+      v_new_score := GREATEST(0, COALESCE(v_current_score, 100) - COALESCE(v_points, 30));
       UPDATE public.users SET trust_score = v_new_score, updated_at = now() WHERE id = rec.seller_id;
       INSERT INTO public.user_score_history (user_id, change_amount, score_after, source_type, source_id, reason)
-      VALUES (rec.seller_id, -30, v_new_score, 'PENALTY', rec.appointment_id, 'NO_SHOW')
+      VALUES (rec.seller_id, v_new_score - COALESCE(v_current_score, 100), v_new_score, 'PENALTY', rec.appointment_id, 'NO_SHOW')
       ON CONFLICT DO NOTHING;
     END IF;
 

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Bell, CheckCheck, MessageCircle, CalendarClock, ShieldAlert, Heart, Trash2, ArrowLeft } from 'lucide-react';
-import { useNotificationStore } from '@/store/notificationStore';
+import { buildNotificationLink, useNotificationStore } from '@/store/notificationStore';
 
 const typeIcons = {
   chat: MessageCircle,
@@ -101,8 +101,7 @@ export function NotificationsPage() {
               key={item.id}
               onClick={() => {
                 markAsRead(item.id);
-                const target = item.link && item.link !== '#' ? item.link : '/meetups';
-                navigate(target);
+                navigate(buildNotificationLink(item));
               }}
               className={`flex items-start gap-3.5 rounded-2xl border p-4 transition-all cursor-pointer hover:border-orange-300 ${
                 item.read

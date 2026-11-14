@@ -268,6 +268,7 @@ export function MeetupListPage() {
   const [expandedMap, setExpandedMap] = useState(null);
   const [cancelLoading, setCancelLoading] = useState(null);   // meetup id ที่กำลังยกเลิก
   const [cancelTarget, setCancelTarget] = useState(null);     // { meetup, role } สำหรับ confirm dialog
+  const [cancelPenalty, setCancelPenalty] = useState(null);   // เงื่อนไขตัดคะแนนจากกฎในฐานข้อมูล
   const [rejectTarget, setRejectTarget] = useState(null);     // meetup สำหรับ confirm ปฏิเสธนัด
 
   // ── จดจำรายการนัดรับที่เคยกดเปิดดูแล้ว (เพื่อให้ตัวเลขแจ้งเตือนบนแท็บหายไปเมื่อกดดูแล้ว) ──
@@ -495,34 +496,38 @@ export function MeetupListPage() {
     setCancelTarget({ meetup: m, role });
   };
 
-  const executeCancel = async () => {
+  const executeCancel = async (confirmPenalty = false) => {
     if (!cancelTarget) return;
     const { meetup: m, role } = cancelTarget;
 
     try {
       setCancelLoading(m.id);
-      // อัปเดต UI ทันที (optimistic)
+      // เรียก API ยกเลิกที่ backend
+      await api.cancelMeetup(m.id, undefined, { confirmPenalty });
+
+      // อัปเดต UI เมื่อ backend ยืนยันการยกเลิกแล้ว
       setDbMeetups((prev) =>
         prev.map((x) =>
           x.id === m.id ? { ...x, status: 'cancelled', statusCode: 'CANCELLED' } : x
         )
       );
-
-      try {
-        cancelRequest(m.id);
-      } catch (e) {}
-
-      // เรียก API ยกเลิกที่ backend
-      await api.cancelMeetup(m.id);
+      try { cancelRequest(m.id); } catch (e) {}
 
       notifyOther(m, 'cancel_request', role);
+      setCancelTarget(null);
+      setCancelPenalty(null);
       await fetchMeetups();
     } catch (err) {
+      if (!confirmPenalty && err.status === 409 && err.data?.requiresConfirm) {
+        setCancelPenalty(err.data);
+        return;
+      }
       console.error('API cancelMeetup error:', err);
       alert(err.message || 'เกิดข้อผิดพลาดในการยกเลิกนัดรับ');
+      setCancelTarget(null);
+      setCancelPenalty(null);
     } finally {
       setCancelLoading(null);
-      setCancelTarget(null);
     }
   };
 
@@ -973,14 +978,26 @@ export function MeetupListPage() {
 
       {/* Confirm Cancel Meetup Dialog */}
       <ConfirmDialog
-        open={!!cancelTarget}
+        open={!!cancelTarget && !cancelPenalty}
         onClose={() => setCancelTarget(null)}
-        onConfirm={executeCancel}
+        onConfirm={() => executeCancel(false)}
         title="ยืนยันการยกเลิกนัดรับสินค้า?"
-        description="เมื่อยกเลิกแล้ว การนัดหมายนี้จะสิ้นสุดลงทันที และแจ้งเตือนไปยังคู่ค้าของคุณ"
+        description="เมื่อยกเลิกแล้ว การนัดหมายนี้จะสิ้นสุดลงและแจ้งเตือนไปยังคู่ค้าของคุณ หากนัดได้รับการยืนยันแล้วและเข้าเงื่อนไขตัดคะแนน ระบบจะแจ้งจำนวนคะแนนให้ยืนยันก่อนยกเลิกอีกครั้ง"
         confirmLabel="ยืนยันยกเลิกนัด"
         cancelLabel="ไม่ยกเลิก"
         variant="danger"
+        loading={!!cancelLoading}
+      />
+
+      <ConfirmDialog
+        open={!!cancelPenalty}
+        onClose={() => { setCancelPenalty(null); setCancelTarget(null); }}
+        onConfirm={() => executeCancel(true)}
+        title="ยกเลิกนัดนี้และยอมรับการตัดคะแนน?"
+        description={cancelPenalty ? `การยกเลิกนัดที่ยืนยันแล้วก่อนเวลานัดน้อยกว่า ${cancelPenalty.thresholdMinutes} นาที จะถูกหัก ${cancelPenalty.pointsDeducted} คะแนนตามกฎในระบบ (เหลือประมาณ ${cancelPenalty.minutesLeft} นาที) หากยืนยัน ระบบจะยกเลิกนัดและบันทึกการหักคะแนนทันที` : ''}
+        confirmLabel="ยืนยันและหักคะแนน"
+        cancelLabel="กลับไป"
+        variant="warning"
         loading={!!cancelLoading}
       />
 

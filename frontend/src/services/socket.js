@@ -1,4 +1,5 @@
 import { io } from "socket.io-client";
+import { useAuthStore } from "@/store/authStore";
 
 const SOCKET_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
 
@@ -9,25 +10,8 @@ let socket = null;
  * เรียกทุกครั้งที่ connect/reconnect เพื่อให้ backend รู้ว่าเป็น user ใคร
  */
 function authenticateSocket(s) {
-  // Dynamic import กัน circular dependency
-  import('@/store/authStore').then(({ useAuthStore }) => {
-    const { token, user } = useAuthStore.getState();
-    if (s.connected) {
-      if (token) {
-        s.emit('authenticate', {
-          token,
-          userId: user?.id,
-          userName: user?.displayName || user?.name || user?.fullName,
-        });
-      }
-      if (user?.id) {
-        s.emit('user_connected', {
-          userId: user.id,
-          userName: user?.displayName || user?.name || user?.fullName || 'ผู้ใช้',
-        });
-      }
-    }
-  });
+  const { token } = useAuthStore.getState();
+  if (s.connected && token) s.emit('authenticate', { token });
 }
 
 /**
@@ -90,12 +74,22 @@ export function leaveConversation(conversationId) {
 
 export function sendRealtimeMessage({ conversationId, text, message_type = "TEXT", imageUrl = null, sender }) {
   const s = getSocket();
-  s.emit("send_message", {
-    conversationId,
-    text,
-    message_type,
-    imageUrl,
-    sender,
+  return new Promise((resolve, reject) => {
+    if (!s.connected) {
+      reject(new Error("ยังไม่ได้เชื่อมต่อแชท กรุณาลองใหม่อีกครั้ง"));
+      return;
+    }
+    s.timeout(10000).emit("send_message", {
+      conversationId,
+      text,
+      message_type,
+      imageUrl,
+      sender,
+    }, (timeoutError, result) => {
+      if (timeoutError) reject(new Error("ส่งข้อความไม่สำเร็จ กรุณาลองใหม่อีกครั้ง"));
+      else if (!result?.ok) reject(new Error(result?.error || "ส่งข้อความไม่สำเร็จ"));
+      else resolve(result.message);
+    });
   });
 }
 

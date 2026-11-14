@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   ShieldAlert, Headset, Package, MessageSquareText,
   CheckCircle2, XCircle, Trash2, RefreshCw, AlertTriangle,
@@ -11,11 +12,12 @@ import { useAdminStore } from '@/store/adminStore';
 import { useAuthStore } from '@/store/authStore';
 
 export function AdminDisputesPage() {
+  const [searchParams] = useSearchParams();
   const adminToken = useAdminStore((s) => s.token);
   const authToken = useAuthStore((s) => s.token);
   const token = adminToken || authToken || localStorage.getItem('cm_admin_token') || localStorage.getItem('cm_token');
 
-  const [activeMainTab, setActiveMainTab] = useState('reports'); // 'reports' (สินค้า/โพสต์) | 'support' (แจ้งปัญหา)
+  const [activeMainTab, setActiveMainTab] = useState(() => searchParams.get('tab') === 'support' ? 'support' : 'reports'); // 'reports' (สินค้า/โพสต์) | 'support' (แจ้งปัญหา)
   const [allReports, setAllReports] = useState([]);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState('pending'); // 'all' | 'pending' | 'resolved' | 'dismissed'
@@ -44,6 +46,11 @@ export function AdminDisputesPage() {
   useEffect(() => {
     fetchReports();
   }, [token]);
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'support' || tab === 'reports') setActiveMainTab(tab);
+  }, [searchParams]);
 
   // แยกรายงานออกเป็น 2 กลุ่ม:
   // 1) รายงานสินค้าและโพสต์ (product / wanted_post)

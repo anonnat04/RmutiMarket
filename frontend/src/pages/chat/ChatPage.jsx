@@ -115,16 +115,8 @@ export function ChatPage() {
       const res = await api.getConversations();
       if (res?.conversations && Array.isArray(res.conversations)) {
         const validList = res.conversations;
-        // Deduplicate เฉพาะห้องที่ผูกสินค้า; ห้องทั่วไปให้ยึด conversationId
-        const dedupeKeyR = new Set();
-        const backendConvs = validList
-          .map(mapBackendConversation)
-          .filter((c) => {
-            const key = c.productId ? `${c.productId}-${c.partnerId}` : `conversation-${c.id}`;
-            if (dedupeKeyR.has(key)) return false;
-            dedupeKeyR.add(key);
-            return true;
-          });
+        // แสดงทุกห้องจากฐานข้อมูลแยกตาม conversation id ไม่รวมตามสินค้า/คู่สนทนา
+        const backendConvs = validList.map(mapBackendConversation);
 
         setConversations((prev) => {
           // คงไว้เฉพาะห้อง "รอ sync" (id ไม่ใช่ตัวเลข เช่น conv-xxx) ที่ backend ยังไม่มี
@@ -179,14 +171,8 @@ export function ChatPage() {
           console.warn("[ChatPage] api.getConversations error:", apiErr?.message);
         }
 
-        // Deduplicate: สินค้าเดียวกัน + partner เดียวกัน = แสดงเพียงห้องเดียว (ห้องแรกที่เจอ)
-        const dedupeKey = new Set();
-        let convList = backendConvs.filter((c) => {
-          const key = c.productId ? `${c.productId}-${c.partnerId}` : `conversation-${c.id}`;
-          if (dedupeKey.has(key)) return false;
-          dedupeKey.add(key);
-          return true;
-        });
+        // เก็บทุกห้องสนทนาไว้ โดยใช้ conversation id เป็นตัวแยกห้อง
+        let convList = backendConvs;
 
         // ─── ถ้ามี ?conversationId= จากการกดเสนอขายสินค้า ───
         const queryConvId = searchParams.get("conversationId");
@@ -547,14 +533,23 @@ export function ChatPage() {
       )
     );
 
-    // 2. Realtime Socket.IO emit — ทางเดียวที่ใช้บันทึกลง DB จริง (ผ่าน chatSocket.js)
-    sendRealtimeMessage({
-      conversationId: active.id,
-      text,
-      message_type,
-      imageUrl: image,
-      sender,
-    });
+    // บันทึกผ่าน Socket.IO และรอ ack จากฐานข้อมูลก่อนถือว่าส่งสำเร็จ
+    try {
+      await sendRealtimeMessage({
+        conversationId: active.id,
+        text,
+        message_type,
+        imageUrl: image,
+        sender,
+      });
+    } catch (err) {
+      setLocalMessages((prev) => ({
+        ...prev,
+        [active.id]: (prev[active.id] || []).filter((message) => message.id !== tempId),
+      }));
+      alert(err.message || 'ส่งข้อความไม่สำเร็จ กรุณาลองใหม่');
+      refreshConversationsFromBackend();
+    }
 
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     sendTypingStatus(active.id, sender, false);

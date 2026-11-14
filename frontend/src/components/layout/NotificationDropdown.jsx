@@ -194,7 +194,7 @@ export function NotificationDropdown() {
                   return (
                     <Link
                       key={n.id}
-                      to={n.link && n.link !== '#' ? n.link : '/meetups'}
+                      to={buildNotificationLink(n)}
                       onClick={() => {
                         markAsRead(n.id);
                         setIsOpen(false);
