@@ -14,6 +14,8 @@ import {
   Home,
   MessageCircle,
   Bell,
+  Award,
+  CircleHelp,
   Store,
   Phone,
   Pencil,
@@ -408,6 +410,8 @@ export function SelfProfilePage({ user, logout, navigate }) {
     { label: 'การนัดรับสินค้า', icon: CalendarClock, path: '/meetups' },
     { label: 'ประวัติการซื้อขาย', icon: Receipt, path: '/transactions' },
     { label: 'รีวิวของฉัน', icon: Star, path: '/reviews' },
+    { label: 'คะแนนความน่าเชื่อถือ', icon: Award, path: '/my-score' },
+    { label: 'ประวัติการแจ้งปัญหา', icon: CircleHelp, path: '/my-reports' },
   ];
 
   const quickStats = [

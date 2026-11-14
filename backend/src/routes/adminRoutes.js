@@ -3,6 +3,7 @@ const router = express.Router();
 const adminController = require("../controllers/adminController");
 const { getDashboard } = require("../controllers/adminDashboardController");
 const { requireAdmin, blockUntilPasswordChanged } = require("../middleware/adminAuth");
+const supportController = require("../controllers/supportController");
 
 // All admin routes require admin auth + password changed
 router.use(requireAdmin, blockUntilPasswordChanged);
@@ -39,6 +40,8 @@ router.delete("/reviews/:id", adminController.deleteReview);
 router.get("/reports", adminController.getReports);
 router.post("/reports/:id/resolve", adminController.resolveReport);
 router.patch("/reports/:id/resolve", adminController.resolveReport);
+router.get("/support-tickets", supportController.getAdminTickets);
+router.patch("/support-tickets/:id/resolve", supportController.resolveAdminTicket);
 
 
 // Audit log

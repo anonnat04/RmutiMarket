@@ -18,16 +18,20 @@ const STATUS_META = {
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
 const fmtPrice = (p) => `฿${Number(p || 0).toLocaleString()}`;
+const imageSrc = (image) =>
+  typeof image === 'string' ? image : image?.url || image?.imageUrl || image?.image_url || null;
 
 function Thumb({ src, alt, className = '' }) {
-  if (!src) {
+  const [failed, setFailed] = useState(false);
+  const resolvedSrc = imageSrc(src);
+  if (!resolvedSrc || failed) {
     return (
       <div className={`flex items-center justify-center bg-gray-100 text-gray-300 ${className}`}>
         <ImageOff size={20} />
       </div>
     );
   }
-  return <img src={src} alt={alt} loading="lazy" className={`object-cover bg-gray-100 ${className}`} />;
+  return <img src={resolvedSrc} alt={alt} loading="lazy" onError={() => setFailed(true)} className={`object-cover bg-gray-100 ${className}`} />;
 }
 
 function StatusBadge({ status, label }) {
@@ -42,7 +46,7 @@ function StatusBadge({ status, label }) {
 // ───────────── Modal: รายละเอียดสินค้า ─────────────
 function DetailModal({ item, onClose, onDelete }) {
   const [idx, setIdx] = useState(0);
-  const imgs = item.images || [];
+  const imgs = (item.images || []).map(imageSrc).filter(Boolean);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
@@ -138,7 +142,7 @@ function DetailModal({ item, onClose, onDelete }) {
                       <span className="ml-1 font-normal text-gray-400">@{item.seller_username}</span>
                     )}
                   </p>
-                  <p className="text-gray-500">{item.seller_email}</p>
+                  {item.seller_email && <p className="text-gray-500">{item.seller_email}</p>}
                   {(item.seller_phone || item.seller_faculty) && (
                     <p className="text-gray-400">
                       {[item.seller_faculty, item.seller_phone].filter(Boolean).join(' · ')}
@@ -391,7 +395,7 @@ export function AdminListingsPage() {
                   <div className="flex items-center gap-3">
                     <button onClick={() => setDetail(l)} className="relative shrink-0">
                       <Thumb
-                        src={l.images && l.images[0]}
+                        src={(l.images && l.images[0]) || l.primary_image || l.image_url}
                         alt={l.title}
                         className="h-16 w-16 rounded-xl"
                       />
@@ -418,7 +422,8 @@ export function AdminListingsPage() {
                 <td className="p-4 font-extrabold text-orange-500 whitespace-nowrap">{fmtPrice(l.price)}</td>
                 <td className="p-4">
                   <p className="font-medium text-gray-800">{l.seller_name}</p>
-                  <p className="text-[11px] text-gray-400">{l.seller_email}</p>
+                  {l.seller_username && <p className="text-[11px] text-gray-400">@{l.seller_username}</p>}
+                  {l.seller_email && <p className="text-[11px] text-gray-400">{l.seller_email}</p>}
                 </td>
                 <td className="p-4 text-center">
                   <StatusBadge status={l.status} label={l.status_label} />

@@ -161,6 +161,11 @@ export const api = {
   getMyProfile: () => request("/api/profile/me"),
   updateProfile: (data) => request("/api/profile/me", { method: "PUT", body: data }),
   getPublicProfile: (userId) => request(`/api/profile/${userId}`),
+  getMyScore: (params = {}) => {
+    const qs = new URLSearchParams(params);
+    return request(`/api/me/score${qs.toString() ? `?${qs.toString()}` : ""}`);
+  },
+  getMyReports: () => request("/api/me/reports"),
   changePassword: (currentPassword, newPassword) =>
     request("/api/profile/password", { method: "PUT", body: { currentPassword, newPassword } }),
 
@@ -216,6 +221,7 @@ export const api = {
   deleteWantToBuyPost: (id) => request(`/api/want-to-buy/${id}`, { method: "DELETE" }),
 
   // ─── Report & Moderation APIs ───
+  createSupportTicket: (data) => request("/api/support", { method: "POST", body: data }),
   createReport: (data) => request("/api/reports", { method: "POST", body: data }),
   getReports: (params = {}) => {
     const qs = new URLSearchParams(params);
@@ -280,4 +286,13 @@ export const api = {
     request(`/api/admin/reviews/${id}`, { method: "DELETE", token, body: { reason } }),
 
   adminDashboard: (token) => request("/api/admin/dashboard", { token }),
+  adminGetReports: (token, params = {}) => {
+    const qs = new URLSearchParams(params);
+    return request(`/api/admin/reports${qs.toString() ? `?${qs.toString()}` : ""}`, { token });
+  },
+  adminGetSupportTickets: (token) => request("/api/admin/support-tickets", { token }),
+  adminResolveSupportTicket: (token, id, data) =>
+    request(`/api/admin/support-tickets/${id}/resolve`, { method: "PATCH", token, body: data }),
+  adminResolveReport: (token, id, data) =>
+    request(`/api/admin/reports/${id}/resolve`, { method: "PATCH", token, body: data }),
 };

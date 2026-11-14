@@ -303,7 +303,7 @@ async function getAdminListings(req, res, next) {
         product_conditions(id, name),
         product_status(id, name),
         users!seller_id(
-          id, username, full_name, profile_image_url, avatar_url,
+          id, username, full_name, university_email, phone, profile_image_url, avatar_url,
           faculty_id, major_id, trust_score, faculties(name), majors(name)
         ),
         product_images(id, image_url, is_primary)
@@ -349,6 +349,9 @@ async function getAdminListings(req, res, next) {
         id: rawSeller?.id ?? p.seller_id,
         username: rawSeller?.username || fmt.username || null,
         full_name: rawSeller?.full_name || fmt.full_name || null,
+        university_email: rawSeller?.university_email || null,
+        phone: rawSeller?.phone || null,
+        faculty_name: (Array.isArray(rawSeller?.faculties) ? rawSeller.faculties[0] : rawSeller?.faculties)?.name || null,
         name: sellerName,
         display_name: sellerName,
         avatar_url: sellerAvatar,
@@ -400,6 +403,10 @@ async function getAdminListings(req, res, next) {
         created_at: p.created_at,
         seller_id: p.seller_id,
         seller_name: sellerName,
+        seller_email: rawSeller?.university_email || null,
+        seller_username: rawSeller?.username || null,
+        seller_phone: rawSeller?.phone || null,
+        seller_faculty: seller.faculty_name,
         users: seller,
         seller,
         primary_image: primaryImage,

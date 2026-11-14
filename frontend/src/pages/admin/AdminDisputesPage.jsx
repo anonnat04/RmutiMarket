@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { useReportStore } from '@/store/reportStore';
 import {
   ShieldAlert, Headset, Package, MessageSquareText,
   CheckCircle2, XCircle, Trash2, RefreshCw, AlertTriangle,
@@ -8,10 +7,13 @@ import {
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
+import { useAdminStore } from '@/store/adminStore';
+import { useAuthStore } from '@/store/authStore';
 
 export function AdminDisputesPage() {
-  const localReports = useReportStore((s) => s.reports);
-  const resolveLocalReport = useReportStore((s) => s.resolveReport);
+  const adminToken = useAdminStore((s) => s.token);
+  const authToken = useAuthStore((s) => s.token);
+  const token = adminToken || authToken || localStorage.getItem('cm_admin_token') || localStorage.getItem('cm_token');
 
   const [activeMainTab, setActiveMainTab] = useState('reports'); // 'reports' (สินค้า/โพสต์) | 'support' (แจ้งปัญหา)
   const [allReports, setAllReports] = useState([]);
@@ -20,38 +22,20 @@ export function AdminDisputesPage() {
   const [subTypeFilter, setSubTypeFilter] = useState('all');
   const [actionLoadingId, setActionLoadingId] = useState(null);
   const [takeDownReport, setTakeDownReport] = useState(null);
+  const [loadError, setLoadError] = useState('');
 
   // ดึงรายการรายงานทั้งหมดจาก Backend API
   const fetchReports = async () => {
     setLoading(true);
+    setLoadError('');
     try {
-      const res = await api.getReports();
-      if (res?.reports && Array.isArray(res.reports)) {
-        // รวมข้อมูลจาก backend และ localStore
-        const map = new Map();
-        res.reports.forEach((r) => map.set(String(r.id), r));
-
-        localReports.forEach((lr) => {
-          if (!map.has(String(lr.id))) {
-            map.set(String(lr.id), {
-              ...lr,
-              target_type: lr.target_type || lr.type || 'product',
-              target_title: lr.targetTitle,
-              target_user_name: lr.targetUser,
-              reporter_name: lr.reporterName,
-              reporter_email: lr.reporterEmail,
-              created_at: lr.createdAt,
-            });
-          }
-        });
-
-        setAllReports(Array.from(map.values()));
-      } else {
-        setAllReports(localReports);
-      }
+      const [reportData, supportData] = await Promise.all([
+        api.adminGetReports(token),
+        api.adminGetSupportTickets(token),
+      ]);
+      setAllReports([...(reportData.reports || []), ...(supportData.tickets || [])]);
     } catch (err) {
-      console.warn('Could not fetch backend reports, using localStore fallback:', err?.message);
-      setAllReports(localReports);
+      setLoadError(err?.message || 'โหลดข้อมูลจากฐานข้อมูลไม่สำเร็จ');
     } finally {
       setLoading(false);
     }
@@ -59,17 +43,13 @@ export function AdminDisputesPage() {
 
   useEffect(() => {
     fetchReports();
-  }, [localReports]);
+  }, [token]);
 
   // แยกรายงานออกเป็น 2 กลุ่ม:
   // 1) รายงานสินค้าและโพสต์ (product / wanted_post)
   // 2) รายการแจ้งปัญหาจากศูนย์ช่วยเหลือ (support_ticket / user / scam / general)
   const isSupportItem = (r) => {
-    const t = r.target_type || r.type;
-    const title = r.target_title || r.targetTitle || '';
-    const cat = r.category || '';
-    return t === 'support_ticket' || t === 'user' || t === 'scam' || t === 'system' ||
-           title.includes('ศูนย์ช่วยเหลือ') || cat.includes('โกง') || cat.includes('มิจฉาชีพ') || cat.includes('ระบบ');
+    return (r.target_type || r.type) === 'support_ticket';
   };
 
   const productAndPostReports = allReports.filter((r) => !isSupportItem(r));
@@ -94,7 +74,6 @@ export function AdminDisputesPage() {
       await api.takeDownReportedItem(report.id, {
         reason: report.category || 'ละเมิดข้อกำหนดความปลอดภัยของมหาวิทยาลัย',
       });
-      resolveLocalReport(report.id, 'resolved', `ปลด/ลบ${itemLabel}ออกจากระบบเรียบร้อย`);
       alert(`✅ ปลดและลบ ${itemLabel} เรียบร้อยแล้ว`);
       fetchReports();
     } catch (err) {
@@ -107,32 +86,26 @@ export function AdminDisputesPage() {
   // Action: จัดการสถานะ (resolved หรือ dismissed)
   const handleResolve = async (report, resolution) => {
     const isDismiss = resolution === 'dismissed';
-    const note = prompt(
-      isDismiss
-        ? 'ระบุบันทึกเหตุผลที่เพิกเฉยคำร้อง (ถ้ามี):'
-        : 'ระบุบันทึกการดำเนินการของแอดมิน (ถ้ามี):',
-      isDismiss ? 'ตรวจสอบแล้ว ไม่พบการละเมิดระเบียบ' : 'ตรวจสอบและดำเนินการแก้ไขเรียบร้อย'
-    );
+    const note = isSupportItem(report)
+      ? ''
+      : prompt(
+          isDismiss
+            ? 'ระบุบันทึกเหตุผลที่เพิกเฉยคำร้อง (ถ้ามี):'
+            : 'ระบุบันทึกการดำเนินการของแอดมิน (ถ้ามี):',
+          isDismiss ? 'ตรวจสอบแล้ว ไม่พบการละเมิดระเบียบ' : 'ตรวจสอบและดำเนินการแก้ไขเรียบร้อย'
+        );
     if (note === null) return;
 
     setActionLoadingId(report.id);
     try {
-      await api.resolveReport(report.id, {
-        status: resolution,
-        adminNote: note,
-      });
-      resolveLocalReport(report.id, resolution, note);
+      if (isSupportItem(report)) {
+        await api.adminResolveSupportTicket(token, report.id, { status: resolution, adminNote: note });
+      } else {
+        await api.adminResolveReport(token, report.id, { status: resolution, adminNote: note });
+      }
       fetchReports();
     } catch (err) {
-      console.warn('API resolve error, updated locally:', err?.message);
-      resolveLocalReport(report.id, resolution, note);
-      setAllReports((prev) =>
-        prev.map((r) =>
-          r.id === report.id
-            ? { ...r, status: resolution, admin_note: note, adminNote: note }
-            : r
-        )
-      );
+      setLoadError(err?.message || 'บันทึกผลการตรวจสอบไม่สำเร็จ');
     } finally {
       setActionLoadingId(null);
     }
@@ -335,7 +308,10 @@ export function AdminDisputesPage() {
       </div>
 
       {/* ─── Content List ─── */}
-      {filteredItems.length === 0 ? (
+      {loadError && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">{loadError}</div>}
+      {loading ? (
+        <div className="rounded-2xl border border-gray-200 bg-white p-12 text-center text-sm text-gray-500">กำลังโหลดข้อมูลจากฐานข้อมูล...</div>
+      ) : filteredItems.length === 0 ? (
         <div className="rounded-2xl border border-gray-200 bg-white p-12 text-center shadow-xs">
           {activeMainTab === 'reports' ? (
             <ShieldAlert size={36} className="mx-auto text-gray-300 mb-2.5" />

@@ -2,8 +2,6 @@ import { useState } from 'react';
 import { Modal } from '@/components/common/Modal';
 import { Button } from '@/components/common/Button';
 import { ShieldAlert, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
-import { useReportStore } from '@/store/reportStore';
-import { useAuthStore } from '@/store/authStore';
 import { api } from '@/lib/api';
 
 const PRODUCT_CATEGORIES = [
@@ -32,8 +30,6 @@ export function ReportModal({
   targetUser,
   targetUserId,
 }) {
-  const user = useAuthStore((s) => s.user);
-  const submitReport = useReportStore((s) => s.submitReport);
 
   const categories = targetType === 'wanted_post' ? POST_CATEGORIES : PRODUCT_CATEGORIES;
   const [category, setCategory] = useState(categories[0]);
@@ -49,38 +45,20 @@ export function ReportModal({
     setLoading(true);
     setErrorMsg('');
 
-    const reporterName = user?.name || user?.full_name || user?.display_name || user?.username || 'ผู้ใช้ในระบบ';
-    const reporterEmail = user?.email || 'student@rmuti.ac.th';
-
-    const reportData = {
-      targetType,
-      targetId,
-      targetTitle: targetTitle || (targetType === 'product' ? `สินค้า #${targetId}` : `โพสต์ #${targetId}`),
-      targetUser: typeof targetUser === 'string' ? targetUser : (targetUser?.name || targetUser?.username || 'ผู้ใช้'),
-      targetUserId: targetUserId || (typeof targetUser === 'object' ? targetUser?.id : null),
-      reporterName,
-      reporterEmail,
-      category,
-      description: description.trim(),
-    };
-
     try {
-      // 1. ส่งไปยัง Backend API
       await api.createReport({
         targetType,
         targetId,
-        targetTitle: reportData.targetTitle,
-        targetUserId: reportData.targetUserId,
-        targetUserName: reportData.targetUser,
+        targetTitle: targetTitle || (targetType === 'product' ? `สินค้า #${targetId}` : `โพสต์ #${targetId}`),
+        targetUserId: targetUserId || (typeof targetUser === 'object' ? targetUser?.id : null),
         category,
         description: description.trim(),
       });
     } catch (err) {
-      console.warn('API createReport error (will sync with local store):', err?.message);
+      setErrorMsg(err?.message || 'บันทึกรายงานไม่สำเร็จ กรุณาลองใหม่');
+      setLoading(false);
+      return;
     }
-
-    // 2. ซิงค์ลง local store เสมอ
-    submitReport(reportData);
 
     setLoading(false);
     setSubmitted(true);

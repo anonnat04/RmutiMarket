@@ -134,14 +134,14 @@ export function AdminLayout() {
       </div>
 
       <ConfirmDialog
-        isOpen={showLogoutConfirm}
+        open={showLogoutConfirm}
         title="ยืนยันการออกจากระบบ"
-        message="คุณต้องการออกจากระบบผู้ดูแลระบบใช่หรือไม่?"
-        confirmText="ออกจากระบบ"
-        cancelText="ยกเลิก"
+        description="คุณต้องการออกจากระบบผู้ดูแลระบบใช่หรือไม่?"
+        confirmLabel="ออกจากระบบ"
+        cancelLabel="ยกเลิก"
         variant="danger"
         onConfirm={confirmLogout}
-        onCancel={() => setShowLogoutConfirm(false)}
+        onClose={() => setShowLogoutConfirm(false)}
       />
     </div>
   );
