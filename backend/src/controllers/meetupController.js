@@ -10,8 +10,13 @@ const MEETUP_START_MIN = 8 * 60;
 const MEETUP_END_MIN = 20 * 60;
 const MEETUP_HOURS_TEXT = "นัดรับได้เฉพาะเวลา 08:00 – 20:00 น. เท่านั้น";
 
-// เลยเวลานัดกี่นาทีถึงนับว่าไม่มาตามนัด (ต้องตรงกับข้อความบนหน้าเว็บและ cron ใน DB ถ้ายังเปิดอยู่)
+// ค่า fallback ถ้าอ่านกฎจากตาราง penalty_rules ไม่ได้ (ค่าจริงอยู่ในตาราง penalty_rules)
 const NO_SHOW_GRACE_MINUTES = 45;
+const LATE_CANCEL_THRESHOLD_MINUTES = 120;
+const LATE_CANCEL_GRACE_MINUTES = 15;
+
+// สถานะนัดหมาย: 1=PENDING 2=CONFIRMED 3=COMPLETED 4=CANCELLED 5=NO_SHOW
+// สถานะธุรกรรม: 3=COMPLETED 4=CANCELLED
 
 // ----------------------------------------------------------------
 // Helper: วันที่/เวลาตามเขตเวลาไทย (เซิร์ฟเวอร์อาจใช้ UTC)
@@ -44,18 +49,31 @@ function isParticipant(txn, userId) {
 }
 
 // ----------------------------------------------------------------
-// Helper: ปรับคะแนนความน่าเชื่อถือ (Trust Score) และบันทึกลงประวัติ
+// Helper: อ่านกฎจากตาราง penalty_rules (cache 30 วินาที แก้ใน DB แล้วมีผลเอง)
+// ----------------------------------------------------------------
+let _rulesCache = { at: 0, map: {} };
+async function getPenaltyRule(actionType) {
+  if (Date.now() - _rulesCache.at > 30000) {
+    const { data, error } = await supabase
+      .from("penalty_rules")
+      .select("id, action_type, points_deducted, threshold_minutes, grace_minutes, is_active");
+    if (!error && data) {
+      const map = {};
+      data.forEach((r) => { map[r.action_type] = r; });
+      _rulesCache = { at: Date.now(), map };
+    }
+  }
+  return _rulesCache.map[actionType] || null;
+}
+
+// ----------------------------------------------------------------
+// Helper: ตัดคะแนนความน่าเชื่อถือ (Trust Score) ตามกฎในตาราง penalty_rules
 // ----------------------------------------------------------------
 async function recordPenalty(userId, actionType, reason) {
   try {
-    const { data: rule } = await supabase
-      .from("penalty_rules")
-      .select("id, points_deducted")
-      .eq("action_type", actionType)
-      .eq("is_active", true)
-      .maybeSingle();
-
-    const pointsDeducted = rule?.points_deducted || 30;
+    const rule = await getPenaltyRule(actionType);
+    if (!rule || !rule.is_active) return; // ไม่มีกฎหรือปิดกฎ = ไม่ตัดคะแนน
+    const pointsDeducted = rule.points_deducted;
 
     const { data: user } = await supabase
       .from("users")
@@ -70,17 +88,15 @@ async function recordPenalty(userId, actionType, reason) {
 
     await supabase.from("users").update({ trust_score: newScore }).eq("id", userId);
 
-    if (rule?.id) {
-      await supabase.from("user_penalties").insert({
-        user_id: userId,
-        penalty_rule_id: rule.id,
-        reason: reason || actionType,
-      });
-    }
+    await supabase.from("user_penalties").insert({
+      user_id: userId,
+      penalty_rule_id: rule.id,
+      reason: reason || actionType,
+    });
 
     await supabase.from("user_score_history").insert({
       user_id: userId,
-      change_amount: -pointsDeducted,
+      change_amount: -(currentScore - newScore),
       score_after: newScore,
       source_type: "PENALTY",
       reason: reason || actionType,
@@ -211,6 +227,10 @@ function mapAppointment(a) {
     cancelled_at: a.cancelled_at,
     cancellation_reason: a.cancellation_reason,
     created_at: a.created_at,
+    confirmed_at: a.confirmed_at || null,
+    confirmedAt: a.confirmed_at || null,
+    created_by: a.created_by || null,
+    createdBy: a.created_by || null,
 
     buyer_id: txn.buyer_id,
     seller_id: txn.seller_id,
@@ -266,10 +286,13 @@ function mapAppointment(a) {
 }
 
 // ----------------------------------------------------------------
-// Helper: ตรวจสอบและตัดจบนัดหมายที่เลยเวลา (NO_SHOW_GRACE_MINUTES) และตัดคะแนนคนไม่มาเช็คอิน
+// Helper: ตรวจสอบและตัดจบนัดหมายที่เลยเวลา (threshold_minutes ของกฎ NO_SHOW) และตัดคะแนนคนไม่มาเช็คอิน
 // ----------------------------------------------------------------
 async function checkAndProcessNoShows() {
   try {
+    const noShowRule = await getPenaltyRule("NO_SHOW");
+    const graceMin = noShowRule?.threshold_minutes ?? NO_SHOW_GRACE_MINUTES;
+
     const { data: confirmedAppts, error: fetchErr } = await supabase
       .from("appointments")
       .select(`
@@ -301,8 +324,8 @@ async function checkAndProcessNoShows() {
       const apptDate = appointmentToDate(appt.appointment_date, appt.appointment_time);
       if (isNaN(apptDate.getTime())) continue;
 
-      // เส้นตาย: เวลานัด + NO_SHOW_GRACE_MINUTES
-      const deadline = new Date(apptDate.getTime() + NO_SHOW_GRACE_MINUTES * 60 * 1000);
+      // เส้นตาย: เวลานัด + graceMin
+      const deadline = new Date(apptDate.getTime() + graceMin * 60 * 1000);
 
       if (now > deadline) {
         const buyerCheckedIn = Boolean(appt.buyer_checked_in);
@@ -314,15 +337,13 @@ async function checkAndProcessNoShows() {
         const txn = appt.transactions || {};
         const nowIso = now.toISOString();
 
-        // 1. "จอง" นัดหมายนี้ด้วยการเปลี่ยนสถานะเฉพาะแถวที่ยังเป็น CONFIRMED
-        //    ถ้ามีคำขออื่นเข้ามาประมวลผลนัดเดียวกันพร้อมกัน จะมีแค่คำขอเดียวที่ได้แถวกลับมา
-        //    กันการตัดคะแนนซ้ำสองรอบ
+        // 1. "จอง" นัดหมายนี้ด้วยการเปลี่ยนสถานะเฉพาะแถวที่ยังเป็น CONFIRMED กันตัดคะแนนซ้ำ
         const { data: claimed } = await supabase
           .from("appointments")
           .update({
             status_id: noShowStatusId,
             cancelled_at: nowIso,
-            cancellation_reason: `หมดเวลาเช็คอิน (เกินเวลานัด ${NO_SHOW_GRACE_MINUTES} นาที ไม่มาตามนัด)`,
+            cancellation_reason: `หมดเวลาเช็คอิน (เกินเวลานัด ${graceMin} นาที ไม่มาตามนัด)`,
           })
           .eq("id", appt.id)
           .eq("status_id", 2)
@@ -330,7 +351,7 @@ async function checkAndProcessNoShows() {
 
         if (!claimed?.length) continue; // มีคนประมวลผลไปแล้ว
 
-        console.log(`🚨 [NO_SHOW Auto-Close] Appointment #${appt.id} passed ${NO_SHOW_GRACE_MINUTES}m deadline. Buyer checked in: ${buyerCheckedIn}, Seller checked in: ${sellerCheckedIn}`);
+        console.log(`🚨 [NO_SHOW Auto-Close] Appointment #${appt.id} passed ${graceMin}m deadline. Buyer checked in: ${buyerCheckedIn}, Seller checked in: ${sellerCheckedIn}`);
 
         // 2. ยกเลิก Transaction และนำสินค้ากลับมาวางขายใหม่ (AVAILABLE)
         if (appt.transaction_id) {
@@ -351,13 +372,13 @@ async function checkAndProcessNoShows() {
           await recordPenalty(
             txn.buyer_id,
             "NO_SHOW",
-            `ผู้ซื้อไม่มาตามนัดรับสินค้า (เกินเวลา ${NO_SHOW_GRACE_MINUTES} นาที) - นัดหมาย #${appt.id}`
+            `ผู้ซื้อไม่มาตามนัดรับสินค้า (เกินเวลา ${graceMin} นาที) - นัดหมาย #${appt.id}`
           );
           sendNotificationToUser(txn.buyer_id, {
             user_id: txn.buyer_id,
             type: "penalty",
             title: "⚠️ คุณถูกตัดคะแนนเนื่องจากไม่มาตามนัด",
-            message: `ระบบตัดคะแนนความน่าเชื่อถือของคุณเนื่องจากไม่มาเช็คอินตามจุดนัดพบภายใน ${NO_SHOW_GRACE_MINUTES} นาที`,
+            message: `ระบบตัดคะแนนความน่าเชื่อถือของคุณเนื่องจากไม่มาเช็คอินตามจุดนัดพบภายใน ${graceMin} นาที`,
             reference_type: "meetup",
             reference_id: appt.id,
           });
@@ -367,13 +388,13 @@ async function checkAndProcessNoShows() {
           await recordPenalty(
             txn.seller_id,
             "NO_SHOW",
-            `ผู้ขายไม่มาตามนัดรับสินค้า (เกินเวลา ${NO_SHOW_GRACE_MINUTES} นาที) - นัดหมาย #${appt.id}`
+            `ผู้ขายไม่มาตามนัดรับสินค้า (เกินเวลา ${graceMin} นาที) - นัดหมาย #${appt.id}`
           );
           sendNotificationToUser(txn.seller_id, {
             user_id: txn.seller_id,
             type: "penalty",
             title: "⚠️ คุณถูกตัดคะแนนเนื่องจากไม่มาตามนัด",
-            message: `ระบบตัดคะแนนความน่าเชื่อถือของคุณเนื่องจากไม่มาเช็คอินตามจุดนัดพบภายใน ${NO_SHOW_GRACE_MINUTES} นาที`,
+            message: `ระบบตัดคะแนนความน่าเชื่อถือของคุณเนื่องจากไม่มาเช็คอินตามจุดนัดพบภายใน ${graceMin} นาที`,
             reference_type: "meetup",
             reference_id: appt.id,
           });
@@ -385,7 +406,7 @@ async function checkAndProcessNoShows() {
             user_id: txn.buyer_id,
             type: "meetup_cancelled",
             title: "นัดหมายถูกตัดจบ (ผู้ขายไม่มาตามนัด)",
-            message: `เนื่องจากผู้ขายไม่ได้มาเช็คอินภายใน ${NO_SHOW_GRACE_MINUTES} นาที ระบบจึงตัดจบนัดหมายและตัดคะแนนผู้ขาย`,
+            message: `เนื่องจากผู้ขายไม่ได้มาเช็คอินภายใน ${graceMin} นาที ระบบจึงตัดจบนัดหมายและตัดคะแนนผู้ขาย`,
             reference_type: "meetup",
             reference_id: appt.id,
           });
@@ -394,7 +415,7 @@ async function checkAndProcessNoShows() {
             user_id: txn.seller_id,
             type: "meetup_cancelled",
             title: "นัดหมายถูกตัดจบ (ผู้ซื้อไม่มาตามนัด)",
-            message: `เนื่องจากผู้ซื้อไม่ได้มาเช็คอินภายใน ${NO_SHOW_GRACE_MINUTES} นาที ระบบจึงตัดจบนัดหมายและนำสินค้ากลับสู่สถานะว่างขายใหม่`,
+            message: `เนื่องจากผู้ซื้อไม่ได้มาเช็คอินภายใน ${graceMin} นาที ระบบจึงตัดจบนัดหมายและนำสินค้ากลับสู่สถานะว่างขายใหม่`,
             reference_type: "meetup",
             reference_id: appt.id,
           });
@@ -449,7 +470,7 @@ async function getMyMeetups(req, res, next) {
         id, transaction_id, appointment_date, appointment_time,
         location_id, location_detail, status_id,
         buyer_checked_in, seller_checked_in, buyer_checked_in_at, seller_checked_in_at,
-        created_at, cancelled_at, cancellation_reason,
+        created_at, confirmed_at, created_by, cancelled_at, cancellation_reason,
         appointment_status(id, name),
         locations(id, name, description, latitude, longitude),
         transactions(
@@ -483,6 +504,41 @@ async function getMyMeetups(req, res, next) {
 }
 
 // ----------------------------------------------------------------
+// Helper: เปิดธุรกรรมใหม่ + จองสินค้า (AVAILABLE -> RESERVED) แบบ atomic
+// ใช้ได้ทั้งตอนซื้อครั้งแรก และตอนขอนัดใหม่หลังนัดเดิมถูกยกเลิก/ตัดจบ/ไม่มาตามนัด
+// ----------------------------------------------------------------
+async function openNewTransaction(productId, buyerId, sellerId) {
+  // จองสินค้าเฉพาะตอนที่ยังว่าง (1 = AVAILABLE) กันสองคนจองพร้อมกัน
+  const { data: claimed } = await supabase
+    .from("products")
+    .update({ status_id: 2 }) // 2 = RESERVED
+    .eq("id", productId)
+    .eq("status_id", 1)
+    .select("id");
+  if (!claimed?.length) {
+    return { error: "สินค้านี้ไม่ว่างแล้ว (มีผู้อื่นจองหรือขายไปแล้ว)" };
+  }
+
+  const { data: newTxn, error: tErr } = await supabase
+    .from("transactions")
+    .insert({
+      product_id: productId,
+      buyer_id: buyerId,
+      seller_id: sellerId,
+      status_id: 2, // 2 = CONFIRMED
+    })
+    .select("id, buyer_id, seller_id, status_id, product_id")
+    .single();
+
+  if (tErr) {
+    // สร้างธุรกรรมไม่สำเร็จ คืนสินค้ากลับเป็นว่าง
+    await supabase.from("products").update({ status_id: 1 }).eq("id", productId).eq("status_id", 2);
+    throw tErr;
+  }
+  return { txn: newTxn };
+}
+
+// ----------------------------------------------------------------
 // POST /api/meetups  — นัดรับสินค้า
 // ----------------------------------------------------------------
 async function createMeetup(req, res, next) {
@@ -495,18 +551,20 @@ async function createMeetup(req, res, next) {
     const finalTime = appointmentTime || time || (scheduledAt ? scheduledAt.split("T")[1]?.slice(0, 5) : "12:00");
     const finalDetail = note || locationDetail || null;  // หมายเหตุ/note เท่านั้น ไม่เอา locationName
 
-    // ── ตรวจเวลานัดรับต้องอยู่ในช่วง 08:00 – 20:00 และไม่ใช่วันที่ผ่านมาแล้ว ──
+    // ── ตรวจเวลานัดรับต้องอยู่ในช่วง 08:00 – 20:00 และไม่ใช่เวลาที่ผ่านมาแล้ว ──
     if (!isWithinMeetupHours(finalTime)) {
       return res.status(400).json({ error: MEETUP_HOURS_TEXT });
     }
     if (!finalDate || String(finalDate) < todayInBangkok()) {
       return res.status(400).json({ error: "ไม่สามารถนัดรับย้อนหลังได้ กรุณาเลือกวันที่ตั้งแต่วันนี้เป็นต้นไป" });
     }
+    if (appointmentToDate(finalDate, finalTime) <= new Date()) {
+      return res.status(400).json({ error: "เวลานัดต้องเป็นเวลาในอนาคต" });
+    }
 
     // ── ค้นหา location id: ลอง parseInt ก่อน ถ้าไม่ใช่ตัวเลขให้ค้นจากชื่อใน DB ──
     let resolvedLocationId = parseInt(finalLocationRaw);
     if (isNaN(resolvedLocationId) && (finalLocationRaw || locationName)) {
-      // อาจเป็น string key เช่น 'canteen39', 'library-cl' หรือชื่อจุดนัดรับ — ค้นหาจากชื่อที่คล้ายกัน
       const locationKeyMap = {
         'canteen39': 'โรงอาหาร 39',
         'library-cl': 'CL',
@@ -551,9 +609,22 @@ async function createMeetup(req, res, next) {
         .eq("id", transactionId)
         .single();
       txn = data;
+      if (!txn) {
+        return res.status(404).json({ error: "ไม่พบข้อมูลรายการซื้อขาย" });
+      }
       // ต้องเป็นผู้ซื้อหรือผู้ขายของรายการนี้เท่านั้น
-      if (txn && !isParticipant(txn, req.user.id)) {
+      if (!isParticipant(txn, req.user.id)) {
         return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในรายการซื้อขายนี้" });
+      }
+      // ดีลที่ขายสำเร็จแล้ว (3) ห้ามนัดซ้ำ
+      if (txn.status_id === 3) {
+        return res.status(400).json({ error: "รายการซื้อขายนี้เสร็จสิ้นแล้ว ไม่สามารถสร้างนัดใหม่ได้" });
+      }
+      // ดีลที่ถูกยกเลิก/ตัดจบ (4) -> เปิดธุรกรรมใหม่ของสินค้าชิ้นเดิม ผู้ซื้อ-ผู้ขายคู่เดิม
+      if (txn.status_id === 4) {
+        const r = await openNewTransaction(txn.product_id, txn.buyer_id, txn.seller_id);
+        if (r.error) return res.status(400).json({ error: r.error });
+        txn = r.txn;
       }
     } else if (targetProductId) {
       const { data: product } = await supabase
@@ -567,7 +638,7 @@ async function createMeetup(req, res, next) {
 
       const targetSellerId = sellerId ? parseInt(sellerId) : product.seller_id;
 
-      // Find non-cancelled transaction
+      // หาธุรกรรมที่ยังไม่ถูกยกเลิก (ยกเลิกแล้วจะไม่เจอ -> เปิดใหม่ได้)
       const { data: existingTxns } = await supabase
         .from("transactions")
         .select("id, buyer_id, seller_id, status_id, product_id")
@@ -578,23 +649,13 @@ async function createMeetup(req, res, next) {
 
       if (existingTxns?.length) {
         txn = existingTxns[0];
+        if (txn.status_id === 3) {
+          return res.status(400).json({ error: "รายการซื้อขายนี้เสร็จสิ้นแล้ว ไม่สามารถสร้างนัดใหม่ได้" });
+        }
       } else {
-        const { data: newTxn, error: tErr } = await supabase
-          .from("transactions")
-          .insert({
-            product_id: targetProductId,
-            buyer_id: req.user.id,
-            seller_id: targetSellerId,
-            status_id: 2, // 2 = ยืนยันแล้ว (CONFIRMED)
-          })
-          .select("id, buyer_id, seller_id, status_id, product_id")
-          .single();
-
-        if (tErr) throw tErr;
-        txn = newTxn;
-
-        // Mark product as RESERVED
-        await supabase.from("products").update({ status_id: 2 }).eq("id", targetProductId);
+        const r = await openNewTransaction(targetProductId, req.user.id, targetSellerId);
+        if (r.error) return res.status(400).json({ error: r.error });
+        txn = r.txn;
       }
     }
 
@@ -602,21 +663,24 @@ async function createMeetup(req, res, next) {
       return res.status(400).json({ error: "ไม่พบข้อมูลรายการซื้อขาย" });
     }
 
-
-    // ── ตรวจสอบว่ามีนัดหมาย pending อยู่แล้วสำหรับ transaction นี้ — ถ้ามีให้ยกเลิกอันเก่าก่อน ──
+    // ── ถ้ามีนัดหมาย PENDING เก่าของธุรกรรมนี้ ให้ยกเลิกอันเก่า (4 = CANCELLED) ──
     const { data: existingPending } = await supabase
       .from('appointments')
       .select('id')
       .eq('transaction_id', txn.id)
-      .in('status_id', [1]) // 1 = pending
+      .eq('status_id', 1)
       .limit(5);
     if (existingPending?.length) {
       const oldIds = existingPending.map((a) => a.id);
-      await supabase.from('appointments').update({ status_id: 5, cancellation_reason: 'replaced_by_new_request' }).in('id', oldIds);
+      await supabase.from('appointments').update({
+        status_id: 4,
+        cancelled_at: new Date().toISOString(),
+        cancelled_by: req.user.id,
+        cancellation_reason: 'replaced_by_new_request',
+      }).in('id', oldIds);
     }
 
-    // ── ตรวจสอบเวลานัดหมายซ้ำ/ทับซ้อน (Overlap Check) ──
-    // ห้ามมีนัดหมายอื่นในช่วงเวลาเดียวกัน (ห่างกันน้อยกว่า 30 นาที) สำหรับผู้ซื้อ ผู้ขาย หรือสินค้านี้
+    // ── ตรวจเวลานัดหมายซ้ำ/ทับซ้อน (Overlap Check) ──
     const targetMin = toMinutes(finalTime);
 
     const { data: dayAppts } = await supabase
@@ -632,7 +696,6 @@ async function createMeetup(req, res, next) {
       const conflict = dayAppts.find((a) => {
         const t = a.transactions;
         if (!t) return false;
-        // เช็คว่าเกี่ยวข้องกับผู้ซื้อ ผู้ขาย หรือสินค้านี้
         const involvesParty =
           t.buyer_id === txn.buyer_id ||
           t.seller_id === txn.buyer_id ||
@@ -643,7 +706,7 @@ async function createMeetup(req, res, next) {
         if (!involvesParty) return false;
 
         const apptMin = toMinutes(a.appointment_time);
-        return Math.abs(apptMin - targetMin) < 30; // ถือว่าทับซ้อนถ้าเวลาห่างกันน้อยกว่า 30 นาที
+        return Math.abs(apptMin - targetMin) < 30;
       });
 
       if (conflict) {
@@ -653,7 +716,7 @@ async function createMeetup(req, res, next) {
       }
     }
 
-    // Insert Appointment
+    // Insert Appointment (บันทึก created_by เพื่อกันผู้สร้างนัดกดยืนยันนัดตัวเอง)
     const { data: appointment, error: aErr } = await supabase
       .from("appointments")
       .insert({
@@ -663,6 +726,7 @@ async function createMeetup(req, res, next) {
         location_id: resolvedLocationId,
         location_detail: finalDetail,
         status_id: 1, // 1 = รอการยืนยัน (PENDING)
+        created_by: req.user.id,
       })
       .select("id")
       .single();
@@ -701,7 +765,7 @@ async function acceptMeetup(req, res, next) {
     const { id } = req.params;
     const { data: appt } = await supabase
       .from("appointments")
-      .select("id, transaction_id, transactions(buyer_id, seller_id)")
+      .select("id, status_id, created_by, appointment_date, appointment_time, transaction_id, transactions(buyer_id, seller_id)")
       .eq("id", id)
       .single();
 
@@ -710,8 +774,33 @@ async function acceptMeetup(req, res, next) {
       return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในนัดรับนี้" });
     }
 
-    // Update appointment status to 2 = นัดหมายเรียบร้อย (CONFIRMED)
-    await supabase.from("appointments").update({ status_id: 2 }).eq("id", id);
+    // ผู้สร้างนัดกดยืนยันนัดของตัวเองไม่ได้ ต้องให้อีกฝ่ายยืนยัน
+    // (นัดเก่าที่ created_by เป็น null ข้ามการเช็คนี้)
+    if (appt.created_by && String(appt.created_by) === String(req.user.id)) {
+      return res.status(403).json({ error: "คุณเป็นผู้สร้างนัดนี้ ต้องให้อีกฝ่ายเป็นผู้ยืนยัน" });
+    }
+
+    // ยืนยันได้เฉพาะนัดที่รอยืนยัน (PENDING) เท่านั้น
+    if (appt.status_id !== 1) {
+      return res.status(400).json({ error: "นัดนี้ไม่อยู่ในสถานะรอยืนยัน" });
+    }
+
+    // เลยเวลานัดแล้วห้ามยืนยัน
+    if (appointmentToDate(appt.appointment_date, appt.appointment_time) <= new Date()) {
+      return res.status(400).json({ error: "เลยเวลานัดแล้ว ไม่สามารถยืนยันได้ กรุณาสร้างนัดใหม่" });
+    }
+
+    // "จอง" การยืนยัน เฉพาะแถวที่ยังเป็น PENDING กันกดซ้ำ/ชนกัน และบันทึกเวลายืนยัน (ใช้คำนวณช่วงยกเลิกฟรี)
+    const { data: acc } = await supabase
+      .from("appointments")
+      .update({ status_id: 2, confirmed_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("status_id", 1)
+      .select("id");
+    if (!acc?.length) {
+      return res.status(400).json({ error: "นัดนี้ถูกดำเนินการไปแล้ว" });
+    }
+
     // Update transaction status to 2 = ยืนยันแล้ว (CONFIRMED)
     await supabase.from("transactions").update({ status_id: 2 }).eq("id", appt.transaction_id);
 
@@ -752,49 +841,63 @@ async function acceptMeetup(req, res, next) {
 }
 
 // ----------------------------------------------------------------
-// POST /api/meetups/:id/checkin  — เช็คอินจุดนัดรับ
+// POST /api/meetups/:id/checkin  — เช็คอินจุดนัดรับ (ตรวจระยะ 200 ม./เวลา/สิทธิ์ ใน DB)
 // ----------------------------------------------------------------
+function checkInErrorMessage(msg = "") {
+  if (msg.includes("TOO_FAR")) {
+    const m = msg.match(/TOO_FAR:\s*(\d+)/);
+    return `คุณอยู่ไกลจากจุดนัดรับ${m ? ` ${Number(m[1]).toLocaleString()} เมตร` : ""} (ต้องอยู่ภายใน 200 เมตร) จึงเช็คอินไม่ได้`;
+  }
+  if (msg.includes("OUTSIDE_CHECKIN_WINDOW")) return "ยังไม่ถึงหรือเลยช่วงเวลาเช็คอินของนัดนี้";
+  if (msg.includes("INVALID_COORDINATES")) return "ไม่พบพิกัด GPS กรุณาเปิด GPS แล้วลองใหม่";
+  if (msg.includes("APPOINTMENT_NOT_ACTIVE")) return "นัดหมายนี้ยังไม่ได้ยืนยันหรือสิ้นสุดแล้ว";
+  if (msg.includes("NOT_PARTICIPANT")) return "คุณไม่ได้มีส่วนร่วมในนัดรับนี้";
+  if (msg.includes("APPOINTMENT_NOT_FOUND")) return "ไม่พบนัดรับ";
+  return null;
+}
+
 async function checkInMeetup(req, res, next) {
   try {
     const { id } = req.params;
+    const lat = parseFloat(req.body?.lat ?? req.body?.latitude);
+    const lng = parseFloat(req.body?.lng ?? req.body?.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ error: "ไม่พบพิกัด GPS กรุณาเปิด GPS แล้วลองใหม่" });
+    }
+
+    const { data: r, error } = await supabase.rpc("check_in_appointment", {
+      p_appointment_id: Number(id),
+      p_user_id: req.user.id,
+      p_lat: lat,
+      p_lng: lng,
+    });
+    if (error) {
+      const friendly = checkInErrorMessage(error.message);
+      if (friendly) return res.status(400).json({ error: friendly });
+      throw error;
+    }
+
     const { data: appt } = await supabase
       .from("appointments")
-      .select("id, transaction_id, buyer_checked_in, seller_checked_in, buyer_checked_in_at, seller_checked_in_at, transactions(buyer_id, seller_id)")
+      .select("id, transactions(buyer_id, seller_id)")
       .eq("id", id)
       .single();
 
-    if (!appt) return res.status(404).json({ error: "ไม่พบนัดรับ" });
-
     const isBuyer = appt.transactions?.buyer_id === req.user.id;
-    const isSeller = appt.transactions?.seller_id === req.user.id;
-
-    if (!isBuyer && !isSeller) return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในนัดรับนี้" });
-
-    const now = new Date().toISOString();
-    const updateData = isBuyer
-      ? { buyer_checked_in: true, buyer_checked_in_at: now }
-      : { seller_checked_in: true, seller_checked_in_at: now };
-
-    // คงสถานะให้อยู่ในขั้นตอนนัดหมาย (CONFIRMED) เพื่อให้ดำเนินการตรวจรับส่งมอบตามลำดับขั้นตอน
-    await supabase.from("appointments").update(updateData).eq("id", id);
-
-    const otherCheckedIn = isBuyer ? appt.seller_checked_in : appt.buyer_checked_in;
     const partnerId = isBuyer ? appt.transactions?.seller_id : appt.transactions?.buyer_id;
 
     const checkInData = {
       meetupId: Number(id),
       userId: req.user.id,
-      role: isBuyer ? 'buyer' : 'seller',
-      checkedInRole: isBuyer ? 'buyer' : 'seller',
-      buyerCheckedIn: isBuyer ? true : !!appt.buyer_checked_in,
-      sellerCheckedIn: isSeller ? true : !!appt.seller_checked_in,
-      buyerCheckedInAt: isBuyer ? now : appt.buyer_checked_in_at,
-      sellerCheckedInAt: isSeller ? now : appt.seller_checked_in_at,
+      role: isBuyer ? "buyer" : "seller",
+      checkedInRole: isBuyer ? "buyer" : "seller",
+      buyerCheckedIn: !!r.buyer_checked_in,
+      sellerCheckedIn: !!r.seller_checked_in,
+      buyerCheckedInAt: r.buyer_checked_in_at,
+      sellerCheckedInAt: r.seller_checked_in_at,
       buyerId: appt.transactions?.buyer_id,
       sellerId: appt.transactions?.seller_id,
     };
-
-    // ส่ง realtime event ทันทีทั้งสองฝ่าย
     emitMeetupUpdate(id, checkInData);
 
     if (partnerId) {
@@ -814,7 +917,12 @@ async function checkInMeetup(req, res, next) {
       }
     }
 
-    res.json({ message: "เช็คอินจุดนัดรับสำเร็จ", bothCheckedIn: !!otherCheckedIn, checkInData });
+    res.json({
+      message: "เช็คอินจุดนัดรับสำเร็จ",
+      distanceM: r.distance_m,
+      bothCheckedIn: !!(r.buyer_checked_in && r.seller_checked_in),
+      checkInData,
+    });
   } catch (err) {
     next(err);
   }
@@ -828,13 +936,18 @@ async function completeMeetup(req, res, next) {
     const { id } = req.params;
     const { data: appt } = await supabase
       .from("appointments")
-      .select("id, transaction_id, transactions(id, product_id, buyer_id, seller_id)")
+      .select("id, transaction_id, status_id, buyer_checked_in, seller_checked_in, transactions(id, product_id, buyer_id, seller_id)")
       .eq("id", id)
       .single();
 
     if (!appt) return res.status(404).json({ error: "ไม่พบนัดรับ" });
     if (!isParticipant(appt.transactions, req.user.id)) {
       return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในนัดรับนี้" });
+    }
+
+    // ต้องเช็คอินครบทั้งสองฝ่ายและนัดต้องอยู่ในสถานะ CONFIRMED ก่อนจึงจะปิดดีลได้
+    if (appt.status_id !== 2 || !appt.buyer_checked_in || !appt.seller_checked_in) {
+      return res.status(400).json({ error: "ต้องเช็คอินที่จุดนัดรับให้ครบทั้งสองฝ่ายก่อน จึงจะยืนยันส่งมอบสินค้าได้" });
     }
 
     const txn = appt.transactions;
@@ -914,15 +1027,27 @@ async function completeMeetup(req, res, next) {
 
 // ----------------------------------------------------------------
 // POST /api/meetups/:id/cancel  — ยกเลิกนัดรับ
+//
+// กฎตัดคะแนน LATE_CANCEL (อ่านจากตาราง penalty_rules ทั้งหมด):
+//  - ตัดเฉพาะ "คนที่กดยกเลิก" เท่านั้น
+//  - ตัดเฉพาะนัดที่ยืนยันแล้ว (CONFIRMED) และเหลือเวลาก่อนนัด < threshold_minutes
+//  - ไม่ตัดถ้ายกเลิกภายใน grace_minutes หลังกดยืนยันนัด (เผื่อกดผิด)
+//  - ไม่ตัดถ้าคนที่ยกเลิกเช็คอินที่จุดนัดแล้ว (มาตามนัดแล้ว)
+//  - ถ้าจะโดนตัด ต้องส่ง confirmPenalty: true มาด้วย (ผู้ใช้กดยอมรับ) ไม่งั้นตอบ 409 ให้หน้าบ้านถามก่อน
 // ----------------------------------------------------------------
 async function cancelMeetup(req, res, next) {
   try {
     const { id } = req.params;
-    const { reason = "ยกเลิกโดยผู้ใช้" } = req.body;
+    const reason = String(req.body?.reason || "ยกเลิกโดยผู้ใช้");
+    const confirmPenalty = req.body?.confirmPenalty === true || req.body?.confirmPenalty === "true";
 
     const { data: appt } = await supabase
       .from("appointments")
-      .select("id, transaction_id, transactions(id, product_id, buyer_id, seller_id)")
+      .select(`
+        id, status_id, appointment_date, appointment_time, transaction_id,
+        confirmed_at, buyer_checked_in, seller_checked_in,
+        transactions(id, product_id, buyer_id, seller_id)
+      `)
       .eq("id", id)
       .single();
 
@@ -930,90 +1055,133 @@ async function cancelMeetup(req, res, next) {
     if (!isParticipant(appt.transactions, req.user.id)) {
       return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในนัดรับนี้" });
     }
+    // 3 = COMPLETED, 4 = CANCELLED, 5 = NO_SHOW
+    if ([3, 4, 5].includes(appt.status_id)) {
+      return res.status(400).json({ error: "นัดหมายนี้สิ้นสุดแล้ว ไม่สามารถยกเลิกได้" });
+    }
 
-    const now = new Date().toISOString();
+    const now = new Date();
+    const nowIso = now.toISOString();
 
-    // Cancel appointment
-    await supabase.from("appointments").update({
-      status_id: 4, // 4 = ยกเลิก (CANCELLED)
-      cancelled_at: now,
-      cancelled_by: req.user.id,
-      cancellation_reason: reason,
-    }).eq("id", id);
+    // ── ตัดสินว่าคนที่กดยกเลิกจะโดนตัดคะแนนหรือไม่ ──
+    let lateRule = null;
+    let minutesLeft = null;
+    if (appt.status_id === 2) {
+      const rule = await getPenaltyRule("LATE_CANCEL");
+      if (rule && rule.is_active) {
+        const isBuyer = String(appt.transactions.buyer_id) === String(req.user.id);
+        const iCheckedIn = isBuyer ? appt.buyer_checked_in : appt.seller_checked_in;
+        minutesLeft = (appointmentToDate(appt.appointment_date, appt.appointment_time).getTime() - now.getTime()) / 60000;
+        const sinceConfirm = appt.confirmed_at
+          ? (now.getTime() - new Date(appt.confirmed_at).getTime()) / 60000
+          : Infinity;
 
-    // Cancel transaction
+        const threshold = rule.threshold_minutes ?? LATE_CANCEL_THRESHOLD_MINUTES;
+        const grace = rule.grace_minutes ?? LATE_CANCEL_GRACE_MINUTES;
+
+        if (!iCheckedIn && sinceConfirm > grace && minutesLeft < threshold) {
+          lateRule = rule;
+        }
+      }
+    }
+
+    // ── ต้องให้ผู้ใช้กดยอมรับก่อน ถ้าจะโดนตัดคะแนน ──
+    if (lateRule && !confirmPenalty) {
+      const threshold = lateRule.threshold_minutes ?? LATE_CANCEL_THRESHOLD_MINUTES;
+      return res.status(409).json({
+        error: `การยกเลิกนัดที่ยืนยันแล้วก่อนเวลานัดน้อยกว่า ${threshold} นาที จะถูกตัด ${lateRule.points_deducted} คะแนนความน่าเชื่อถือ`,
+        requiresConfirm: true,
+        pointsDeducted: lateRule.points_deducted,
+        thresholdMinutes: threshold,
+        minutesLeft: Math.max(0, Math.round(minutesLeft)),
+      });
+    }
+
+    // ── "จอง" การยกเลิก เฉพาะแถวที่ยังไม่สิ้นสุด กันกดซ้ำ/ชนกับ cron แล้วตัดคะแนนซ้ำ ──
+    const { data: claimed } = await supabase
+      .from("appointments")
+      .update({
+        status_id: 4,
+        cancelled_at: nowIso,
+        cancelled_by: req.user.id,
+        cancellation_reason: reason,
+      })
+      .eq("id", id)
+      .in("status_id", [1, 2])
+      .select("id");
+    if (!claimed?.length) {
+      return res.status(400).json({ error: "นัดหมายนี้สิ้นสุดแล้ว ไม่สามารถยกเลิกได้" });
+    }
+
     await supabase.from("transactions").update({
-      status_id: 4, // 4 = ยกเลิก (CANCELLED)
-      cancelled_at: now,
+      status_id: 4,
+      cancelled_at: nowIso,
     }).eq("id", appt.transaction_id);
 
-    // Restore product to AVAILABLE
     if (appt.transactions?.product_id) {
-      await supabase.from("products").update({
-        status_id: 1, // 1 = ว่าง (AVAILABLE)
-      }).eq("id", appt.transactions.product_id);
+      await supabase.from("products").update({ status_id: 1 }).eq("id", appt.transactions.product_id);
     }
 
-    // Record penalty if cancellation reason warrants it
-    if (reason.toLowerCase().includes("ไม่มา") || reason.toLowerCase().includes("no-show")) {
-      await recordPenalty(req.user.id, "NO_SHOW", reason);
+    // ── ตัดคะแนนเฉพาะคนที่กดยกเลิก + แจ้งเตือน ──
+    if (lateRule) {
+      const threshold = lateRule.threshold_minutes ?? LATE_CANCEL_THRESHOLD_MINUTES;
+      await recordPenalty(
+        req.user.id,
+        "LATE_CANCEL",
+        `ยกเลิกนัด #${id} ก่อนเวลานัดน้อยกว่า ${threshold} นาที: ${reason}`
+      );
+      const penaltyNotif = {
+        user_id: req.user.id,
+        type: "penalty",
+        title: "⚠️ คุณถูกตัดคะแนนจากการยกเลิกนัดกระชั้นชิด",
+        message: `คุณยกเลิกนัดที่ยืนยันแล้วก่อนเวลานัดน้อยกว่า ${threshold} นาที ระบบตัด ${lateRule.points_deducted} คะแนนความน่าเชื่อถือ`,
+        reference_type: "meetup",
+        reference_id: Number(id),
+      };
+      try {
+        const { data: ins } = await supabase.from("notifications").insert(penaltyNotif).select("*").single();
+        sendNotificationToUser(req.user.id, ins || penaltyNotif);
+      } catch (nErr) {
+        console.warn("[cancelMeetup] penalty notification warning:", nErr.message);
+        sendNotificationToUser(req.user.id, penaltyNotif);
+      }
     }
 
-    res.json({ message: "ยกเลิกนัดรับสำเร็จ" });
-  } catch (err) {
-    next(err);
-  }
-}
-
-// ----------------------------------------------------------------
-// POST /api/meetups/:id/reschedule  — เปลี่ยนวันเวลาหรือสถานที่
-// ----------------------------------------------------------------
-async function rescheduleMeetup(req, res, next) {
-  try {
-    const { id } = req.params;
-    const { appointmentDate, appointmentTime, date, time, scheduledAt, locationId, meetupPointId, locationDetail, note } = req.body;
-
-    const finalDate = appointmentDate || date || (scheduledAt ? scheduledAt.split("T")[0] : undefined);
-    const finalTime = appointmentTime || time || (scheduledAt ? scheduledAt.split("T")[1]?.slice(0, 5) : undefined);
-    const finalLoc = locationId || meetupPointId;
-    const finalDetail = locationDetail || note;
-
-    // ต้องเป็นผู้ซื้อหรือผู้ขายของนัดนี้เท่านั้น
-    const { data: appt } = await supabase
-      .from("appointments")
-      .select("id, transactions(buyer_id, seller_id)")
-      .eq("id", id)
-      .single();
-
-    if (!appt) return res.status(404).json({ error: "ไม่พบนัดรับ" });
-    if (!isParticipant(appt.transactions, req.user.id)) {
-      return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในนัดรับนี้" });
+    // ── แจ้งคู่ค้า (ไม่โดนตัดคะแนน) ──
+    const partnerId = String(appt.transactions.buyer_id) === String(req.user.id)
+      ? appt.transactions.seller_id
+      : appt.transactions.buyer_id;
+    if (partnerId) {
+      const partnerNotif = {
+        user_id: partnerId,
+        type: "meetup_cancelled",
+        title: "คู่ค้ายกเลิกนัดรับ",
+        message: `เหตุผล: ${reason}`,
+        reference_type: "meetup",
+        reference_id: Number(id),
+      };
+      try {
+        const { data: ins } = await supabase.from("notifications").insert(partnerNotif).select("*").single();
+        sendNotificationToUser(partnerId, ins || partnerNotif);
+      } catch (nErr) {
+        console.warn("[cancelMeetup] partner notification warning:", nErr.message);
+        sendNotificationToUser(partnerId, partnerNotif);
+      }
     }
 
-    // ตรวจเวลา/วันที่ใหม่ (ถ้ามีการเปลี่ยน)
-    if (finalTime !== undefined && !isWithinMeetupHours(finalTime)) {
-      return res.status(400).json({ error: MEETUP_HOURS_TEXT });
-    }
-    if (finalDate !== undefined && String(finalDate) < todayInBangkok()) {
-      return res.status(400).json({ error: "ไม่สามารถนัดรับย้อนหลังได้ กรุณาเลือกวันที่ตั้งแต่วันนี้เป็นต้นไป" });
-    }
+    emitMeetupUpdate(id, {
+      meetupId: Number(id),
+      status: "cancelled",
+      statusCode: "CANCELLED",
+      buyerId: appt.transactions.buyer_id,
+      sellerId: appt.transactions.seller_id,
+    });
 
-    const updates = {
-      status_id: 1, // 1 = รอการยืนยัน (PENDING)
-      buyer_checked_in: false,
-      seller_checked_in: false,
-      cancelled_at: null,
-      cancelled_by: null,
-      cancellation_reason: null,
-    };
-    if (finalDate) updates.appointment_date = finalDate;
-    if (finalTime) updates.appointment_time = finalTime;
-    if (finalLoc) updates.location_id = parseInt(finalLoc);
-    if (finalDetail !== undefined) updates.location_detail = finalDetail;
-
-    await supabase.from("appointments").update(updates).eq("id", id);
-
-    res.json({ message: "เปลี่ยนแปลงการนัดหมายเรียบร้อยแล้ว" });
+    res.json({
+      message: "ยกเลิกนัดรับสำเร็จ",
+      penalized: !!lateRule,
+      pointsDeducted: lateRule ? lateRule.points_deducted : 0,
+    });
   } catch (err) {
     next(err);
   }
@@ -1027,6 +1195,5 @@ module.exports = {
   checkInMeetup,
   completeMeetup,
   cancelMeetup,
-  rescheduleMeetup,
   checkAndProcessNoShows,
 };
