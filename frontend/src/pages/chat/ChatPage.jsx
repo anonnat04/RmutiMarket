@@ -102,6 +102,8 @@ export function ChatPage() {
       transactionStatusId: c.transactionStatusId ?? null,
       isDealClosed: c.isDealClosed ?? false,
       dealClosedAt: c.dealClosedAt ?? null,
+      activeAppointmentStatusId: c.activeAppointmentStatusId ?? null,
+      canScheduleMeetup: c.canScheduleMeetup,
     };
   }
 
@@ -152,6 +154,23 @@ export function ChatPage() {
       refreshingRef.current = false;
     }
   };
+  const refreshConversationsRef = useRef(refreshConversationsFromBackend);
+  refreshConversationsRef.current = refreshConversationsFromBackend;
+
+  // Keep product availability fresh while a chat stays open, including cases
+  // where another participant completes/cancels a deal in another browser tab.
+  useEffect(() => {
+    if (!user?.id) return undefined;
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") refreshConversationsRef.current();
+    };
+    const timer = window.setInterval(refreshIfVisible, 30000);
+    window.addEventListener("focus", refreshIfVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshIfVisible);
+    };
+  }, [user?.id]);
 
   // ─── 1. Load Conversations & Handle ?productId=xxx ───
   useEffect(() => {
@@ -369,10 +388,12 @@ export function ChatPage() {
 
     // แจ้งเตือนแบบ real-time (ส่งตรงถึง socket ส่วนตัวของ user คนนี้ ไม่ต้อง join ห้องแชทก่อนก็รับได้)
     const handleNewNotification = (n) => {
-      if (n?.type === "message" || n?.type === "chat_message") {
+      if (["message", "chat_message", "meetup_scheduled", "meetup_cancelled", "deal_completed", "transaction_update"]
+        .includes(String(n?.type || ""))) {
         refreshConversationsFromBackend();
       }
     };
+    const handleMeetupUpdate = () => refreshConversationsFromBackend();
 
     // เมื่อคู่สนทนาเปิดอ่านข้อความในห้องนี้แล้ว
     const handleMessagesRead = ({ conversationId, readerId }) => {
@@ -393,6 +414,8 @@ export function ChatPage() {
     socket.on("new_message", handleNewMessage);
     socket.on("user_typing", handleUserTyping);
     socket.on("new_notification", handleNewNotification);
+    socket.on("meetup_updated", handleMeetupUpdate);
+    socket.on("meetup_status_update", handleMeetupUpdate);
     socket.on("messages_read", handleMessagesRead);
 
     if (socket.connected) {
@@ -405,6 +428,8 @@ export function ChatPage() {
       socket.off("new_message", handleNewMessage);
       socket.off("user_typing", handleUserTyping);
       socket.off("new_notification", handleNewNotification);
+      socket.off("meetup_updated", handleMeetupUpdate);
+      socket.off("meetup_status_update", handleMeetupUpdate);
       socket.off("messages_read", handleMessagesRead);
     };
   }, [activeId, user]);
@@ -740,7 +765,18 @@ export function ChatPage() {
                       <p className="text-xs font-bold text-ink-900 truncate group-hover:text-brand-600 transition-colors flex items-center gap-1">
                         {active.productTitle} <ChevronRight size={13} className="text-ink-400" />
                       </p>
-                      <p className="text-xs font-extrabold text-brand-600">{formatCurrency(active.productPrice)}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-extrabold text-brand-600">{formatCurrency(active.productPrice)}</p>
+                        {(() => {
+                          const statusId = Number(active.statusId);
+                          const sold = statusId === 3 || Number(active.transactionStatusId) === 3;
+                          const label = sold ? "ขายแล้ว" : statusId === 2 ? "ติดจอง" : statusId === 1 ? "ว่าง" : "ไม่พร้อมนัด";
+                          const color = sold ? "bg-gray-100 text-gray-600" : statusId === 2
+                            ? "bg-amber-50 text-amber-700" : statusId === 1
+                              ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500";
+                          return <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${color}`}>{label}</span>;
+                        })()}
+                      </div>
                     </div>
                   </div>
 
@@ -767,9 +803,15 @@ export function ChatPage() {
 
                       return (
                         <span className="flex items-center gap-1 rounded-xl bg-gray-100 border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-500 shrink-0 select-none">
-                          ✓ ปิดการขายแล้ว
+                          ✓ {Number(active.statusId) === 3 || Number(active.transactionStatusId) === 3 ? "ขายแล้ว" : "รายการสิ้นสุดแล้ว"}
                         </span>
                       );
+                    }
+
+                    // Hide scheduling while an appointment exists or its latest state is closed/cancelled.
+                    // The API still checks this independently to prevent duplicate requests.
+                    if (Number(active.statusId) !== 1 || active.canScheduleMeetup === false || [1, 2, 3, 4, 5].includes(Number(active.activeAppointmentStatusId))) {
+                      return null;
                     }
 
                     // แสดงเฉพาะผู้ซื้อเท่านั้น (ถ้าเป็นสินค้าของตัวเองที่เป็นคนขาย จะไม่มีปุ่มนัดรับ)

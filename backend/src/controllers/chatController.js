@@ -1,6 +1,145 @@
 const { supabase } = require("../config/db");
 const { sendNotificationToUser, emitNewMessage, emitMessagesRead } = require("../services/chatSocket");
 
+// Legacy rooms may have messages but no conversation_members rows. A user's own
+// persisted message is a safe proof that they participated in that room.
+async function getConversationsFromMessageHistory(userId) {
+  const { data: ownMessages, error: ownErr } = await supabase
+    .from("messages")
+    .select("conversation_id")
+    .eq("sender_id", userId)
+    .order("created_at", { ascending: false });
+  if (ownErr || !ownMessages?.length) return null;
+
+  const convIds = [...new Set(ownMessages.map((m) => m.conversation_id).filter(Boolean))];
+  if (!convIds.length) return null;
+
+  let convRows = [];
+  const current = await supabase
+    .from("conversations")
+    .select("id, product_id, created_at, updated_at")
+    .in("id", convIds);
+  if (!current.error) convRows = current.data || [];
+  else {
+    const legacy = await supabase
+      .from("conversations")
+      .select("id, listing_id, created_at, last_message_at")
+      .in("id", convIds);
+    if (!legacy.error) convRows = (legacy.data || []).map((c) => ({
+      id: c.id, product_id: c.listing_id, created_at: c.created_at, updated_at: c.last_message_at,
+    }));
+  }
+  if (!convRows.length) return null;
+
+  const ids = convRows.map((c) => c.id);
+  const [{ data: allMessages }, { data: members }] = await Promise.all([
+    supabase.from("messages")
+      .select("conversation_id, sender_id, content, message_type, created_at")
+      .in("conversation_id", ids)
+      .order("created_at", { ascending: false }),
+    supabase.from("conversation_members")
+      .select("conversation_id, user_id, last_read_at")
+      .in("conversation_id", ids),
+  ]);
+
+  const productIds = [...new Set(convRows.map((c) => c.product_id).filter(Boolean))];
+  let products = [];
+  if (productIds.length) {
+    const productResult = await supabase.from("products")
+      .select("id, title, price, seller_id, status_id, product_images(image_url, is_primary)")
+      .in("id", productIds);
+    if (!productResult.error) products = productResult.data || [];
+  }
+  const productMap = Object.fromEntries(products.map((p) => [String(p.id), p]));
+  const messagesByConv = new Map();
+  (allMessages || []).forEach((msg) => {
+    const key = String(msg.conversation_id);
+    if (!messagesByConv.has(key)) messagesByConv.set(key, []);
+    messagesByConv.get(key).push(msg);
+  });
+  const membersByConv = new Map();
+  (members || []).forEach((m) => {
+    const key = String(m.conversation_id);
+    if (!membersByConv.has(key)) membersByConv.set(key, []);
+    membersByConv.get(key).push(m);
+  });
+  const partnerIds = new Set();
+  convRows.forEach((c) => {
+    const others = [
+      ...(membersByConv.get(String(c.id)) || []).map((m) => m.user_id),
+      ...(messagesByConv.get(String(c.id)) || []).map((m) => m.sender_id),
+    ];
+    others.filter((id) => String(id) !== String(userId)).forEach((id) => partnerIds.add(id));
+  });
+  const { data: partnerUsers } = partnerIds.size
+    ? await supabase.from("users").select("id, username, full_name, profile_image_url").in("id", [...partnerIds])
+    : { data: [] };
+  const userMap = Object.fromEntries((partnerUsers || []).map((u) => [String(u.id), u]));
+  const { data: transactions } = productIds.length
+    ? await supabase.from("transactions")
+      .select("id, product_id, buyer_id, seller_id, status_id, completed_at, cancelled_at, updated_at")
+      .in("product_id", productIds)
+    : { data: [] };
+  const transactionIds = (transactions || []).map((tx) => tx.id);
+  const { data: appointments, error: appointmentsErr } = transactionIds.length
+    ? await supabase.from("appointments")
+      .select("id, transaction_id, status_id")
+      .in("transaction_id", transactionIds)
+      .order("id", { ascending: false })
+    : { data: [], error: null };
+
+  return convRows.map((c) => {
+    const key = String(c.id);
+    const roomMessages = messagesByConv.get(key) || [];
+    const roomMembers = membersByConv.get(key) || [];
+    const myMember = roomMembers.find((m) => String(m.user_id) === String(userId));
+    const partnerId = roomMembers.find((m) => String(m.user_id) !== String(userId))?.user_id
+      ?? roomMessages.find((m) => String(m.sender_id) !== String(userId))?.sender_id;
+    const partner = userMap[String(partnerId)];
+    const last = roomMessages[0];
+    const product = productMap[String(c.product_id)];
+    const participants = [String(userId), String(partnerId)].sort().join(":");
+    const relatedTxs = (transactions || []).filter((tx) =>
+      String(tx.product_id) === String(c.product_id) &&
+      [String(tx.buyer_id), String(tx.seller_id)].sort().join(":") === participants
+    );
+    const latestTx = relatedTxs.sort((a, b) =>
+      new Date(b.completed_at || b.cancelled_at || b.updated_at || 0) -
+      new Date(a.completed_at || a.cancelled_at || a.updated_at || 0)
+    )[0] || null;
+    const txStatus = latestTx ? Number(latestTx.status_id) : null;
+    const txClosed = [3, 4, 5].includes(txStatus);
+    const relatedAppointments = (appointments || []).filter((appt) => String(appt.transaction_id) === String(latestTx?.id))
+      .sort((a, b) => Number(b.id) - Number(a.id));
+    const latestAppointment = relatedAppointments[0] || null;
+    const canScheduleMeetup = Number(product?.status_id) === 1 && !appointmentsErr && !txClosed
+      && ![1, 2, 3, 4, 5].includes(Number(latestAppointment?.status_id));
+    const coverImage = product?.product_images?.find((img) => img.is_primary)?.image_url
+      || product?.product_images?.[0]?.image_url || null;
+    const lastReadAt = myMember?.last_read_at ? new Date(myMember.last_read_at).getTime() : 0;
+    const unreadCount = roomMessages.filter((m) => String(m.sender_id) !== String(userId)
+      && new Date(m.created_at).getTime() > lastReadAt).length;
+    return {
+      id: c.id,
+      product_id: c.product_id,
+      product: product ? { id: product.id, title: product.title, price: product.price,
+        sellerId: product.seller_id, statusId: product.status_id, coverImage } : null,
+      partner: partner ? { id: partner.id, username: partner.username,
+        displayName: partner.full_name || partner.username, profileImage: partner.profile_image_url } : null,
+      lastMessage: last ? { content: last.message_type?.toUpperCase() === "TEXT" ? last.content : `[${last.message_type || "รูปภาพ"}]`,
+        createdAt: last.created_at, senderId: last.sender_id } : null,
+      unreadCount,
+      updatedAt: c.updated_at || last?.created_at,
+      createdAt: c.created_at,
+      transactionStatusId: txStatus,
+      isDealClosed: txClosed,
+      dealClosedAt: latestTx?.completed_at || latestTx?.cancelled_at || latestTx?.updated_at || null,
+      activeAppointmentStatusId: latestAppointment ? Number(latestAppointment.status_id) : null,
+      canScheduleMeetup,
+    };
+  }).sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
+}
+
 // ----------------------------------------------------------------
 // GET /api/chat/conversations  — ห้องแชทของฉัน
 // ----------------------------------------------------------------
@@ -44,6 +183,8 @@ async function getConversations(req, res, next) {
         const conversationRows = convs || [];
         const validConvIds = conversationRows.map((c) => c.id);
         if (validConvIds.length === 0) {
+          const recovered = await getConversationsFromMessageHistory(myId);
+          if (recovered?.length) return res.json({ conversations: recovered });
           return res.json({ conversations: [] });
         }
 
@@ -137,11 +278,36 @@ async function getConversations(req, res, next) {
           };
         });
 
+        const historyRows = await getConversationsFromMessageHistory(myId);
+        if (historyRows?.length) {
+          const historyById = new Map(historyRows.map((row) => [String(row.id), row]));
+          const merged = formatted.map((row) => {
+            const recovered = historyById.get(String(row.id));
+            if (!recovered) return row;
+            historyById.delete(String(row.id));
+            return {
+              ...recovered,
+              ...row,
+              partner: row.partner || recovered.partner,
+              product: row.product || recovered.product,
+              lastMessage: row.lastMessage || recovered.lastMessage,
+              unreadCount: Math.max(Number(row.unreadCount) || 0, Number(recovered.unreadCount) || 0),
+            };
+          });
+          return res.json({ conversations: [...merged, ...historyById.values()] });
+        }
         return res.json({ conversations: formatted });
       }
     }
 
-    // 2. Fallback: ถ้ายังเป็น schema เดิมที่มี buyer_id, seller_id, listings
+    // 2. Recover existing rooms from the user's persisted message history if old
+    // records have no membership rows, or a nested PostgREST relationship failed.
+    const historyConversations = await getConversationsFromMessageHistory(myId);
+    if (historyConversations?.length) {
+      return res.json({ conversations: historyConversations });
+    }
+
+    // 3. Fallback: ถ้ายังเป็น schema เดิมที่มี buyer_id, seller_id, listings
     const { data: oldConvs, error: oldErr } = await supabase
       .from("conversations")
       .select(`
@@ -234,7 +400,20 @@ async function getMessages(req, res, next) {
       console.error("[getMessages] memErr (ตรวจสอบสมาชิกห้องแชทล้มเหลว):", memErr);
     }
 
-    const myMembership = (convMembers || []).find((m) => String(m.user_id) === String(myId));
+    let myMembership = (convMembers || []).find((m) => String(m.user_id) === String(myId));
+    // Some older rows have messages but were created before conversation_members
+    // was populated. Allow only users with their own persisted message in that room.
+    if (!myMembership) {
+      const { data: ownMessage, error: ownMessageErr } = await supabase
+        .from("messages")
+        .select("id")
+        .eq("conversation_id", convId)
+        .eq("sender_id", myId)
+        .limit(1)
+        .maybeSingle();
+      if (ownMessageErr) console.error("[getMessages] ownMessageErr:", ownMessageErr);
+      if (ownMessage) myMembership = { user_id: myId, last_read_at: null };
+    }
 
     if (myMembership) {
       const partnerMem = (convMembers || []).find((m) => String(m.user_id) !== String(myId));
@@ -749,36 +928,27 @@ async function deleteExpiredChats() {
   try {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    // ใช้ completed_at/cancelled_at เป็นเวลาปิดจริง; updated_at เป็น fallback สำหรับ schema เก่า
-    const { data: terminalTxs, error: txErr } = await supabase
+    // Keep conversations until the latest transaction for that product + pair
+    // has been terminal for seven full days. An older cancelled deal must not
+    // delete a room that has since been reused for another active deal.
+    const { data: transactions, error: txErr } = await supabase
       .from("transactions")
       .select("id, product_id, buyer_id, seller_id, status_id, updated_at, completed_at, cancelled_at")
-      .in("status_id", [3, 4, 5]); // COMPLETED, CANCELLED, NO_SHOW
+      .in("status_id", [1, 2, 3, 4, 5]);
 
     if (txErr) {
       console.error("[deleteExpiredChats] ดึง transactions หมดอายุล้มเหลว:", txErr);
       return;
     }
 
-    const expiredTxs = (terminalTxs || []).filter((tx) => {
-      const closedAt = Number(tx.status_id) === 3
-        ? (tx.completed_at || tx.updated_at)
-        : (tx.cancelled_at || tx.updated_at);
-      const closedAtMs = closedAt ? Date.parse(closedAt) : NaN;
-      return Number.isFinite(closedAtMs) && closedAtMs < Date.parse(sevenDaysAgo);
-    });
-    if (expiredTxs.length === 0) return;
+    if (!transactions?.length) return;
+    const productIds = [...new Set(transactions.map((t) => t.product_id).filter(Boolean))];
+    if (!productIds.length) return;
 
-    // หา product_id ที่มี transaction หมดอายุ
-    const expiredProductIds = [...new Set(expiredTxs.map((t) => t.product_id).filter(Boolean))];
-
-    if (expiredProductIds.length === 0) return;
-
-    // หาเฉพาะห้องของสินค้าเหล่านั้น แล้วจับคู่สมาชิกกับ buyer/seller ของ transaction
     const { data: productConvs, error: convErr } = await supabase
       .from("conversations")
       .select("id, product_id")
-      .in("product_id", expiredProductIds);
+      .in("product_id", productIds);
 
     if (convErr) {
       console.error("[deleteExpiredChats] ดึง conversations หมดอายุล้มเหลว:", convErr);
@@ -791,8 +961,13 @@ async function deleteExpiredChats() {
       .from("conversation_members")
       .select("conversation_id, user_id")
       .in("conversation_id", convIds);
-    if (membersErr) {
-      console.error("[deleteExpiredChats] ดึงสมาชิกห้องแชทล้มเหลว:", membersErr);
+    if (membersErr) console.warn("[deleteExpiredChats] ดึงสมาชิกห้องแชทล้มเหลว:", membersErr);
+    const { data: roomMessages, error: messagesErr } = await supabase
+      .from("messages")
+      .select("conversation_id, sender_id")
+      .in("conversation_id", convIds);
+    if (messagesErr) {
+      console.error("[deleteExpiredChats] ดึงผู้ร่วมแชทจากข้อความล้มเหลว:", messagesErr);
       return;
     }
 
@@ -802,14 +977,31 @@ async function deleteExpiredChats() {
       list.push(String(member.user_id));
       membersByConversation.set(String(member.conversation_id), list);
     });
+    const sendersByConversation = new Map();
+    (roomMessages || []).forEach((message) => {
+      const list = sendersByConversation.get(String(message.conversation_id)) || [];
+      if (!list.includes(String(message.sender_id))) list.push(String(message.sender_id));
+      sendersByConversation.set(String(message.conversation_id), list);
+    });
     const expiredConvIds = productConvs
       .filter((conv) => {
-        const participantIds = (membersByConversation.get(String(conv.id)) || []).sort();
+        const memberIds = membersByConversation.get(String(conv.id)) || [];
+        const senderIds = sendersByConversation.get(String(conv.id)) || [];
+        const participantIds = [...new Set([...memberIds, ...senderIds])].sort();
         if (participantIds.length !== 2) return false;
-        return expiredTxs.some((tx) =>
+        const pairTransactions = (transactions || []).filter((tx) =>
           String(tx.product_id) === String(conv.product_id) &&
           [String(tx.buyer_id), String(tx.seller_id)].sort().join(":") === participantIds.join(":")
         );
+        if (!pairTransactions.length || pairTransactions.some((tx) => [1, 2].includes(Number(tx.status_id)))) return false;
+        const latest = pairTransactions.reduce((best, tx) => {
+          const closedAt = Number(tx.status_id) === 3
+            ? (tx.completed_at || tx.updated_at)
+            : (tx.cancelled_at || tx.updated_at);
+          const time = closedAt ? Date.parse(closedAt) : NaN;
+          return Number.isFinite(time) && (!best || time > best.time) ? { tx, time } : best;
+        }, null);
+        return !!latest && latest.time < Date.parse(sevenDaysAgo);
       })
       .map((conv) => conv.id);
     if (expiredConvIds.length === 0) return;

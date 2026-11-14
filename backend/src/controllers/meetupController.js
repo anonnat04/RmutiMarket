@@ -672,6 +672,7 @@ async function openNewTransaction(productId, buyerId, sellerId) {
 // POST /api/meetups  — นัดรับสินค้า
 // ----------------------------------------------------------------
 async function createMeetup(req, res, next) {
+  let newlyCreatedTxn = null;
   try {
     let { transactionId, listingId, productId, sellerId, meetupPointId, locationId, scheduledAt, date, appointmentDate, time, appointmentTime, note, locationDetail, locationName, locationLat, locationLng } = req.body;
 
@@ -746,15 +747,29 @@ async function createMeetup(req, res, next) {
       if (!isParticipant(txn, req.user.id)) {
         return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในรายการซื้อขายนี้" });
       }
+      const { data: linkedProduct, error: linkedProductErr } = await supabase
+        .from("products")
+        .select("status_id")
+        .eq("id", txn.product_id)
+        .maybeSingle();
+      if (linkedProductErr) throw linkedProductErr;
+      if (Number(linkedProduct?.status_id) !== 1) {
+        return res.status(409).json({ error: Number(linkedProduct?.status_id) === 3
+          ? "สินค้านี้ขายแล้ว ไม่สามารถนัดรับได้"
+          : "สินค้านี้ติดจองอยู่ จึงยังนัดรับไม่ได้" });
+      }
       // ดีลที่ขายสำเร็จแล้ว (3) ห้ามนัดซ้ำ
-      if (txn.status_id === 3) {
+      if (Number(txn.status_id) === 3) {
         return res.status(400).json({ error: "รายการซื้อขายนี้เสร็จสิ้นแล้ว ไม่สามารถสร้างนัดใหม่ได้" });
       }
       // ดีลที่ถูกยกเลิก/ตัดจบ (4) -> เปิดธุรกรรมใหม่ของสินค้าชิ้นเดิม ผู้ซื้อ-ผู้ขายคู่เดิม
-      if (txn.status_id === 4) {
+      if ([4, 5].includes(Number(txn.status_id))) {
         const r = await openNewTransaction(txn.product_id, txn.buyer_id, txn.seller_id);
         if (r.error) return res.status(400).json({ error: r.error });
         txn = r.txn;
+        newlyCreatedTxn = txn;
+      } else if (![1, 2].includes(Number(txn.status_id))) {
+        return res.status(409).json({ error: "รายการนี้ไม่อยู่ในสถานะที่นัดรับได้" });
       }
     } else if (targetProductId) {
       const { data: product } = await supabase
@@ -765,6 +780,11 @@ async function createMeetup(req, res, next) {
 
       if (!product) return res.status(404).json({ error: "ไม่พบสินค้า" });
       if (product.seller_id === req.user.id) return res.status(400).json({ error: "ไม่สามารถซื้อสินค้าของตนเองได้" });
+      if (Number(product.status_id) !== 1) {
+        return res.status(409).json({ error: Number(product.status_id) === 3
+          ? "สินค้านี้ขายแล้ว ไม่สามารถนัดรับได้"
+          : "สินค้านี้ติดจองอยู่ จึงยังนัดรับไม่ได้" });
+      }
 
       const targetSellerId = sellerId ? parseInt(sellerId) : product.seller_id;
       if (String(targetSellerId) !== String(product.seller_id)) {
@@ -777,18 +797,16 @@ async function createMeetup(req, res, next) {
         .select("id, buyer_id, seller_id, status_id, product_id")
         .eq("product_id", targetProductId)
         .eq("buyer_id", req.user.id)
-        .neq("status_id", 4) // 4 = ยกเลิก (CANCELLED)
+        .in("status_id", [1, 2]) // only open transactions can be used for a new appointment
         .limit(1);
 
       if (existingTxns?.length) {
         txn = existingTxns[0];
-        if (txn.status_id === 3) {
-          return res.status(400).json({ error: "รายการซื้อขายนี้เสร็จสิ้นแล้ว ไม่สามารถสร้างนัดใหม่ได้" });
-        }
       } else {
         const r = await openNewTransaction(targetProductId, req.user.id, targetSellerId);
         if (r.error) return res.status(400).json({ error: r.error });
         txn = r.txn;
+        newlyCreatedTxn = txn;
       }
     }
 
@@ -796,27 +814,28 @@ async function createMeetup(req, res, next) {
       return res.status(400).json({ error: "ไม่พบข้อมูลรายการซื้อขาย" });
     }
 
-    // ── ถ้ามีนัดหมาย PENDING เก่าของธุรกรรมนี้ ให้ยกเลิกอันเก่า (4 = CANCELLED) ──
-    const { data: existingPending } = await supabase
-      .from('appointments')
-      .select('id')
-      .eq('transaction_id', txn.id)
-      .eq('status_id', 1)
-      .limit(5);
-    if (existingPending?.length) {
-      const oldIds = existingPending.map((a) => a.id);
-      await supabase.from('appointments').update({
-        status_id: 4,
-        cancelled_at: new Date().toISOString(),
-        cancelled_by: req.user.id,
-        cancellation_reason: 'replaced_by_new_request',
-      }).in('id', oldIds);
+    // Never allow a second request while a confirmed appointment is active,
+    // even when the proposed time is far away from the existing time.
+    const { data: confirmedAppointment, error: confirmedApptErr } = await supabase
+      .from("appointments")
+      .select("id")
+      .eq("transaction_id", txn.id)
+      .eq("status_id", 2)
+      .limit(1)
+      .maybeSingle();
+    if (confirmedApptErr) throw confirmedApptErr;
+    if (confirmedAppointment) {
+      if (newlyCreatedTxn) {
+        await cancelTransactionAndRelease(txn.id, txn.product_id, new Date().toISOString());
+        newlyCreatedTxn = null;
+      }
+      return res.status(409).json({ error: "รายการนี้มีนัดรับที่ยืนยันแล้วอยู่ ไม่สามารถนัดซ้อนเพิ่มได้" });
     }
 
     // ── ตรวจเวลานัดหมายซ้ำ/ทับซ้อน (Overlap Check) ──
     const targetMin = toMinutes(finalTime);
 
-    const { data: dayAppts } = await supabase
+    const { data: dayAppts, error: dayApptErr } = await supabase
       .from("appointments")
       .select(`
         id, appointment_date, appointment_time, status_id,
@@ -824,29 +843,55 @@ async function createMeetup(req, res, next) {
       `)
       .eq("appointment_date", finalDate)
       .in("status_id", [1, 2]);
+    if (dayApptErr) throw dayApptErr;
 
     if (dayAppts?.length) {
       const conflict = dayAppts.find((a) => {
         const t = a.transactions;
         if (!t) return false;
+        // A pending proposal for this same transaction can be replaced after
+        // validation; confirmed appointments must never be silently replaced.
+        if (String(t.id) === String(txn.id) && Number(a.status_id) === 1) return false;
         const involvesParty =
-          t.buyer_id === txn.buyer_id ||
-          t.seller_id === txn.buyer_id ||
-          t.buyer_id === txn.seller_id ||
-          t.seller_id === txn.seller_id ||
-          t.product_id === txn.product_id;
+          String(t.buyer_id) === String(txn.buyer_id) ||
+          String(t.seller_id) === String(txn.buyer_id) ||
+          String(t.buyer_id) === String(txn.seller_id) ||
+          String(t.seller_id) === String(txn.seller_id) ||
+          String(t.product_id) === String(txn.product_id);
 
         if (!involvesParty) return false;
 
         const apptMin = toMinutes(a.appointment_time);
-        return Math.abs(apptMin - targetMin) < 30;
+        return Math.abs(apptMin - targetMin) < 40;
       });
 
       if (conflict) {
+        if (newlyCreatedTxn) {
+          await cancelTransactionAndRelease(txn.id, txn.product_id, new Date().toISOString());
+          newlyCreatedTxn = null;
+        }
         return res.status(400).json({
-          error: `เวลานัดหมาย ${finalTime} น. ซ้อนทับกับนัดรับอื่นที่มีอยู่แล้ว กรุณาเลือกเวลาอื่น`,
+          error: `เวลานัดหมาย ${finalTime} น. ชนกับนัดอื่นภายในช่วง 40 นาที กรุณาเลือกเวลาใหม่`,
         });
       }
+    }
+
+    // Replace old pending proposals only after all validation passes, so a bad
+    // replacement request cannot cancel a valid pending request.
+    const { data: existingPending, error: pendingErr } = await supabase
+      .from("appointments")
+      .select("id")
+      .eq("transaction_id", txn.id)
+      .eq("status_id", 1);
+    if (pendingErr) throw pendingErr;
+    if (existingPending?.length) {
+      const { error: cancelPendingErr } = await supabase.from("appointments").update({
+        status_id: 4,
+        cancelled_at: new Date().toISOString(),
+        cancelled_by: req.user.id,
+        cancellation_reason: "replaced_by_new_request",
+      }).in("id", existingPending.map((a) => a.id)).eq("status_id", 1);
+      if (cancelPendingErr) throw cancelPendingErr;
     }
 
     // Insert Appointment (บันทึก created_by เพื่อกันผู้สร้างนัดกดยืนยันนัดตัวเอง)
@@ -865,6 +910,7 @@ async function createMeetup(req, res, next) {
       .single();
 
     if (aErr) throw aErr;
+    newlyCreatedTxn = null;
 
     // Notify other party
     const partnerId = txn.buyer_id === req.user.id ? txn.seller_id : txn.buyer_id;
@@ -886,6 +932,9 @@ async function createMeetup(req, res, next) {
       transactionId: txn.id,
     });
   } catch (err) {
+    if (newlyCreatedTxn) {
+      await cancelTransactionAndRelease(newlyCreatedTxn.id, newlyCreatedTxn.product_id, new Date().toISOString());
+    }
     next(err);
   }
 }

@@ -19,21 +19,18 @@ const client = new Client({
 });
 
 const patchSQL = `
--- Fix T1: appointment_status has no 'code' column → use 'name' instead
+-- Fix T1: only PENDING/CONFIRMED appointments block another appointment
 CREATE OR REPLACE FUNCTION check_single_active_appointment()
 RETURNS TRIGGER AS $$
 DECLARE
-  v_cancelled_id integer;
   active_count   integer;
 BEGIN
-  SELECT id INTO v_cancelled_id FROM public.appointment_status WHERE name = 'ยกเลิก' LIMIT 1;
-
-  IF v_cancelled_id IS NOT NULL AND NEW.status_id <> v_cancelled_id THEN
+  IF NEW.status_id IN (1, 2) THEN
     SELECT COUNT(*) INTO active_count
       FROM public.appointments
      WHERE transaction_id = NEW.transaction_id
        AND id IS DISTINCT FROM NEW.id
-       AND status_id <> v_cancelled_id;
+       AND status_id IN (1, 2);
 
     IF active_count > 0 THEN
       RAISE EXCEPTION 'ธุรกรรมนี้มีนัดหมายที่ยังดำเนินการอยู่แล้ว ไม่สามารถสร้างนัดหมายซ้ำได้ (ต้องยกเลิกนัดเดิมก่อน)';
@@ -44,21 +41,18 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Fix T2: appointment_status overlap check - use name instead of code
+-- Fix T2: reject overlapping appointments for the same participants or product
 CREATE OR REPLACE FUNCTION check_appointment_overlap()
 RETURNS TRIGGER AS $$
 DECLARE
   v_buyer_id      bigint;
   v_seller_id     bigint;
-  v_cancelled_id  integer;
   overlap_count   integer;
 BEGIN
   SELECT t.buyer_id, t.seller_id INTO v_buyer_id, v_seller_id
     FROM public.transactions t WHERE t.id = NEW.transaction_id;
 
-  SELECT id INTO v_cancelled_id FROM public.appointment_status WHERE name = 'ยกเลิก' LIMIT 1;
-
-  IF NEW.status_id = v_cancelled_id OR v_cancelled_id IS NULL THEN
+  IF NEW.status_id NOT IN (1, 2) THEN
     RETURN NEW;
   END IF;
 
@@ -67,11 +61,12 @@ BEGIN
     JOIN public.transactions t ON a.transaction_id = t.id
    WHERE a.id IS DISTINCT FROM NEW.id
      AND a.appointment_date = NEW.appointment_date
-     AND a.status_id <> v_cancelled_id
+     AND a.status_id IN (1, 2)
      AND ABS(EXTRACT(EPOCH FROM (a.appointment_time - NEW.appointment_time))) < 2400
      AND (
            t.buyer_id  IN (v_buyer_id, v_seller_id)
         OR t.seller_id IN (v_buyer_id, v_seller_id)
+        OR t.product_id = (SELECT product_id FROM public.transactions WHERE id = NEW.transaction_id)
      );
 
   IF overlap_count > 0 THEN
@@ -234,8 +229,8 @@ async function main() {
     console.log('✅ Connected to Supabase PostgreSQL directly');
     await client.query(patchSQL);
     console.log('✅ All 4 trigger functions patched successfully!');
-    console.log('   - check_single_active_appointment: now uses name = \'ยกเลิก\'');
-    console.log('   - check_appointment_overlap: now uses name = \'ยกเลิก\'');
+    console.log('   - check_single_active_appointment: only PENDING/CONFIRMED appointments block duplicates');
+    console.log('   - check_appointment_overlap: active appointments must be at least 40 minutes apart');
     console.log('   - check_late_cancellation: now uses name = \'ยกเลิก\'');
     console.log('   - process_no_show_penalties: now uses name = \'นัดหมายเรียบร้อย\'/\'ไม่มาตามนัด\'');
   } catch (err) {

@@ -92,7 +92,17 @@ async function isConversationMember(conversationId, userId) {
     .select("buyer_id, seller_id")
     .eq("id", conversationId)
     .maybeSingle();
-  return !!oldConv && [oldConv.buyer_id, oldConv.seller_id].some((id) => String(id) === String(userId));
+  if (oldConv && [oldConv.buyer_id, oldConv.seller_id].some((id) => String(id) === String(userId))) return true;
+  // Historical rooms can lack membership rows. A persisted message authored by
+  // the verified user proves participation without trusting client supplied IDs.
+  const { data: ownMessage } = await supabase
+    .from("messages")
+    .select("id")
+    .eq("conversation_id", conversationId)
+    .eq("sender_id", userId)
+    .limit(1)
+    .maybeSingle();
+  return !!ownMessage;
 }
 
 async function getMeetupAccess(meetupId, userId) {
