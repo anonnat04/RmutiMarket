@@ -159,7 +159,11 @@ export function ScheduleMeetupPage() {
     else if (date < localDateString()) next.date = 'กรุณาเลือกวันที่นัดรับตั้งแต่วันนี้เป็นต้นไป';
     if (!time) next.time = 'กรุณาเลือกเวลา';
     else if (!isWithinMeetupHours(time)) next.time = `⏰ ${MEETUP_HOURS_TEXT}`;
-    if (!locationValue) next.location = 'กรุณาเลือกจุดนัดรับบนแผนที่';
+    // เลือกได้เฉพาะจุดนัดรับที่ระบบกำหนด (type: 'point' และต้องมีอยู่ในรายการจริง) ไม่รับพิกัดที่ผู้ใช้ปักเอง
+    if (!locationValue) next.location = 'กรุณาเลือกจุดนัดรับที่ระบบกำหนด';
+    else if (locationValue.type !== 'point' || !getMeetupPointById(locationValue.id)) {
+      next.location = '❌ กรุณาเลือกจุดนัดรับจากจุดที่ระบบกำหนดเท่านั้น';
+    }
 
     // ── ตรวจสอบเวลานัดหมายซ้อนทับ ──
     if (date && time && !next.time) {
@@ -177,16 +181,10 @@ export function ScheduleMeetupPage() {
     let lat = null;
     let lng = null;
 
-    if (locationValue.type === 'point') {
-      const point = getMeetupPointById(locationValue.id);
-      locationName = point?.name ?? '';
-      lat = point?.lat;
-      lng = point?.lng;
-    } else {
-      locationName = locationValue.name ?? `${locationValue.lat?.toFixed(5)}, ${locationValue.lng?.toFixed(5)}`;
-      lat = locationValue.lat;
-      lng = locationValue.lng;
-    }
+    const point = getMeetupPointById(locationValue.id);
+    locationName = point?.name ?? '';
+    lat = point?.lat;
+    lng = point?.lng;
 
     if (lat && lng) {
       const isInside = isPointInPolygon([lat, lng], CAMPUS_BOUNDARY);
@@ -203,8 +201,8 @@ export function ScheduleMeetupPage() {
         agreedPrice: product.price,
         // ส่ง locationId เป็น string id ของจุด (เช่น 'canteen39') เพื่อให้ backend ค้นชื่อได้
         // และส่ง locationName + lat/lng ไปด้วยเพื่อให้ backend บันทึก location_detail ที่ถูกต้อง
-        meetupPointId: locationValue.type === 'point' ? locationValue.id : null,
-        locationId: locationValue.type === 'point' ? locationValue.id : null,
+        meetupPointId: locationValue.id,
+        locationId: locationValue.id,
         locationName,
         locationLat: lat,
         locationLng: lng,
@@ -451,7 +449,8 @@ export function ScheduleMeetupPage() {
 
         {/* ─── แผนที่ ──────────────────────────────────────────── */}
         <div className="cm-card p-4">
-          <p className="mb-3 text-sm font-bold text-ink-900">🗺️ เลือกจุดนัดรับในมหาวิทยาลัย</p>
+          <p className="mb-1 text-sm font-bold text-ink-900">🗺️ เลือกจุดนัดรับในมหาวิทยาลัย</p>
+          <p className="mb-3 text-[11px] text-gray-500">เลือกได้เฉพาะจุดนัดรับที่ระบบกำหนดเท่านั้น (กดหมุดบนแผนที่ หรือเลือกจากรายการด้านล่าง)</p>
           <CampusMapPicker value={locationValue} onChange={setLocationValue} />
           {errors.location && (
             <p className="mt-2 text-xs font-medium text-red-500">{errors.location}</p>

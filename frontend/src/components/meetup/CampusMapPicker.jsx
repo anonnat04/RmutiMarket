@@ -70,32 +70,12 @@ function makeGpsIcon(L) {
   });
 }
 
-function makeCustomPinIcon(L) {
-  const html = `
-    <div style="
-      width:28px;height:28px;
-      background:#f97316;
-      border:3px solid #fff;
-      border-radius:50% 50% 50% 0;
-      transform:rotate(-45deg);
-      box-shadow:0 2px 8px rgba(0,0,0,0.4);
-    ">
-      <span style="display:block;transform:rotate(45deg);text-align:center;font-size:13px;line-height:22px">✏️</span>
-    </div>
-  `;
-  return L.divIcon({
-    html,
-    iconSize: [28, 28],
-    iconAnchor: [14, 28],
-    popupAnchor: [0, -28],
-    className: '',
-  });
-}
-
 // ─── CampusMapPicker ──────────────────────────────────────────────────────
 /**
+ * เลือกได้เฉพาะ "จุดนัดรับที่ระบบกำหนด" (meetupPoints) เท่านั้น — ไม่มีการคลิกปักหมุดเองบนแผนที่
+ *
  * Props:
- *  value   : { type: 'point', id: string } | { type: 'custom', lat, lng, name } | null
+ *  value   : { type: 'point', id: string } | null
  *  onChange: (value) => void
  */
 export function CampusMapPicker({ value, onChange }) {
@@ -103,16 +83,17 @@ export function CampusMapPicker({ value, onChange }) {
   const leafletMapRef = useRef(null);
   const markerLayerRef = useRef({});  // id → marker
   const gpsMarkerRef = useRef(null);
-  const customMarkerRef = useRef(null);
   const watchIdRef = useRef(null);
   const LRef = useRef(null);
+  // เก็บ onChange ล่าสุดไว้ใน ref เพราะ callback ใน popup ของ Leaflet ถูกสร้างครั้งเดียวตอน init แผนที่
+  const onChangeRef = useRef(onChange);
+  useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
 
   const [gpsActive, setGpsActive] = useState(false);
   const [gpsStatus, setGpsStatus] = useState(''); // 'tracking' | 'error' | ''
   const [gpsCoords, setGpsCoords] = useState(null);
   const [filter, setFilter] = useState('all');
   const [selectedPoint, setSelectedPoint] = useState(null); // meetupPoints item
-  const [customLocation, setCustomLocation] = useState(null); // { lat, lng }
 
   // ─── init map ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -177,22 +158,7 @@ export function CampusMapPicker({ value, onChange }) {
         markerLayerRef.current[pt.id] = marker;
       });
 
-      // คลิกบนแผนที่ → กำหนดจุดกำหนดเอง
-      map.on('click', (e) => {
-        const { lat, lng } = e.latlng;
-        setCustomLocation({ lat, lng });
-        setSelectedPoint(null);
-        onChange({ type: 'custom', lat, lng, name: `${lat.toFixed(5)}, ${lng.toFixed(5)}` });
-
-        if (customMarkerRef.current) {
-          customMarkerRef.current.setLatLng([lat, lng]);
-        } else {
-          customMarkerRef.current = L.marker([lat, lng], { icon: makeCustomPinIcon(L) })
-            .addTo(map)
-            .bindPopup('<div style="font-size:12px;font-weight:600">📍 จุดที่คุณเลือก<br><span style="font-size:10px;color:#777">คลิกบนแผนที่เพื่อเปลี่ยนตำแหน่ง</span></div>')
-            .openPopup();
-        }
-      });
+      // ไม่มี map.on('click') แล้ว: ผู้ใช้ปักหมุดตำแหน่งเองไม่ได้ ต้องเลือกจากหมุดที่ระบบกำหนดเท่านั้น
 
       leafletMapRef.current = map;
 
@@ -201,13 +167,7 @@ export function CampusMapPicker({ value, onChange }) {
         const pt = meetupPoints.find((p) => p.id === id);
         if (!pt) return;
         setSelectedPoint(pt);
-        setCustomLocation(null);
-        onChange({ type: 'point', id: pt.id });
-        // ปิด custom marker
-        if (customMarkerRef.current) {
-          customMarkerRef.current.remove();
-          customMarkerRef.current = null;
-        }
+        onChangeRef.current?.({ type: 'point', id: pt.id });
         // update icon styles
         meetupPoints.forEach((p) => {
           const color = categoryColors[p.category] ?? '#6b7280';
@@ -328,11 +288,9 @@ export function CampusMapPicker({ value, onChange }) {
     { key: 'parking', label: 'ที่จอดรถ', emoji: '🅿️' },
   ];
 
-  const currentSelection = selectedPoint
-    ? selectedPoint
-    : value?.type === 'custom'
-    ? { name: 'จุดที่คุณกำหนดเอง', description: `${value.lat?.toFixed(5)}, ${value.lng?.toFixed(5)}`, icon: '✏️' }
-    : null;
+  // แสดงเฉพาะจุดนัดรับที่ระบบกำหนด (ถ้า value เป็นค่าอื่น เช่น custom ที่หลงมา จะไม่นับว่าเลือกแล้ว)
+  const currentSelection =
+    selectedPoint ?? (value?.type === 'point' ? meetupPoints.find((p) => p.id === value.id) ?? null : null);
 
   return (
     <div className="flex flex-col gap-3">
@@ -508,7 +466,8 @@ export function CampusMapPicker({ value, onChange }) {
           <strong>วิธีเลือกจุดนัดรับ:</strong>
           <ul style={{ margin: '4px 0 0 0', paddingLeft: 16, lineHeight: 1.8 }}>
             <li>📍 กดที่ <strong>pin อาคาร</strong> บนแผนที่แล้วกด "เลือกจุดนี้"</li>
-            <li>✏️ กดที่ <strong>ตำแหน่งใดก็ได้</strong> บนแผนที่เพื่อปักหมุดเอง</li>
+            <li>📋 หรือเลือกจาก <strong>รายการอาคารด้านล่าง</strong></li>
+            <li>🔒 เลือกได้เฉพาะ <strong>จุดนัดรับที่ระบบกำหนด</strong> เท่านั้น (ปักหมุดเองไม่ได้)</li>
             <li>📡 กด <strong>ปุ่ม GPS</strong> เพื่อดูตำแหน่งปัจจุบันของคุณ</li>
           </ul>
         </div>
@@ -541,12 +500,7 @@ export function CampusMapPicker({ value, onChange }) {
             type="button"
             onClick={() => {
               setSelectedPoint(null);
-              setCustomLocation(null);
               onChange(null);
-              if (customMarkerRef.current) {
-                customMarkerRef.current.remove();
-                customMarkerRef.current = null;
-              }
               // reset all icons
               if (LRef.current) {
                 meetupPoints.forEach((p) => {
