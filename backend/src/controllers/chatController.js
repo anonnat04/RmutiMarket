@@ -1,6 +1,34 @@
 const { supabase } = require("../config/db");
 const { sendNotificationToUser, emitNewMessage, emitMessagesRead } = require("../services/chatSocket");
 
+// ----------------------------------------------------------------
+// Helpers เกี่ยวกับเวลาปิดดีล
+// ตาราง transactions ใน schema จริง "ไม่มี" คอลัมน์ updated_at
+// (มีแค่ created_at, completed_at, cancelled_at) จึงห้าม select updated_at
+// ----------------------------------------------------------------
+const TX_COLUMNS = "id, product_id, buyer_id, seller_id, status_id, completed_at, cancelled_at, created_at";
+const RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 วัน
+const TERMINAL_TX_STATUS = [3, 4, 5]; // 3=COMPLETED, 4=CANCELLED, 5=NO_SHOW
+const OPEN_TX_STATUS = [1, 2]; // 1=PENDING, 2=CONFIRMED
+
+// เวลาที่ดีลปิด (ใช้ completed_at / cancelled_at เท่านั้น)
+const txClosedAt = (tx) => tx?.completed_at || tx?.cancelled_at || null;
+// เวลา activity ล่าสุดของดีล ใช้เรียงหาดีลล่าสุด
+const txActivityTime = (tx) =>
+  new Date(tx?.completed_at || tx?.cancelled_at || tx?.created_at || 0).getTime();
+
+const pairKey = (a, b) => [String(a), String(b)].sort().join(":");
+
+// ดึงนัดหมายของ transactions ที่ระบุ
+async function fetchAppointmentsForTransactions(transactionIds) {
+  if (!transactionIds.length) return { data: [], error: null };
+  return supabase
+    .from("appointments")
+    .select("id, transaction_id, status_id")
+    .in("transaction_id", transactionIds)
+    .order("id", { ascending: false });
+}
+
 // Legacy rooms may have messages but no conversation_members rows. A user's own
 // persisted message is a safe proof that they participated in that room.
 async function getConversationsFromMessageHistory(userId) {
@@ -75,18 +103,14 @@ async function getConversationsFromMessageHistory(userId) {
     ? await supabase.from("users").select("id, username, full_name, profile_image_url").in("id", [...partnerIds])
     : { data: [] };
   const userMap = Object.fromEntries((partnerUsers || []).map((u) => [String(u.id), u]));
-  const { data: transactions } = productIds.length
-    ? await supabase.from("transactions")
-      .select("id, product_id, buyer_id, seller_id, status_id, completed_at, cancelled_at, updated_at")
-      .in("product_id", productIds)
-    : { data: [] };
-  const transactionIds = (transactions || []).map((tx) => tx.id);
-  const { data: appointments, error: appointmentsErr } = transactionIds.length
-    ? await supabase.from("appointments")
-      .select("id, transaction_id, status_id")
-      .in("transaction_id", transactionIds)
-      .order("id", { ascending: false })
+
+  const { data: transactions, error: txFetchErr } = productIds.length
+    ? await supabase.from("transactions").select(TX_COLUMNS).in("product_id", productIds)
     : { data: [], error: null };
+  if (txFetchErr) console.error("[getConversationsFromMessageHistory] transactions error:", txFetchErr);
+
+  const transactionIds = (transactions || []).map((tx) => tx.id);
+  const { data: appointments, error: appointmentsErr } = await fetchAppointmentsForTransactions(transactionIds);
 
   return convRows.map((c) => {
     const key = String(c.id);
@@ -98,18 +122,16 @@ async function getConversationsFromMessageHistory(userId) {
     const partner = userMap[String(partnerId)];
     const last = roomMessages[0];
     const product = productMap[String(c.product_id)];
-    const participants = [String(userId), String(partnerId)].sort().join(":");
+    const participants = pairKey(userId, partnerId);
     const relatedTxs = (transactions || []).filter((tx) =>
       String(tx.product_id) === String(c.product_id) &&
-      [String(tx.buyer_id), String(tx.seller_id)].sort().join(":") === participants
+      pairKey(tx.buyer_id, tx.seller_id) === participants
     );
-    const latestTx = relatedTxs.sort((a, b) =>
-      new Date(b.completed_at || b.cancelled_at || b.updated_at || 0) -
-      new Date(a.completed_at || a.cancelled_at || a.updated_at || 0)
-    )[0] || null;
+    const latestTx = [...relatedTxs].sort((a, b) => txActivityTime(b) - txActivityTime(a))[0] || null;
     const txStatus = latestTx ? Number(latestTx.status_id) : null;
-    const txClosed = [3, 4, 5].includes(txStatus);
-    const relatedAppointments = (appointments || []).filter((appt) => String(appt.transaction_id) === String(latestTx?.id))
+    const txClosed = TERMINAL_TX_STATUS.includes(txStatus);
+    const relatedAppointments = (appointments || [])
+      .filter((appt) => String(appt.transaction_id) === String(latestTx?.id))
       .sort((a, b) => Number(b.id) - Number(a.id));
     const latestAppointment = relatedAppointments[0] || null;
     const canScheduleMeetup = Number(product?.status_id) === 1 && !appointmentsErr && !txClosed
@@ -135,7 +157,7 @@ async function getConversationsFromMessageHistory(userId) {
       createdAt: c.created_at,
       transactionStatusId: txStatus,
       isDealClosed: txClosed,
-      dealClosedAt: latestTx?.completed_at || latestTx?.cancelled_at || latestTx?.updated_at || null,
+      dealClosedAt: txClosed ? txClosedAt(latestTx) : null,
       activeAppointmentStatusId: latestAppointment ? Number(latestAppointment.status_id) : null,
       canScheduleMeetup,
     };
@@ -169,7 +191,7 @@ async function getConversations(req, res, next) {
           id, product_id, created_at, updated_at,
           products(id, title, price, seller_id, status_id,
             product_images(image_url, is_primary),
-            transactions(id, buyer_id, seller_id, status_id, completed_at, cancelled_at, updated_at)
+            transactions(id, buyer_id, seller_id, status_id, completed_at, cancelled_at, created_at)
           )
         `)
         .in("id", convIds)
@@ -213,6 +235,16 @@ async function getConversations(req, res, next) {
           myMembershipMap[m.conversation_id] = m;
         });
 
+        // ดึงนัดหมายของ transaction ทั้งหมดที่เกี่ยวข้อง (ใช้ตัดสินใจแสดงปุ่มนัดรับ)
+        const allTxIds = [];
+        conversationRows.forEach((c) => {
+          (c.products?.transactions || []).forEach((tx) => allTxIds.push(tx.id));
+        });
+        const { data: appointments, error: appointmentsErr } = await fetchAppointmentsForTransactions(allTxIds);
+        if (appointmentsErr) {
+          console.error("[getConversations] appointmentsErr:", appointmentsErr);
+        }
+
         const formatted = conversationRows.map((c) => {
           const members = (allMembers || []).filter((m) => m.conversation_id === c.id);
           const partner = members.find((m) => String(m.user_id) !== String(myId));
@@ -235,20 +267,21 @@ async function getConversations(req, res, next) {
 
           // ผูกสถานะปิดการขายกับคู่สนทนาคู่นี้เท่านั้น ไม่ใช้ transaction ล่าสุดของสินค้านี้
           // เพราะสินค้าเดียวกันอาจมีผู้ซื้อหลายคนและไม่ควรทำให้ห้องอื่นถูกซ่อน/หมดอายุ
-          const memberIds = members.map((m) => String(m.user_id)).sort();
+          const memberKey = [...new Set(members.map((m) => String(m.user_id)))].sort().join(":");
           const txList = product?.transactions || [];
-          const relatedTxs = txList.filter((tx) =>
-            [String(tx.buyer_id), String(tx.seller_id)].sort().join(":") === memberIds.join(":")
-          );
-          const latestTx = relatedTxs.sort((a, b) =>
-            new Date(b.completed_at || b.cancelled_at || b.updated_at || 0) -
-            new Date(a.completed_at || a.cancelled_at || a.updated_at || 0)
-          )[0] || null;
+          const relatedTxs = txList.filter((tx) => pairKey(tx.buyer_id, tx.seller_id) === memberKey);
+          const latestTx = [...relatedTxs].sort((a, b) => txActivityTime(b) - txActivityTime(a))[0] || null;
           // status_id: 1=PENDING, 2=CONFIRMED, 3=COMPLETED, 4=CANCELLED, 5=NO_SHOW
           const txStatus = latestTx?.status_id != null ? Number(latestTx.status_id) : null;
-          const txCompletedAt = latestTx?.completed_at || latestTx?.cancelled_at || latestTx?.updated_at || null;
-          // ถือว่าปิดการขายแล้วถ้า status 3=COMPLETED, 4=CANCELLED, 5=NO_SHOW
-          const isDealClosed = txStatus === 3 || txStatus === 4 || txStatus === 5;
+          const isDealClosed = TERMINAL_TX_STATUS.includes(txStatus);
+          const txCompletedAt = txClosedAt(latestTx);
+
+          const relatedAppointments = (appointments || [])
+            .filter((appt) => latestTx && String(appt.transaction_id) === String(latestTx.id))
+            .sort((a, b) => Number(b.id) - Number(a.id));
+          const latestAppointment = relatedAppointments[0] || null;
+          const canScheduleMeetup = Number(product?.status_id) === 1 && !appointmentsErr && !isDealClosed
+            && ![1, 2, 3, 4, 5].includes(Number(latestAppointment?.status_id));
 
           return {
             id: c.id,
@@ -279,6 +312,8 @@ async function getConversations(req, res, next) {
             transactionStatusId: txStatus,
             isDealClosed,
             dealClosedAt: isDealClosed ? txCompletedAt : null,
+            activeAppointmentStatusId: latestAppointment ? Number(latestAppointment.status_id) : null,
+            canScheduleMeetup,
           };
         });
 
@@ -298,7 +333,9 @@ async function getConversations(req, res, next) {
               unreadCount: Math.max(Number(row.unreadCount) || 0, Number(recovered.unreadCount) || 0),
             };
           });
-          return res.json({ conversations: [...merged, ...historyById.values()] });
+          const all = [...merged, ...historyById.values()].sort((a, b) =>
+            new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
+          return res.json({ conversations: all });
         }
         return res.json({ conversations: formatted });
       }
@@ -399,14 +436,7 @@ async function getConversations(req, res, next) {
 
 // ----------------------------------------------------------------
 // GET /api/chat/conversations/:id/messages  — ดูข้อความในห้องแชท
-// ----------------------------------------------------------------
-// ── แก้ใหม่ทั้งหมด ──────────────────────────────────────────────
-// เดิมใช้ query เดียว join ซ้อน (users!sender_id + message_attachments) พร้อม
-// { count: "exact" } ซึ่ง Supabase/PostgREST มักตอบ error แบบเงียบๆ เวลามี
-// count กับ nested embed ผสมกัน แล้วโค้ดเดิมก็ไม่ log error นั้นเลย (if (!error && data))
-// ทำให้ endpoint ตอบ messages: [] อยู่เบื้องหลังโดยไม่มีใครรู้ ทั้งที่ข้อมูลมีอยู่จริงใน DB
-// ตอนนี้แยก query เป็นขั้นตอนง่ายๆ ทีละตาราง (แบบเดียวกับ getConversations) และ log
-// error ทุกจุดที่อาจล้มเหลว เพื่อให้เห็นสาเหตุจริงถ้ายังมีปัญหาอยู่
+// แยก query เป็นขั้นตอนง่ายๆ ทีละตาราง และ log error ทุกจุด
 // ----------------------------------------------------------------
 async function getMessages(req, res, next) {
   try {
@@ -465,7 +495,7 @@ async function getMessages(req, res, next) {
         ? new Date(partnerMem.last_read_at).getTime()
         : 0;
 
-      // 2. นับจำนวนข้อความทั้งหมด แยกจาก query หลัก กันปัญหา count+embed
+      // 2. นับจำนวนข้อความทั้งหมด แยกจาก query หลัก
       const { count, error: countErr } = await supabase
         .from("messages")
         .select("id", { count: "exact", head: true })
@@ -475,7 +505,7 @@ async function getMessages(req, res, next) {
         console.error("[getMessages] countErr (นับจำนวนข้อความล้มเหลว):", countErr);
       }
 
-      // 3. ดึงข้อความแบบไม่ join ก่อน (คอลัมน์ตรงๆ) ลดโอกาส query พัง
+      // 3. ดึงข้อความแบบไม่ join
       const { data: rawMsgs, error: msgErr } = await supabase
         .from("messages")
         .select("id, conversation_id, sender_id, message_type, content, created_at")
@@ -492,7 +522,7 @@ async function getMessages(req, res, next) {
         const msgIds = rawMsgs.map((m) => m.id);
         const senderIds = [...new Set(rawMsgs.map((m) => m.sender_id))];
 
-        // 4. ดึงข้อมูลผู้ส่งทั้งหมดในหน้านี้แบบ batch เดียว (ไม่ join ซ้อนใน query ข้อความ)
+        // 4. ดึงข้อมูลผู้ส่งแบบ batch
         let usersById = {};
         if (senderIds.length > 0) {
           const { data: senders, error: usersErr } = await supabase
@@ -506,7 +536,7 @@ async function getMessages(req, res, next) {
           (senders || []).forEach((u) => { usersById[u.id] = u; });
         }
 
-        // 5. ดึงไฟล์แนบของข้อความทั้งหมดในหน้านี้แบบ batch เดียว
+        // 5. ดึงไฟล์แนบแบบ batch
         let attachmentsByMsg = {};
         if (msgIds.length > 0) {
           const { data: attachments, error: attErr } = await supabase
@@ -984,28 +1014,26 @@ async function deleteConversation(req, res, next) {
 
 // ----------------------------------------------------------------
 // Background Job: ลบแชทที่หมดอายุ (เกิน 7 วันหลังจาก deal ปิด)
-// ระบบนี้จะลบห้องแชทที่:
-//   - มี transaction ที่ status = COMPLETED(3) / CANCELLED(4) / NO_SHOW(5)
-//   - และเวลาปิดรายการของ transaction นั้นเกิน 7 วันแล้ว
+// ลบห้องที่:
+//   - คู่สนทนา (2 คน) มี transaction บนสินค้าของห้องนั้น
+//   - ไม่มีดีลค้าง (PENDING/CONFIRMED) เหลืออยู่เลย
+//   - และเวลาปิดดีลล่าสุด (completed_at / cancelled_at) เกิน 7 วันแล้ว
+//     ไม่ว่าจะจบด้วย สำเร็จ / ยกเลิก / ไม่มาตามนัด
 // ----------------------------------------------------------------
 async function deleteExpiredChats() {
   try {
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const cutoff = Date.now() - RETENTION_MS;
 
-    // Keep conversations until the latest transaction for that product + pair
-    // has been terminal for seven full days. An older cancelled deal must not
-    // delete a room that has since been reused for another active deal.
     const { data: transactions, error: txErr } = await supabase
       .from("transactions")
-      .select("id, product_id, buyer_id, seller_id, status_id, updated_at, completed_at, cancelled_at")
-      .in("status_id", [1, 2, 3, 4, 5]);
+      .select(TX_COLUMNS);
 
     if (txErr) {
-      console.error("[deleteExpiredChats] ดึง transactions หมดอายุล้มเหลว:", txErr);
+      console.error("[deleteExpiredChats] ดึง transactions ล้มเหลว:", txErr);
       return;
     }
-
     if (!transactions?.length) return;
+
     const productIds = [...new Set(transactions.map((t) => t.product_id).filter(Boolean))];
     if (!productIds.length) return;
 
@@ -1015,59 +1043,60 @@ async function deleteExpiredChats() {
       .in("product_id", productIds);
 
     if (convErr) {
-      console.error("[deleteExpiredChats] ดึง conversations หมดอายุล้มเหลว:", convErr);
+      console.error("[deleteExpiredChats] ดึง conversations ล้มเหลว:", convErr);
       return;
     }
+    if (!productConvs?.length) return;
 
-    if (!productConvs || productConvs.length === 0) return;
     const convIds = productConvs.map((c) => c.id);
-    const { data: members, error: membersErr } = await supabase
-      .from("conversation_members")
-      .select("conversation_id, user_id")
-      .in("conversation_id", convIds);
-    if (membersErr) console.warn("[deleteExpiredChats] ดึงสมาชิกห้องแชทล้มเหลว:", membersErr);
-    const { data: roomMessages, error: messagesErr } = await supabase
-      .from("messages")
-      .select("conversation_id, sender_id")
-      .in("conversation_id", convIds);
-    if (messagesErr) {
-      console.error("[deleteExpiredChats] ดึงผู้ร่วมแชทจากข้อความล้มเหลว:", messagesErr);
+    const [membersRes, messagesRes] = await Promise.all([
+      supabase.from("conversation_members").select("conversation_id, user_id").in("conversation_id", convIds),
+      supabase.from("messages").select("conversation_id, sender_id").in("conversation_id", convIds),
+    ]);
+    if (membersRes.error) console.warn("[deleteExpiredChats] ดึงสมาชิกห้องแชทล้มเหลว:", membersRes.error);
+    if (messagesRes.error) {
+      console.error("[deleteExpiredChats] ดึงผู้ร่วมแชทจากข้อความล้มเหลว:", messagesRes.error);
       return;
     }
 
-    const membersByConversation = new Map();
-    (members || []).forEach((member) => {
-      const list = membersByConversation.get(String(member.conversation_id)) || [];
-      list.push(String(member.user_id));
-      membersByConversation.set(String(member.conversation_id), list);
-    });
-    const sendersByConversation = new Map();
-    (roomMessages || []).forEach((message) => {
-      const list = sendersByConversation.get(String(message.conversation_id)) || [];
-      if (!list.includes(String(message.sender_id))) list.push(String(message.sender_id));
-      sendersByConversation.set(String(message.conversation_id), list);
-    });
+    // รวบรวมผู้ร่วมห้องจากทั้ง members และผู้ส่งข้อความ
+    const participants = new Map(); // convId -> Set(userId)
+    const addParticipant = (cid, uid) => {
+      const key = String(cid);
+      if (!participants.has(key)) participants.set(key, new Set());
+      participants.get(key).add(String(uid));
+    };
+    (membersRes.data || []).forEach((m) => addParticipant(m.conversation_id, m.user_id));
+    (messagesRes.data || []).forEach((m) => addParticipant(m.conversation_id, m.sender_id));
+
     const expiredConvIds = productConvs
       .filter((conv) => {
-        const memberIds = membersByConversation.get(String(conv.id)) || [];
-        const senderIds = sendersByConversation.get(String(conv.id)) || [];
-        const participantIds = [...new Set([...memberIds, ...senderIds])].sort();
-        if (participantIds.length !== 2) return false;
-        const pairTransactions = (transactions || []).filter((tx) =>
+        const ids = [...(participants.get(String(conv.id)) || [])].sort();
+        if (ids.length !== 2) return false;
+        const key = ids.join(":");
+
+        const pairTxs = transactions.filter((tx) =>
           String(tx.product_id) === String(conv.product_id) &&
-          [String(tx.buyer_id), String(tx.seller_id)].sort().join(":") === participantIds.join(":")
+          pairKey(tx.buyer_id, tx.seller_id) === key
         );
-        if (!pairTransactions.length || pairTransactions.some((tx) => [1, 2].includes(Number(tx.status_id)))) return false;
-        const latest = pairTransactions.reduce((best, tx) => {
-          const closedAt = Number(tx.status_id) === 3
-            ? (tx.completed_at || tx.updated_at)
-            : (tx.cancelled_at || tx.updated_at);
-          const time = closedAt ? Date.parse(closedAt) : NaN;
-          return Number.isFinite(time) && (!best || time > best.time) ? { tx, time } : best;
-        }, null);
-        return !!latest && latest.time < Date.parse(sevenDaysAgo);
+        if (!pairTxs.length) return false;
+
+        // ยังมีดีลค้างอยู่ → ห้ามลบ
+        if (pairTxs.some((tx) => OPEN_TX_STATUS.includes(Number(tx.status_id)))) return false;
+
+        // ใช้เวลาปิดดีลล่าสุดของคู่นี้ ถ้าไม่มีเวลาปิดเลยให้ข้ามไว้ก่อน
+        const closedTimes = pairTxs
+          .filter((tx) => TERMINAL_TX_STATUS.includes(Number(tx.status_id)))
+          .map((tx) => txClosedAt(tx))
+          .filter(Boolean)
+          .map((t) => Date.parse(t))
+          .filter(Number.isFinite);
+        if (!closedTimes.length) return false;
+
+        return Math.max(...closedTimes) < cutoff;
       })
       .map((conv) => conv.id);
+
     if (expiredConvIds.length === 0) return;
     console.log(`🧹 [Chat Retention] พบห้องแชทหมดอายุ ${expiredConvIds.length} ห้อง → กำลังลบ...`);
 

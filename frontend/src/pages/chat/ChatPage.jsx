@@ -62,6 +62,14 @@ function mapBackendMessage(message, currentUserId) {
   };
 }
 
+function sortConversationsByActivity(conversations) {
+  return [...conversations].sort((left, right) => {
+    const leftTime = Date.parse(left?.lastMessage?.createdAt || left?.updatedAt || left?.createdAt || 0) || 0;
+    const rightTime = Date.parse(right?.lastMessage?.createdAt || right?.updatedAt || right?.createdAt || 0) || 0;
+    return rightTime - leftTime;
+  });
+}
+
 export function ChatPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -95,6 +103,7 @@ export function ChatPage() {
   const messagesEndRef = useRef(null);
   const messageListRef = useRef(null);
   const typingTimeoutRef = useRef(null);
+  const joinedRoomRefreshRef = useRef(new Set());
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -141,7 +150,7 @@ export function ChatPage() {
       if (res?.conversations && Array.isArray(res.conversations)) {
         const validList = res.conversations;
         // แสดงทุกห้องจากฐานข้อมูลแยกตาม conversation id ไม่รวมตามสินค้า/คู่สนทนา
-        const backendConvs = validList.map(mapBackendConversation);
+        const backendConvs = sortConversationsByActivity(validList.map(mapBackendConversation));
 
         setConversations((prev) => {
           // คงไว้เฉพาะห้อง "รอ sync" (id ไม่ใช่ตัวเลข เช่น conv-xxx) ที่ backend ยังไม่มี
@@ -207,7 +216,7 @@ export function ChatPage() {
           const res = await api.getConversations();
           if (res?.conversations && Array.isArray(res.conversations)) {
             const validList = res.conversations;
-            backendConvs = validList.map(mapBackendConversation);
+            backendConvs = sortConversationsByActivity(validList.map(mapBackendConversation));
           }
         } catch (apiErr) {
           console.warn("[ChatPage] api.getConversations error:", apiErr?.message);
@@ -224,7 +233,7 @@ export function ChatPage() {
             try {
               const freshRes = await api.getConversations();
               if (freshRes?.conversations && Array.isArray(freshRes.conversations)) {
-                convList = freshRes.conversations.map(mapBackendConversation);
+                convList = sortConversationsByActivity(freshRes.conversations.map(mapBackendConversation));
               }
             } catch (e) {
               console.warn("freshRes error:", e);
@@ -322,9 +331,18 @@ export function ChatPage() {
         }
 
         setConversations(convList);
-        if (!queryConvId && !activeId && convList.length > 0 && !queryProductId) {
-          setActiveId(String(convList[0].id));
-        }
+        // A prior URL/state can leave an id that is no longer in this account's
+        // room list. Always fall back to a real room so the right panel never
+        // stays blank while a conversation is available.
+        setActiveId((currentId) => {
+          if (queryConvId) {
+            const requested = convList.find((room) => String(room.id) === String(queryConvId));
+            return requested ? String(requested.id) : (convList[0] ? String(convList[0].id) : null);
+          }
+          if (queryProductId) return currentId;
+          if (convList.some((room) => String(room.id) === String(currentId))) return currentId;
+          return convList[0] ? String(convList[0].id) : null;
+        });
       } catch (err) {
         console.warn("Failed to load conversations:", err);
       } finally {
@@ -342,6 +360,7 @@ export function ChatPage() {
 
     const handleConnect = () => {
       setIsConnected(true);
+      joinedRoomRefreshRef.current.clear();
       socket.emit("user_connected", {
         userId: user?.id || "me",
         userName: user?.username || user?.name || user?.full_name || "ฉัน",
@@ -423,6 +442,15 @@ export function ChatPage() {
       }
     };
     const handleMeetupUpdate = () => refreshConversationsFromBackend();
+    // Authentication and room joining are asynchronous. Fetch once the server
+    // confirms the room join so a first load cannot race ahead of Socket auth.
+    const handleJoinedRoom = ({ conversationId }) => {
+      const roomId = String(conversationId);
+      if (roomId === String(activeId) && !joinedRoomRefreshRef.current.has(roomId)) {
+        joinedRoomRefreshRef.current.add(roomId);
+        setReloadMessagesKey((key) => key + 1);
+      }
+    };
 
     // เมื่อคู่สนทนาเปิดอ่านข้อความในห้องนี้แล้ว
     const handleMessagesRead = ({ conversationId, readerId }) => {
@@ -445,6 +473,7 @@ export function ChatPage() {
     socket.on("new_notification", handleNewNotification);
     socket.on("meetup_updated", handleMeetupUpdate);
     socket.on("meetup_status_update", handleMeetupUpdate);
+    socket.on("joined_room", handleJoinedRoom);
     socket.on("messages_read", handleMessagesRead);
 
     if (socket.connected) {
@@ -459,6 +488,7 @@ export function ChatPage() {
       socket.off("new_notification", handleNewNotification);
       socket.off("meetup_updated", handleMeetupUpdate);
       socket.off("meetup_status_update", handleMeetupUpdate);
+      socket.off("joined_room", handleJoinedRoom);
       socket.off("messages_read", handleMessagesRead);
     };
   }, [activeId, user]);

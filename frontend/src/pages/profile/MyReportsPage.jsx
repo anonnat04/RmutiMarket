@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
-
+import { Link } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 // api.* อาจคืน response เต็มของ axios หรือคืน body เลย — รองรับทั้งสองแบบ
 const unwrap = (res) => (res && typeof res.status === "number" && "data" in res ? res.data : res);
 
@@ -85,6 +86,7 @@ function Stepper({ item }) {
 
   return (
     <ol className="mt-4 flex">
+        
       {steps.map((s, i) => (
         <li key={i} className="relative flex flex-1 flex-col items-center text-center">
           {i > 0 && <span className={`absolute right-1/2 top-4 h-0.5 w-full ${LINE[s.state]}`} />}
@@ -201,11 +203,21 @@ export function MyReportsPage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-4">
+        <div className="flex items-center gap-3">
+  <Link
+    to="/profile"
+    aria-label="กลับไปหน้าโปรไฟล์"
+    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-700 shadow-sm transition-colors hover:bg-gray-100"
+  >
+    <ArrowLeft size={18} />
+  </Link>
+ </div>
       <div>
         <h1 className="text-xl font-extrabold text-gray-900">ประวัติการแจ้งแอดมิน</h1>
         <p className="text-sm text-gray-500">
           เรื่องที่คุณเคยแจ้งแอดมินทั้งหมด เก็บไว้ให้ดูได้เสมอ แม้แอดมินจัดการแล้ว
         </p>
+        
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
