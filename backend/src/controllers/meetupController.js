@@ -68,6 +68,7 @@ async function getPenaltyRule(actionType) {
 
 // ----------------------------------------------------------------
 // Helper: ตัดคะแนนความน่าเชื่อถือ (Trust Score) ตามกฎในตาราง penalty_rules
+// หมายเหตุ: ต้องรัน fix_source_id.sql (เพิ่มคอลัมน์ user_score_history.source_id) ก่อน
 // ----------------------------------------------------------------
 async function recordPenalty(userId, actionType, reason, sourceId = null) {
   try {
@@ -94,7 +95,8 @@ async function recordPenalty(userId, actionType, reason, sourceId = null) {
       .eq("id", userId)
       .single();
 
-    if (!user) return;
+    // FIX: คืนค่าให้ครบรูปแบบ เพื่อไม่ให้ฝั่งที่เรียกอ่าน penalty.penalized แล้วพัง
+    if (!user) return { penalized: false, pointsDeducted: 0 };
 
     const currentScore = user.trust_score ?? 100;
     const newScore = Math.max(0, currentScore - pointsDeducted);
@@ -140,6 +142,7 @@ async function persistAndSendNotification(userId, notification) {
 
 // ----------------------------------------------------------------
 // Helper: คืนคะแนนความน่าเชื่อถือ (Trust Score) เมื่อปิดดีลสำเร็จ (+20 คะแนน สูงสุด 100)
+// FIX: บันทึกประวัติก่อน แล้วค่อยอัปเดต users.trust_score
 // ----------------------------------------------------------------
 async function recoverScoreOnDeal(sellerId, transactionId) {
   try {
@@ -165,7 +168,6 @@ async function recoverScoreOnDeal(sellerId, transactionId) {
       const newScore = Math.min(100, currentScore + 20);
       const pointsAdded = newScore - currentScore;
 
-      await supabase.from("users").update({ trust_score: newScore }).eq("id", sellerId);
       const { error: histErr } = await supabase.from("user_score_history").insert({
         user_id: sellerId,
         change_amount: pointsAdded,
@@ -176,6 +178,15 @@ async function recoverScoreOnDeal(sellerId, transactionId) {
       });
       if (histErr) {
         console.error("[recoverScoreOnDeal] user_score_history insert error:", histErr);
+        return; // ไม่อัปเดตคะแนนถ้าบันทึกประวัติไม่สำเร็จ
+      }
+
+      const { error: scoreErr } = await supabase
+        .from("users")
+        .update({ trust_score: newScore })
+        .eq("id", sellerId);
+      if (scoreErr) {
+        console.error("[recoverScoreOnDeal] users update error:", scoreErr);
       }
     }
   } catch (err) {
