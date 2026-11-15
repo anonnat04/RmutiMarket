@@ -137,6 +137,8 @@ export function ProductDetailPage() {
 
   // ─── Click Handlers with Authentication Check ───
   const handleBuyClick = () => {
+    // สินค้าที่ขายแล้ว/ติดจอง ห้ามกดซื้อหรือขอนัดรับ
+    if (product && (product.status === 'sold' || product.status === 'reserved')) return;
     if (!isAuthenticated) {
       navigate('/login', { state: { from: `/products/${product.id}` } });
       return;
@@ -297,6 +299,24 @@ export function ProductDetailPage() {
 
   const selectedPoint = meetupPoints.find((p) => p.name === selectedLocation);
 
+  // สถานะสินค้า: sold = ขายแล้ว, reserved = ติดจอง (กำลังมีดีลค้างอยู่)
+  const isSold = product.status === 'sold';
+  const isReserved = product.status === 'reserved';
+  const isUnavailable = isSold || isReserved;
+  const categoryLabel = product.categoryName || product.category_name || product.categories?.name || '';
+
+  // กล่องแจ้งสถานะแทนปุ่มซื้อ เมื่อสินค้าขายแล้ว/ติดจอง
+  const unavailableNotice = (
+    <div className={`rounded-2xl border p-4 text-center ${isSold ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
+      <p className={`text-sm font-extrabold ${isSold ? 'text-red-700' : 'text-amber-800'}`}>
+        {isSold ? '🔴 สินค้านี้ขายแล้ว' : '🟡 สินค้านี้ติดจองอยู่'}
+      </p>
+      <p className="mt-1 text-xs text-ink-500">
+        {isSold ? 'ไม่สามารถสั่งซื้อหรือขอนัดรับได้ ลองดูสินค้าอื่นๆ ของผู้ขายหรือหมวดหมู่เดียวกัน' : 'มีผู้ซื้อกำลังนัดรับอยู่ หากนัดไม่สำเร็จสินค้าจะกลับมาว่างอีกครั้ง'}
+      </p>
+    </div>
+  );
+
   return (
     // pb-24 บนมือถือ เพื่อไม่ให้แถบปุ่มด้านล่าง (fixed) บังเนื้อหา
     <div className="mx-auto max-w-6xl space-y-4 pb-24 md:pb-0">
@@ -336,6 +356,15 @@ export function ProductDetailPage() {
               <span className={`absolute top-3 left-3 rounded-full px-3 py-1 text-xs font-bold shadow-sm ${conditionBadge.className}`}>
                 {conditionBadge.label}
               </span>
+            )}
+
+            {/* ป้ายขายแล้ว / ติดจอง ทับรูปสินค้า */}
+            {isUnavailable && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/35">
+                <span className={`rounded-full px-8 py-2.5 text-xl font-black text-white shadow-xl ${isSold ? 'bg-red-600' : 'bg-amber-500'}`}>
+                  {isSold ? 'ขายแล้ว' : 'ติดจอง'}
+                </span>
+              </div>
             )}
           </div>
 
@@ -377,6 +406,20 @@ export function ProductDetailPage() {
               {product.originalPrice && product.originalPrice > product.price && (
                 <span className="text-sm sm:text-base text-ink-300 line-through">
                   {formatCurrency(product.originalPrice)}
+                </span>
+              )}
+            </div>
+
+            {/* ประเภทสินค้า + สภาพสินค้า */}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {categoryLabel && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-bold text-brand-700">
+                  🏷️ ประเภท: {categoryLabel}
+                </span>
+              )}
+              {conditionBadge && (
+                <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold ${conditionBadge.className}`}>
+                  สภาพ: {conditionBadge.label}
                 </span>
               )}
             </div>
@@ -442,6 +485,9 @@ export function ProductDetailPage() {
                 แก้ไขสินค้า
               </Link>
             </div>
+          ) : isUnavailable ? (
+            // สินค้าขายแล้ว/ติดจอง: แสดงข้อความแทนปุ่มซื้อ (มือถือใช้แถบด้านล่างแทน)
+            <div className="hidden md:block">{unavailableNotice}</div>
           ) : (
             // ซ่อนบนมือถือ เพราะมีแถบปุ่มติดด้านล่างจอ (fixed) อยู่แล้ว ไม่ให้ปุ่มซ้ำกัน
             <div className="hidden gap-2 sm:gap-2.5 md:flex">
@@ -516,6 +562,10 @@ export function ProductDetailPage() {
               แก้ไขสินค้า
             </Link>
           </div>
+        ) : isUnavailable ? (
+          <p className={`py-1 text-center text-sm font-extrabold ${isSold ? 'text-red-600' : 'text-amber-700'}`}>
+            {isSold ? '🔴 สินค้านี้ขายแล้ว' : '🟡 สินค้านี้ติดจองอยู่'}
+          </p>
         ) : (
           <div className="flex items-center gap-2">
             {/* Wishlist */}

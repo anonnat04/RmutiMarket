@@ -40,10 +40,20 @@ function isRealConversationId(id) {
 }
 
 // ── เลือกชื่อที่จะแสดงของคู่สนทนา ──────────────────────────────────
-// ก่อนหน้านี้ใช้ full_name (displayName) ก่อน username ทำให้ไม่ตรงกับที่ผู้ใช้ต้องการ
 // ตอนนี้ให้ "username" เป็นค่าหลักเสมอ (ตรงกับ users.username ในฐานข้อมูล)
 function resolvePartnerName(partner) {
   return partner?.username || partner?.displayName || partner?.full_name || "เจ้าของสินค้า";
+}
+
+// ── ห้องนี้ "สิ้นสุด" แล้วหรือยัง ──────────────────────────────────
+// สิ้นสุดเฉพาะเมื่อสินค้าขายแล้ว (products.status_id = 3) หรือดีลปิดงานสำเร็จ (transactions.status_id = 3)
+// การยกเลิกนัด / ไม่มาตามนัด "ไม่ใช่" การสิ้นสุด — สินค้ายังว่างก็ยังนัดรับใหม่ได้
+function isConversationEnded(room) {
+  return (
+    Number(room?.statusId) === 3 ||
+    Number(room?.transactionStatusId) === 3 ||
+    room?.isDealClosed === true
+  );
 }
 
 function mapBackendMessage(message, currentUserId) {
@@ -76,10 +86,8 @@ export function ChatPage() {
   const [searchParams] = useSearchParams();
   const user = useAuthStore((s) => s.user);
 
-  // ── ไม่อ่านค่าเริ่มต้นจาก localStorage อีกต่อไป ──
-  // เดิมโหลด cm_saved_convs / cm_chat_messages จาก localStorage มาแสดงก่อน แล้วค่อย sync กับ backend
-  // ทำให้ถ้ามีการ "ลบแชท" ในฐานข้อมูล ฝั่ง frontend ยังเห็นข้อความ/ห้องแชทเก่าที่ถูกลบไปแล้วค้างอยู่
-  // เพราะไม่มีจังหวะไหนเคลียร์ localStorage ทิ้งเลย ตอนนี้ยึดข้อมูลจาก backend (database) เป็นความจริงเสมอ
+  // ── ไม่อ่านค่าเริ่มต้นจาก localStorage ──
+  // ยึดข้อมูลจาก backend (database) เป็นความจริงเสมอ
   const [conversations, setConversations] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [loadingConvs, setLoadingConvs] = useState(true);
@@ -131,10 +139,10 @@ export function ChatPage() {
       unread: (c.unreadCount || 0) > 0,
       messages: [],
       // ข้อมูลสถานะ deal สำหรับซ่อน/แสดงปุ่มนัดหมาย
+      // isDealClosed = สินค้าขายแล้ว/ดีลสำเร็จเท่านั้น (ยกเลิก/ไม่มาตามนัด ไม่นับ)
       transactionStatusId: c.transactionStatusId ?? null,
       isDealClosed: c.isDealClosed ?? false,
       dealClosedAt: c.dealClosedAt ?? null,
-      activeAppointmentStatusId: c.activeAppointmentStatusId ?? null,
       canScheduleMeetup: c.canScheduleMeetup,
     };
   }
@@ -154,7 +162,7 @@ export function ChatPage() {
 
         setConversations((prev) => {
           // คงไว้เฉพาะห้อง "รอ sync" (id ไม่ใช่ตัวเลข เช่น conv-xxx) ที่ backend ยังไม่มี
-          // ห้องที่มี id ตัวเลขจริงแต่ backend ไม่ส่งกลับมาแล้ว = ถูกลบ/ไม่มีสิทธิ์เข้าถึงแล้วในฐานข้อมูล ให้ตัดทิ้ง
+          // ห้องที่มี id ตัวเลขจริงแต่ backend ไม่ส่งกลับมาแล้ว = ถูกลบ/ไม่มีสิทธิ์เข้าถึงแล้วในฐานข้อมูล (เช่น ยกเลิกนัด/ไม่มาตามนัด) ให้ตัดทิ้ง
           const pendingLocalOnly = prev.filter(
             (c) => !isRealConversationId(c.id) && !backendConvs.some((bc) => String(bc.productId) === String(c.productId))
           );
@@ -495,10 +503,6 @@ export function ChatPage() {
 
   // ─── 3. Fetch Messages when activeId changes ───
   // ── สำคัญ: ยึดข้อมูลจาก backend (database) เป็นความจริงเสมอ ──
-  // เดิม: if (res?.messages && res.messages.length > 0) { setLocalMessages(...) }
-  // ถ้าข้อความถูกลบออกจากฐานข้อมูลจนเหลือ 0 รายการ เงื่อนไขนี้จะไม่ทำงานเลย
-  // ทำให้ข้อความเก่าที่ถูกลบไปแล้วยังค้างแสดงอยู่บนหน้าจอตลอดไป
-  // ตอนนี้ "เขียนทับ" ด้วยผลลัพธ์จาก backend เสมอ ไม่ว่าจะมีข้อความหรือว่างเปล่าก็ตาม
   useEffect(() => {
     if (!activeId) return;
     setMessagePage(1);
@@ -862,7 +866,7 @@ export function ChatPage() {
                         <p className="text-xs font-extrabold text-brand-600">{formatCurrency(active.productPrice)}</p>
                         {(() => {
                           const statusId = Number(active.statusId);
-                          const sold = statusId === 3 || Number(active.transactionStatusId) === 3;
+                          const sold = isConversationEnded(active);
                           const label = sold ? "ขายแล้ว" : statusId === 2 ? "ติดจอง" : statusId === 1 ? "ว่าง" : "ไม่พร้อมนัด";
                           const color = sold ? "bg-gray-100 text-gray-600" : statusId === 2
                             ? "bg-amber-50 text-amber-700" : statusId === 1
@@ -877,33 +881,20 @@ export function ChatPage() {
                     if (!active.productId) return null;
                     const isMyProduct = String(active.sellerId) === String(user?.id);
 
-                    // ตรวจสอบว่า deal ปิดแล้วหรือยัง (จาก transactionStatusId หรือ statusId ของสินค้า)
-                    // transactionStatusId: 3=COMPLETED, 4=CANCELLED, 5=NO_SHOW
-                    // statusId ของ products: 2=RESERVED, 3=SOLD
-                    const isDealClosed = active.isDealClosed ||
-                      active.transactionStatusId === 3 ||
-                      active.transactionStatusId === 4 ||
-                      active.transactionStatusId === 5 ||
-                      active.statusId === 3 ||
-                      active.status === 'sold';
-
-                    if (isDealClosed) {
-                      // คำนวณวันที่เหลือก่อนลบแชท (7 วันหลัง deal ปิด)
-                      const closedAt = active.dealClosedAt ? new Date(active.dealClosedAt) : null;
-                      const daysLeft = closedAt
-                        ? Math.max(0, 7 - Math.floor((Date.now() - closedAt.getTime()) / (1000 * 60 * 60 * 24)))
-                        : null;
-
+                    // ── "สิ้นสุดแล้ว" แสดงเฉพาะเมื่อสินค้าขายแล้ว หรือดีลปิดงานสำเร็จแล้วเท่านั้น ──
+                    // การเคยยกเลิกนัด / ไม่มาตามนัด ไม่ถือว่าสิ้นสุด (สินค้ายังว่างก็นัดรับใหม่ได้)
+                    if (isConversationEnded(active)) {
                       return (
                         <span className="flex items-center gap-1 rounded-xl bg-gray-100 border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-500 shrink-0 select-none">
-                          ✓ {Number(active.statusId) === 3 || Number(active.transactionStatusId) === 3 ? "ขายแล้ว" : "รายการสิ้นสุดแล้ว"}
+                          ✓ รายการสิ้นสุดแล้ว
                         </span>
                       );
                     }
 
-                    // Hide scheduling while an appointment exists or its latest state is closed/cancelled.
-                    // The API still checks this independently to prevent duplicate requests.
-                    if (Number(active.statusId) !== 1 || active.canScheduleMeetup === false || [1, 2, 3, 4, 5].includes(Number(active.activeAppointmentStatusId))) {
+                    // ปุ่มนัดรับแสดงเมื่อสินค้ายัง "ว่าง" และไม่มีดีลค้าง (backend คำนวณเป็น canScheduleMeetup)
+                    // ไม่ผูกกับสถานะนัดหมายเก่าที่ยกเลิก/ไม่มาตามนัดแล้ว
+                    // API ฝั่ง backend ยังตรวจซ้ำอีกชั้นเพื่อกันการสร้างนัดซ้อน
+                    if (Number(active.statusId) !== 1 || active.canScheduleMeetup === false) {
                       return null;
                     }
 
@@ -927,21 +918,18 @@ export function ChatPage() {
             </div>
 
             {/* Chat Message Stream */}
-            {/* Banner แจ้งเตือนเมื่อ deal ปิดแล้ว — แสดงจำนวนวันที่เหลือก่อนลบแชทอัตโนมัติ */}
-            {active && (active.isDealClosed || active.transactionStatusId === 3 || active.transactionStatusId === 4 || active.transactionStatusId === 5) && (() => {
+            {/* Banner แจ้งเตือนเฉพาะเมื่อ "ขายสำเร็จ" — แสดงจำนวนวันที่เหลือก่อนลบแชทอัตโนมัติ (7 วัน)
+                กรณียกเลิกนัด/ไม่มาตามนัด แชทจะถูกลบทันทีจากฝั่ง backend จึงไม่มี banner นับถอยหลัง */}
+            {active && isConversationEnded(active) && (() => {
               const closedAt = active.dealClosedAt ? new Date(active.dealClosedAt) : null;
               const daysLeft = closedAt
                 ? Math.max(0, 7 - Math.floor((Date.now() - closedAt.getTime()) / (1000 * 60 * 60 * 24)))
                 : 7;
-              const txLabel =
-                active.transactionStatusId === 3 ? 'เสร็จสิ้น' :
-                active.transactionStatusId === 4 ? 'ยกเลิก' :
-                active.transactionStatusId === 5 ? 'ไม่มาตามนัด' : 'ปิดแล้ว';
               return (
                 <div className="mx-4 mt-3 mb-0 flex items-start gap-2 rounded-xl bg-amber-50 border border-amber-200 px-4 py-2.5 text-xs text-amber-700">
                   <span className="text-base leading-none mt-0.5">💬</span>
                   <span>
-                    การขายนี้ <strong>{txLabel}แล้ว</strong> — ประวัติการสนทนาจะถูกลบอัตโนมัติ
+                    การขายนี้ <strong>เสร็จสิ้นแล้ว</strong> — ประวัติการสนทนาจะถูกลบอัตโนมัติ
                     {daysLeft > 0 ? ` ภายใน ${daysLeft} วัน` : ' เร็วๆ นี้'}
                   </span>
                 </div>

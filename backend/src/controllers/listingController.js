@@ -23,7 +23,14 @@ function mapProductToListing(p) {
   const conditionName = p.product_conditions?.name || conditionStatus.name || (p.condition_id === 1 ? "มือหนึ่ง" : "มือสอง");
   const isNew = conditionName.includes("หนึ่ง") || p.condition_id === 1;
   const uiCondition = isNew ? "new" : "used_good";
-  const uiStatus = prodStatus.code === "AVAILABLE" ? "active" : (prodStatus.code === "RESERVED" ? "reserved" : (prodStatus.code === "SOLD" ? "sold" : "active"));
+  // ตาราง product_status มีแค่ id, name (ไม่มีคอลัมน์ code) จึงตัดสินสถานะจาก status_id โดยตรง
+  // 1 = AVAILABLE (ว่าง), 2 = RESERVED (ติดจอง), 3 = SOLD (ขายแล้ว)
+  const statusIdNum = Number(p.status_id ?? p.product_status?.id);
+  let uiStatus;
+  if (statusIdNum === 3) uiStatus = "sold";
+  else if (statusIdNum === 2) uiStatus = "reserved";
+  else if (statusIdNum === 1) uiStatus = "active";
+  else uiStatus = prodStatus.code === "SOLD" ? "sold" : (prodStatus.code === "RESERVED" ? "reserved" : "active");
 
   const formattedCat = p.categories ? formatCategory(p.categories) : null;
   const sellerUsername = (seller.username || p.users?.username || "").replace(/^@+/, "").trim();
@@ -55,6 +62,9 @@ function mapProductToListing(p) {
     updated_at: p.updated_at,
     category_id: p.category_id,
     categories: formattedCat,
+    // ชื่อหมวดหมู่ใส่ตรงๆ เผื่อ formatCategory ไม่ได้คืน name กลับมา
+    category_name: p.categories?.name || formattedCat?.name || "",
+    categoryName: p.categories?.name || formattedCat?.name || "",
     campuses: { name: "มทร.อีสาน นครราชสีมา", code: "korat" },
     location: "มทร.อีสาน นครราชสีมา",
     users: {
@@ -104,6 +114,7 @@ async function getListings(req, res, next) {
       min_price,
       max_price,
       sort = "newest",
+      status,
       page = 1,
       limit = 20,
     } = req.query;
@@ -146,6 +157,10 @@ async function getListings(req, res, next) {
       const condId = (condition === "new" || condition === "like_new" || condition === "1" || condition === "มือหนึ่ง") ? 1 : 2;
       query = query.eq("condition_id", condId);
     }
+
+    // status=available → เฉพาะสินค้าที่ยังว่าง (หน้าแรก "สินค้าแนะนำ" ไม่แสดงของที่ขายแล้ว/ติดจอง)
+    // ไม่ส่ง status → คืนทุกสถานะ (หน้ารายการสินค้าแสดงของที่ขายแล้วพร้อมป้าย "ขายแล้ว")
+    if (status === "available") query = query.eq("status_id", 1);
 
     if (min_price) query = query.gte("price", parseFloat(min_price));
     if (max_price) query = query.lte("price", parseFloat(max_price));

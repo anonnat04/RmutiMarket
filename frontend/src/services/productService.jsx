@@ -30,8 +30,11 @@ function isMockId(id) {
 export function formatListing(item) {
   if (!item) return null;
 
-  // If already full UI model
-  if (item.images && item.images.length > 0 && item.seller && typeof item.seller === "object" && (item.seller.displayName || item.seller.username)) {
+  // If already full UI model (เช่น mock / สินค้าใน local store ที่มี categoryId + productType ครบแล้ว)
+  // หมายเหตุ: ข้อมูลจาก backend (/api/listings) มี images + seller แต่ "ไม่มี" categoryId / productType / condition แบบ UI
+  // ถ้าปล่อยให้เข้าเงื่อนไขนี้ ฟิลด์หมวดหมู่และสภาพสินค้าจะหาย (กดดูหมวดหมู่แล้วไม่แสดงสินค้า)
+  // จึงต้องให้ผ่านการแปลงด้านล่างด้วย
+  if (item.categoryId && item.productType && item.images && item.images.length > 0 && item.seller && typeof item.seller === "object" && (item.seller.displayName || item.seller.username)) {
     const normalizedImages = item.images.map((img, i) => {
       const u = img.imageUrl || img.image_url || img.url || (typeof img === 'string' ? img : '');
       return {
@@ -117,8 +120,13 @@ export function formatListing(item) {
 
 export async function fetchProducts(params) {
   try {
-    const res = await api.getListings(params);
-    let results = (res?.listings || []).map(formatListing).filter((p) => p.status === "active");
+    // includeSold = true (หน้ารายการสินค้า): แสดงทุกสถานะ รวมของที่ขายแล้ว/ติดจอง พร้อมป้ายสถานะ
+    // ค่าเริ่มต้น (หน้าแรก "สินค้าแนะนำ"): แสดงเฉพาะสินค้าที่ยังว่างขาย ไม่โชว์ของที่ขายแล้ว
+    const { includeSold = false, categorySlug, categoryName, ...apiParams } = params || {};
+    const res = await api.getListings(includeSold ? apiParams : { ...apiParams, status: "available" });
+    let results = (res?.listings || [])
+      .map(formatListing)
+      .filter((p) => (includeSold ? ["active", "reserved", "sold"].includes(p.status) : p.status === "active"));
 
     // หมายเหตุ: เอา mock data ออกจากผลลัพธ์จริงแล้ว เพื่อไม่ให้ปนกับสินค้าจริงจาก DB
     // ถ้าฐานข้อมูลว่างเปล่าจริงๆ ให้ไป seed ข้อมูลผ่านหน้า CreateProductPage หรือ insert เข้า Supabase ตรงๆ
@@ -126,9 +134,13 @@ export async function fetchProducts(params) {
 
     if (params?.categoryId && params.categoryId !== "cat-1" && params.categoryId !== "all") {
       const cleanTarget = params.categoryId.replace(/^cat-/, "");
+      const cleanSlug = categorySlug ? String(categorySlug).replace(/^cat-/, "") : null;
       results = results.filter((p) => {
         const cat = (p.categoryId || "").replace(/^cat-/, "");
-        return cat === cleanTarget;
+        const byId = cat === cleanTarget;
+        const bySlug = !!cleanSlug && cat === cleanSlug;
+        const byName = !!categoryName && !!p.categoryName && p.categoryName === categoryName;
+        return byId || bySlug || byName;
       });
     }
 

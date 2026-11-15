@@ -2,14 +2,28 @@ const { supabase } = require("../config/db");
 const { sendNotificationToUser, emitNewMessage, emitMessagesRead } = require("../services/chatSocket");
 
 // ----------------------------------------------------------------
-// Helpers เกี่ยวกับเวลาปิดดีล
+// Helpers เกี่ยวกับสถานะดีล
 // ตาราง transactions ใน schema จริง "ไม่มี" คอลัมน์ updated_at
 // (มีแค่ created_at, completed_at, cancelled_at) จึงห้าม select updated_at
+//
+// กติกาของแชท:
+//  1) ปุ่ม "นัดรับ" ยังแสดงได้ ตราบใดที่สินค้ายัง "ว่าง" (status_id = 1)
+//     แม้เคยยกเลิกนัด/ไม่มาตามนัดมาก่อน
+//  2) จะขึ้น "สิ้นสุดแล้ว" เฉพาะเมื่อสินค้าขายแล้ว (SOLD) หรือมีดีลที่ COMPLETED
+//  3) ยกเลิกนัดที่ยอมรับแล้ว / ไม่มาตามนัด (ธุรกรรม CANCELLED / NO_SHOW)
+//     → ลบห้องแชทของคู่นั้นทันที (ดู deleteCancelledDealChats)
+//  4) ลบแชทอัตโนมัติหลัง 7 วัน "เฉพาะ" แชทของสินค้าที่ขายสำเร็จเท่านั้น
 // ----------------------------------------------------------------
 const TX_COLUMNS = "id, product_id, buyer_id, seller_id, status_id, completed_at, cancelled_at, created_at";
-const RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 วัน
-const TERMINAL_TX_STATUS = [3, 4, 5]; // 3=COMPLETED, 4=CANCELLED, 5=NO_SHOW
-const OPEN_TX_STATUS = [1, 2]; // 1=PENDING, 2=CONFIRMED
+const RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 วัน (ใช้กับสินค้าที่ขายสำเร็จเท่านั้น)
+
+// transactions.status_id: 1=PENDING, 2=CONFIRMED, 3=COMPLETED, 4=CANCELLED, 5=NO_SHOW
+const TX_COMPLETED = 3;
+const OPEN_TX_STATUS = [1, 2];
+const CANCELLED_TX_STATUS = [4, 5];
+// products.status_id: 1=AVAILABLE, 2=RESERVED, 3=SOLD
+const PRODUCT_AVAILABLE = 1;
+const PRODUCT_SOLD = 3;
 
 // เวลาที่ดีลปิด (ใช้ completed_at / cancelled_at เท่านั้น)
 const txClosedAt = (tx) => tx?.completed_at || tx?.cancelled_at || null;
@@ -19,14 +33,34 @@ const txActivityTime = (tx) =>
 
 const pairKey = (a, b) => [String(a), String(b)].sort().join(":");
 
-// ดึงนัดหมายของ transactions ที่ระบุ
-async function fetchAppointmentsForTransactions(transactionIds) {
-  if (!transactionIds.length) return { data: [], error: null };
-  return supabase
-    .from("appointments")
-    .select("id, transaction_id, status_id")
-    .in("transaction_id", transactionIds)
-    .order("id", { ascending: false });
+// สรุปสถานะดีลของห้องแชทหนึ่งห้อง (ใช้ร่วมกันทุกเส้นทางการดึงรายการแชท)
+// - participantsKey: pairKey ของคู่สนทนา (null ถ้าไม่ทราบ)
+function buildDealInfo(product, productTxs, participantsKey) {
+  const txList = productTxs || [];
+  const pairTxs = participantsKey
+    ? txList.filter((tx) => pairKey(tx.buyer_id, tx.seller_id) === participantsKey)
+    : [];
+  const latestTx = [...pairTxs].sort((a, b) => txActivityTime(b) - txActivityTime(a))[0] || null;
+  const txStatus = latestTx?.status_id != null ? Number(latestTx.status_id) : null;
+
+  // ดีลที่ขายสำเร็จของสินค้านี้ (ไม่ว่าคู่ไหน)
+  const completedTx = txList
+    .filter((tx) => Number(tx.status_id) === TX_COMPLETED)
+    .sort((a, b) => txActivityTime(b) - txActivityTime(a))[0] || null;
+
+  const productStatus = product?.status_id != null ? Number(product.status_id) : null;
+  // "สิ้นสุด" = สินค้าขายแล้ว หรือมีดีลปิดงานสำเร็จแล้วเท่านั้น (ยกเลิก/ไม่มาตามนัด ไม่นับ)
+  const isDealClosed = productStatus === PRODUCT_SOLD || Boolean(completedTx);
+  const hasOpenTx = txList.some((tx) => OPEN_TX_STATUS.includes(Number(tx.status_id)));
+  // สินค้ายังว่าง และไม่มีดีลค้าง → นัดรับได้ (แม้เคยยกเลิก/ไม่มาตามนัด)
+  const canScheduleMeetup = productStatus === PRODUCT_AVAILABLE && !hasOpenTx && !isDealClosed;
+
+  return {
+    transactionStatusId: txStatus,
+    isDealClosed,
+    dealClosedAt: isDealClosed ? (completedTx?.completed_at || null) : null,
+    canScheduleMeetup,
+  };
 }
 
 // Legacy rooms may have messages but no conversation_members rows. A user's own
@@ -109,9 +143,6 @@ async function getConversationsFromMessageHistory(userId) {
     : { data: [], error: null };
   if (txFetchErr) console.error("[getConversationsFromMessageHistory] transactions error:", txFetchErr);
 
-  const transactionIds = (transactions || []).map((tx) => tx.id);
-  const { data: appointments, error: appointmentsErr } = await fetchAppointmentsForTransactions(transactionIds);
-
   return convRows.map((c) => {
     const key = String(c.id);
     const roomMessages = messagesByConv.get(key) || [];
@@ -122,20 +153,9 @@ async function getConversationsFromMessageHistory(userId) {
     const partner = userMap[String(partnerId)];
     const last = roomMessages[0];
     const product = productMap[String(c.product_id)];
-    const participants = pairKey(userId, partnerId);
-    const relatedTxs = (transactions || []).filter((tx) =>
-      String(tx.product_id) === String(c.product_id) &&
-      pairKey(tx.buyer_id, tx.seller_id) === participants
-    );
-    const latestTx = [...relatedTxs].sort((a, b) => txActivityTime(b) - txActivityTime(a))[0] || null;
-    const txStatus = latestTx ? Number(latestTx.status_id) : null;
-    const txClosed = TERMINAL_TX_STATUS.includes(txStatus);
-    const relatedAppointments = (appointments || [])
-      .filter((appt) => String(appt.transaction_id) === String(latestTx?.id))
-      .sort((a, b) => Number(b.id) - Number(a.id));
-    const latestAppointment = relatedAppointments[0] || null;
-    const canScheduleMeetup = Number(product?.status_id) === 1 && !appointmentsErr && !txClosed
-      && ![1, 2, 3, 4, 5].includes(Number(latestAppointment?.status_id));
+    const participantsKey = partnerId != null ? pairKey(userId, partnerId) : null;
+    const productTxs = (transactions || []).filter((tx) => String(tx.product_id) === String(c.product_id));
+    const deal = buildDealInfo(product, productTxs, participantsKey);
     const coverImage = product?.product_images?.find((img) => img.is_primary)?.image_url
       || product?.product_images?.[0]?.image_url || null;
     const lastReadAt = myMember?.last_read_at ? new Date(myMember.last_read_at).getTime() : 0;
@@ -155,11 +175,7 @@ async function getConversationsFromMessageHistory(userId) {
       unreadCount,
       updatedAt: c.updated_at || last?.created_at,
       createdAt: c.created_at,
-      transactionStatusId: txStatus,
-      isDealClosed: txClosed,
-      dealClosedAt: txClosed ? txClosedAt(latestTx) : null,
-      activeAppointmentStatusId: latestAppointment ? Number(latestAppointment.status_id) : null,
-      canScheduleMeetup,
+      ...deal,
     };
   }).sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
 }
@@ -170,6 +186,10 @@ async function getConversationsFromMessageHistory(userId) {
 async function getConversations(req, res, next) {
   try {
     const myId = req.user.id;
+
+    // ลบห้องแชทของดีลที่ยกเลิก/ไม่มาตามนัด ที่เกี่ยวข้องกับฉันก่อนเสมอ
+    // (ทำให้แชทหายทันทีหลังยกเลิกนัด โดยไม่ต้องรอ job ตามรอบ)
+    await deleteCancelledDealChats({ userId: myId });
 
     // 1. ลองดึงจาก schema ใหม่: conversation_members
     const { data: myMemberships, error: memErr } = await supabase
@@ -235,16 +255,6 @@ async function getConversations(req, res, next) {
           myMembershipMap[m.conversation_id] = m;
         });
 
-        // ดึงนัดหมายของ transaction ทั้งหมดที่เกี่ยวข้อง (ใช้ตัดสินใจแสดงปุ่มนัดรับ)
-        const allTxIds = [];
-        conversationRows.forEach((c) => {
-          (c.products?.transactions || []).forEach((tx) => allTxIds.push(tx.id));
-        });
-        const { data: appointments, error: appointmentsErr } = await fetchAppointmentsForTransactions(allTxIds);
-        if (appointmentsErr) {
-          console.error("[getConversations] appointmentsErr:", appointmentsErr);
-        }
-
         const formatted = conversationRows.map((c) => {
           const members = (allMembers || []).filter((m) => m.conversation_id === c.id);
           const partner = members.find((m) => String(m.user_id) !== String(myId));
@@ -265,23 +275,11 @@ async function getConversations(req, res, next) {
             || product?.product_images?.[0]?.image_url
             || null;
 
-          // ผูกสถานะปิดการขายกับคู่สนทนาคู่นี้เท่านั้น ไม่ใช้ transaction ล่าสุดของสินค้านี้
-          // เพราะสินค้าเดียวกันอาจมีผู้ซื้อหลายคนและไม่ควรทำให้ห้องอื่นถูกซ่อน/หมดอายุ
+          // สถานะดีลผูกกับคู่สนทนาคู่นี้ + สถานะสินค้า
+          // - สิ้นสุด: สินค้าขายแล้ว / มีดีลสำเร็จเท่านั้น
+          // - นัดรับได้: สินค้ายังว่างและไม่มีดีลค้าง (แม้เคยยกเลิก/ไม่มาตามนัด)
           const memberKey = [...new Set(members.map((m) => String(m.user_id)))].sort().join(":");
-          const txList = product?.transactions || [];
-          const relatedTxs = txList.filter((tx) => pairKey(tx.buyer_id, tx.seller_id) === memberKey);
-          const latestTx = [...relatedTxs].sort((a, b) => txActivityTime(b) - txActivityTime(a))[0] || null;
-          // status_id: 1=PENDING, 2=CONFIRMED, 3=COMPLETED, 4=CANCELLED, 5=NO_SHOW
-          const txStatus = latestTx?.status_id != null ? Number(latestTx.status_id) : null;
-          const isDealClosed = TERMINAL_TX_STATUS.includes(txStatus);
-          const txCompletedAt = txClosedAt(latestTx);
-
-          const relatedAppointments = (appointments || [])
-            .filter((appt) => latestTx && String(appt.transaction_id) === String(latestTx.id))
-            .sort((a, b) => Number(b.id) - Number(a.id));
-          const latestAppointment = relatedAppointments[0] || null;
-          const canScheduleMeetup = Number(product?.status_id) === 1 && !appointmentsErr && !isDealClosed
-            && ![1, 2, 3, 4, 5].includes(Number(latestAppointment?.status_id));
+          const deal = buildDealInfo(product, product?.transactions || [], memberKey);
 
           return {
             id: c.id,
@@ -308,12 +306,7 @@ async function getConversations(req, res, next) {
             unreadCount,
             updatedAt: c.updated_at,
             createdAt: c.created_at,
-            // ข้อมูล transaction สำหรับ frontend ใช้ตัดสินใจแสดง/ซ่อนปุ่มนัดหมาย
-            transactionStatusId: txStatus,
-            isDealClosed,
-            dealClosedAt: isDealClosed ? txCompletedAt : null,
-            activeAppointmentStatusId: latestAppointment ? Number(latestAppointment.status_id) : null,
-            canScheduleMeetup,
+            ...deal,
           };
         });
 
@@ -1013,50 +1006,68 @@ async function deleteConversation(req, res, next) {
 }
 
 // ----------------------------------------------------------------
-// Background Job: ลบแชทที่หมดอายุ (เกิน 7 วันหลังจาก deal ปิด)
-// ลบห้องที่:
-//   - คู่สนทนา (2 คน) มี transaction บนสินค้าของห้องนั้น
-//   - ไม่มีดีลค้าง (PENDING/CONFIRMED) เหลืออยู่เลย
-//   - และเวลาปิดดีลล่าสุด (completed_at / cancelled_at) เกิน 7 วันแล้ว
-//     ไม่ว่าจะจบด้วย สำเร็จ / ยกเลิก / ไม่มาตามนัด
+// ตัวช่วยลบแชทตามกติกา (ใช้ร่วมกันทั้ง job ตามรอบและการลบทันที)
+//
+//  กติกา A (sales)     : สินค้าที่ขายสำเร็จ (มีดีล COMPLETED) → ลบแชทของสินค้านั้น
+//                        เมื่อเลย 7 วันนับจาก completed_at
+//  กติกา B (cancelled) : ดีลของคู่สนทนาถูกยกเลิก/ไม่มาตามนัด (CANCELLED / NO_SHOW)
+//                        → ลบห้องแชทของคู่นั้น "ทันที"
+//                        - ต้องไม่มีดีลค้าง (PENDING/CONFIRMED) ของคู่นั้นเหลืออยู่
+//                        - ต้องยกเลิกหลังจากห้องแชทนี้ถูกสร้าง (กันลบห้องใหม่ที่เพิ่งทักกลับมา
+//                          เพื่อนัดรับใหม่ หลังจากห้องเก่าถูกลบไปแล้ว)
+//                        - ไม่ลบถ้าคู่นี้มีดีลสำเร็จ (ให้ไปเข้ากติกา A)
+//
+// options:
+//   sales     : เปิดกติกา A
+//   cancelled : เปิดกติกา B
+//   productId : จำกัดเฉพาะสินค้านี้
+//   userId    : จำกัดเฉพาะดีลที่ผู้ใช้นี้เป็นผู้ซื้อ/ผู้ขาย
 // ----------------------------------------------------------------
-async function deleteExpiredChats() {
+async function runChatCleanup({ sales = false, cancelled = false, productId = null, userId = null } = {}) {
   try {
+    if (!sales && !cancelled) return [];
     const cutoff = Date.now() - RETENTION_MS;
 
-    const { data: transactions, error: txErr } = await supabase
-      .from("transactions")
-      .select(TX_COLUMNS);
+    let txQuery = supabase.from("transactions").select(TX_COLUMNS);
+    if (productId) txQuery = txQuery.eq("product_id", productId);
+    if (userId) txQuery = txQuery.or(`buyer_id.eq.${userId},seller_id.eq.${userId}`);
+    const { data: transactions, error: txErr } = await txQuery;
 
     if (txErr) {
-      console.error("[deleteExpiredChats] ดึง transactions ล้มเหลว:", txErr);
-      return;
+      console.error("[runChatCleanup] ดึง transactions ล้มเหลว:", txErr);
+      return [];
     }
-    if (!transactions?.length) return;
+    if (!transactions?.length) return [];
 
-    const productIds = [...new Set(transactions.map((t) => t.product_id).filter(Boolean))];
-    if (!productIds.length) return;
+    const txByProduct = new Map();
+    transactions.forEach((tx) => {
+      const key = String(tx.product_id);
+      if (!txByProduct.has(key)) txByProduct.set(key, []);
+      txByProduct.get(key).push(tx);
+    });
+    const productIds = [...txByProduct.keys()].map((k) => (isNaN(Number(k)) ? k : Number(k)));
+    if (!productIds.length) return [];
 
     const { data: productConvs, error: convErr } = await supabase
       .from("conversations")
-      .select("id, product_id")
+      .select("id, product_id, created_at")
       .in("product_id", productIds);
 
     if (convErr) {
-      console.error("[deleteExpiredChats] ดึง conversations ล้มเหลว:", convErr);
-      return;
+      console.error("[runChatCleanup] ดึง conversations ล้มเหลว:", convErr);
+      return [];
     }
-    if (!productConvs?.length) return;
+    if (!productConvs?.length) return [];
 
     const convIds = productConvs.map((c) => c.id);
     const [membersRes, messagesRes] = await Promise.all([
       supabase.from("conversation_members").select("conversation_id, user_id").in("conversation_id", convIds),
       supabase.from("messages").select("conversation_id, sender_id").in("conversation_id", convIds),
     ]);
-    if (membersRes.error) console.warn("[deleteExpiredChats] ดึงสมาชิกห้องแชทล้มเหลว:", membersRes.error);
+    if (membersRes.error) console.warn("[runChatCleanup] ดึงสมาชิกห้องแชทล้มเหลว:", membersRes.error);
     if (messagesRes.error) {
-      console.error("[deleteExpiredChats] ดึงผู้ร่วมแชทจากข้อความล้มเหลว:", messagesRes.error);
-      return;
+      console.error("[runChatCleanup] ดึงผู้ร่วมแชทจากข้อความล้มเหลว:", messagesRes.error);
+      return [];
     }
 
     // รวบรวมผู้ร่วมห้องจากทั้ง members และผู้ส่งข้อความ
@@ -1071,41 +1082,73 @@ async function deleteExpiredChats() {
 
     const expiredConvIds = productConvs
       .filter((conv) => {
-        const ids = [...(participants.get(String(conv.id)) || [])].sort();
-        if (ids.length !== 2) return false;
-        const key = ids.join(":");
+        const productTxs = txByProduct.get(String(conv.product_id)) || [];
 
-        const pairTxs = transactions.filter((tx) =>
-          String(tx.product_id) === String(conv.product_id) &&
-          pairKey(tx.buyer_id, tx.seller_id) === key
-        );
-        if (!pairTxs.length) return false;
+        // ── กติกา A: สินค้าขายสำเร็จ → ลบแชทหลัง 7 วัน ──
+        if (sales) {
+          const completedTimes = productTxs
+            .filter((tx) => Number(tx.status_id) === TX_COMPLETED)
+            .map((tx) => Date.parse(tx.completed_at))
+            .filter(Number.isFinite);
+          if (completedTimes.length && Math.max(...completedTimes) < cutoff) return true;
+        }
 
-        // ยังมีดีลค้างอยู่ → ห้ามลบ
-        if (pairTxs.some((tx) => OPEN_TX_STATUS.includes(Number(tx.status_id)))) return false;
+        // ── กติกา B: ยกเลิกนัด/ไม่มาตามนัด → ลบทันที ──
+        if (cancelled) {
+          const ids = [...(participants.get(String(conv.id)) || [])].sort();
+          if (ids.length !== 2) return false;
+          const key = ids.join(":");
 
-        // ใช้เวลาปิดดีลล่าสุดของคู่นี้ ถ้าไม่มีเวลาปิดเลยให้ข้ามไว้ก่อน
-        const closedTimes = pairTxs
-          .filter((tx) => TERMINAL_TX_STATUS.includes(Number(tx.status_id)))
-          .map((tx) => txClosedAt(tx))
-          .filter(Boolean)
-          .map((t) => Date.parse(t))
-          .filter(Number.isFinite);
-        if (!closedTimes.length) return false;
+          const pairTxs = productTxs.filter((tx) => pairKey(tx.buyer_id, tx.seller_id) === key);
+          if (!pairTxs.length) return false;
 
-        return Math.max(...closedTimes) < cutoff;
+          // ยังมีดีลค้างอยู่ หรือเคยขายสำเร็จกับคู่นี้ → ไม่ลบตามกติกานี้
+          if (pairTxs.some((tx) => OPEN_TX_STATUS.includes(Number(tx.status_id)))) return false;
+          if (pairTxs.some((tx) => Number(tx.status_id) === TX_COMPLETED)) return false;
+
+          const convCreated = Date.parse(conv.created_at);
+          return pairTxs.some((tx) => {
+            if (!CANCELLED_TX_STATUS.includes(Number(tx.status_id))) return false;
+            const cancelledAt = Date.parse(tx.cancelled_at || tx.created_at);
+            return Number.isFinite(cancelledAt) &&
+              (!Number.isFinite(convCreated) || cancelledAt >= convCreated);
+          });
+        }
+
+        return false;
       })
       .map((conv) => conv.id);
 
-    if (expiredConvIds.length === 0) return;
-    console.log(`🧹 [Chat Retention] พบห้องแชทหมดอายุ ${expiredConvIds.length} ห้อง → กำลังลบ...`);
-
+    if (expiredConvIds.length === 0) return [];
     await deleteConversations(expiredConvIds);
-
-    console.log(`✅ [Chat Retention] ลบห้องแชทหมดอายุเรียบร้อย (${expiredConvIds.join(", ")})`);
+    return expiredConvIds;
   } catch (err) {
-    console.error("[deleteExpiredChats] unexpected error:", err?.message || err);
+    console.error("[runChatCleanup] unexpected error:", err?.message || err);
+    return [];
   }
+}
+
+// ----------------------------------------------------------------
+// Background Job: ลบแชทตามรอบ (เรียกจาก server.js เหมือนเดิม)
+//   - แชทของสินค้าที่ขายสำเร็จ เกิน 7 วันหลังปิดดีล
+//   - แชทของดีลที่ยกเลิก/ไม่มาตามนัด (เก็บกวาดกรณีที่ยังไม่ถูกลบทันที)
+// ----------------------------------------------------------------
+async function deleteExpiredChats() {
+  const deleted = await runChatCleanup({ sales: true, cancelled: true });
+  if (deleted.length) {
+    console.log(`✅ [Chat Retention] ลบห้องแชทเรียบร้อย (${deleted.join(", ")})`);
+  }
+}
+
+// ----------------------------------------------------------------
+// ลบแชทของดีลที่ยกเลิกนัด/ไม่มาตามนัดทันที
+// ใช้ได้ทั้ง:
+//   - เรียกหลังยกเลิกนัดใน meetupController:   deleteCancelledDealChats({ productId })
+//   - เรียกหลัง process_no_shows() ใน scheduler: deleteCancelledDealChats()
+//   - ถูกเรียกอัตโนมัติทุกครั้งที่ดึงรายการแชท (เฉพาะดีลของผู้ใช้นั้น)
+// ----------------------------------------------------------------
+async function deleteCancelledDealChats(options = {}) {
+  return runChatCleanup({ ...options, cancelled: true, sales: false });
 }
 
 module.exports = {
@@ -1116,4 +1159,5 @@ module.exports = {
   deleteConversation,
   deleteConversations,
   deleteExpiredChats,
+  deleteCancelledDealChats,
 };

@@ -65,6 +65,40 @@ function resolveUserName(u) {
   return u.username || u.display_name || u.displayName || u.full_name || u.fullName || 'ผู้ใช้';
 }
 
+// ────────────────────────────────
+// กฎยกเลิกนัดกระชั้นชิด (LATE_CANCEL)
+// ค่าด้านล่างเป็นค่าเริ่มต้นให้ตรงกับตาราง penalty_rules (120 นาที / หัก 10 / ผ่อนผัน 15 นาที)
+// ตัวตัดสินจริงคือ backend: ถ้าเงื่อนไขไม่ตรงกับที่นี่ backend จะตอบ 409 พร้อมค่าจริง
+// แล้วหน้านี้จะแสดงคำเตือนด้วยค่าจริงนั้นแทน
+// ────────────────────────────────
+const LATE_CANCEL_THRESHOLD_MINUTES = 120;
+const LATE_CANCEL_POINTS = 10;
+const LATE_CANCEL_GRACE_MINUTES = 15;
+
+function getLateCancelPenalty(meetup, myCheckedIn) {
+  if (!meetup || meetup.status !== 'confirmed') return null; // เฉพาะนัดที่ยอมรับแล้ว
+  if (myCheckedIn) return null;                               // เช็คอินแล้ว = มาตามนัดแล้ว ไม่ตัด
+  if (!meetup.date || !meetup.time) return null;
+
+  const apptTime = new Date(`${meetup.date}T${String(meetup.time).slice(0, 5)}:00+07:00`);
+  if (isNaN(apptTime.getTime())) return null;
+
+  const now = Date.now();
+  const minutesLeft = (apptTime.getTime() - now) / 60000;
+  const sinceConfirm = meetup.confirmedAt
+    ? (now - new Date(meetup.confirmedAt).getTime()) / 60000
+    : Infinity;
+
+  if (sinceConfirm <= LATE_CANCEL_GRACE_MINUTES) return null; // เพิ่งกดยืนยัน ยกเลิกฟรี (เผื่อกดผิด)
+  if (minutesLeft >= LATE_CANCEL_THRESHOLD_MINUTES) return null;
+
+  return {
+    pointsDeducted: LATE_CANCEL_POINTS,
+    thresholdMinutes: LATE_CANCEL_THRESHOLD_MINUTES,
+    minutesLeft: Math.max(0, Math.round(minutesLeft)),
+  };
+}
+
 function mapAppointment(m) {
   if (!m) return null;
 
@@ -112,6 +146,7 @@ function mapAppointment(m) {
     date,
     time,
     startTime: time,
+    confirmedAt: m.confirmedAt || m.confirmed_at || null, // เวลาที่กดยืนยันนัด ใช้คำนวณช่วงยกเลิกฟรี
     locationId: m.locationId ?? m.location_id ?? location.id,
     locationName: location.name || m.locationName || 'จุดนัดรับ มทร.อีสาน',
     locationLat: m.locationLat != null ? parseFloat(m.locationLat) : (meetupPoints.find((p) => p.name === (location.name || m.locationName))?.lat ?? (location.latitude != null ? parseFloat(location.latitude) : null)),
@@ -541,6 +576,7 @@ export function MeetupCheckInPage() {
   const [cancelling, setCancelling] = useState(false);
   const [showDeliveryConfirm, setShowDeliveryConfirm] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [serverPenalty, setServerPenalty] = useState(null); // ค่าตัดคะแนนจริงจาก backend (409 requiresConfirm)
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [, forceTick] = useState(0);
@@ -567,7 +603,7 @@ export function MeetupCheckInPage() {
     if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
   }, []);
 
-  // Tick ทุก 30 วิ เพื่ออัปเดต badge ช่วงเวลา
+  // Tick ทุก 30 วิ เพื่ออัปเดต badge ช่วงเวลา และคำเตือนตัดคะแนน
   useEffect(() => {
     const t = setInterval(() => forceTick((n) => n + 1), 30000);
     return () => clearInterval(t);
@@ -762,6 +798,10 @@ export function MeetupCheckInPage() {
   const otherCheckedInAt = role === 'buyer' ? meetup.sellerCheckedInAt : meetup.buyerCheckedInAt;
   const bothCheckedIn = !!meetup.buyerCheckedIn && !!meetup.sellerCheckedIn;
 
+  // คะแนนที่จะถูกหักถ้ายกเลิกตอนนี้ (null = ยกเลิกได้โดยไม่เสียคะแนน)
+  // ถ้า backend เคยตอบค่าจริงมาแล้ว (serverPenalty) ให้ใช้ค่านั้นก่อน
+  const cancelPenalty = serverPenalty || getLateCancelPenalty(meetup, myCheckedIn);
+
   // ── เช็คอิน ──
   const handleCheckIn = async () => {
     if (checkInInFlightRef.current) return;
@@ -900,21 +940,37 @@ export function MeetupCheckInPage() {
     navigate('/meetups', { state: { reviewedMeetupId: meetup.id } });
   };
 
+  // ── เปิด/ปิด dialog ยกเลิกนัด ──
+  const openCancelDialog = () => {
+    setServerPenalty(null);
+    setShowCancelConfirm(true);
+  };
+
+  const closeCancelDialog = () => {
+    setShowCancelConfirm(false);
+    setServerPenalty(null);
+  };
+
   // ── ยกเลิกนัด (ผ่าน ConfirmDialog) ──
+  // ถ้าจะโดนตัดคะแนน ต้องส่ง confirmPenalty: true (ผู้ใช้เห็นคำเตือนแล้วกดยอมรับ)
+  // ถ้า backend เห็นว่าต้องตัดคะแนนแต่หน้านี้ยังไม่รู้ จะตอบ 409 กลับมา แล้ว dialog จะเปลี่ยนเป็นคำเตือนให้ยืนยันอีกครั้ง
   const executeCancel = async () => {
     setCancelling(true);
     try {
-      if (meetup.id && api.cancelMeetup) {
-        await api.cancelMeetup(meetup.id);
-      }
+      await api.cancelMeetup(meetup.id, undefined, { confirmPenalty: !!cancelPenalty });
       try {
         cancelRequest(meetup.id);
       } catch (e) {}
 
-      setShowCancelConfirm(false);
+      closeCancelDialog();
       navigate('/meetups');
     } catch (err) {
-      showFeedback('error', 'ยกเลิกนัดไม่สำเร็จ', err.message || 'เกิดข้อผิดพลาดในการยกเลิกนัด');
+      if (err?.status === 409 && err?.data?.requiresConfirm) {
+        setServerPenalty(err.data); // dialog ยังเปิดอยู่ และเปลี่ยนเป็นข้อความเตือนตัดคะแนน
+        return;
+      }
+      showFeedback('error', 'ยกเลิกนัดไม่สำเร็จ', err?.message || 'เกิดข้อผิดพลาดในการยกเลิกนัด');
+      closeCancelDialog();
     } finally {
       setCancelling(false);
     }
@@ -1275,8 +1331,24 @@ export function MeetupCheckInPage() {
           <p className="text-xs text-ink-500">
             ถ้าไม่สะดวกตามนัดหรือต้องการเปลี่ยนวัน/เวลา ให้ยกเลิกแล้วสร้างนัดใหม่ · ยกเลิกได้เฉพาะก่อนเช็คอิน
           </p>
+
+          {/* คำเตือนตัดคะแนน: แสดงให้เห็นก่อนกดยกเลิก */}
+          {cancelPenalty ? (
+            <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5">
+              <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-600" />
+              <p className="text-[11px] font-semibold leading-relaxed text-amber-900">
+                เหลือเวลาก่อนนัดประมาณ {cancelPenalty.minutesLeft} นาที (น้อยกว่า {cancelPenalty.thresholdMinutes / 60} ชั่วโมง)
+                — หากยกเลิกตอนนี้ คุณจะถูกหัก {cancelPenalty.pointsDeducted} คะแนนความน่าเชื่อถือ
+              </p>
+            </div>
+          ) : meetup.status === 'confirmed' ? (
+            <p className="text-[11px] text-ink-400">
+              ⚠️ การยกเลิกนัดที่ยืนยันแล้วก่อนเวลานัดน้อยกว่า {LATE_CANCEL_THRESHOLD_MINUTES / 60} ชั่วโมง จะถูกหัก {LATE_CANCEL_POINTS} คะแนนความน่าเชื่อถือ
+            </p>
+          ) : null}
+
           <button
-            onClick={() => setShowCancelConfirm(true)}
+            onClick={openCancelDialog}
             disabled={cancelling}
             className="w-full flex items-center justify-center gap-2 text-sm font-semibold text-red-600 bg-red-50 hover:bg-red-100 active:bg-red-200 border border-red-200 rounded-xl px-4 py-2.5 transition-colors disabled:opacity-50"
           >
@@ -1310,16 +1382,20 @@ export function MeetupCheckInPage() {
         onSubmit={handleReviewSubmit}
       />
 
-      {/* ─── Confirm Cancel Dialog ─── */}
+      {/* ─── Confirm Cancel Dialog (เตือนตัดคะแนนถ้าเข้าเงื่อนไข) ─── */}
       <ConfirmDialog
         open={showCancelConfirm}
-        onClose={() => setShowCancelConfirm(false)}
+        onClose={closeCancelDialog}
         onConfirm={executeCancel}
-        title="ยืนยันการยกเลิกนัดหมายนี้?"
-        description="การยกเลิกจะไม่สามารถย้อนกลับได้ หากต้องการนัดรับสินค้านี้อีกครั้งจะต้องสร้างคำขอนัดหมายใหม่"
-        confirmLabel="ยืนยันยกเลิกนัด"
-        cancelLabel="ไม่ยกเลิก"
-        variant="danger"
+        title={cancelPenalty ? 'ยกเลิกนัดนี้และยอมรับการหักคะแนน?' : 'ยืนยันการยกเลิกนัดหมายนี้?'}
+        description={
+          cancelPenalty
+            ? `⚠️ เหลือเวลาก่อนนัดประมาณ ${cancelPenalty.minutesLeft} นาที (น้อยกว่า ${cancelPenalty.thresholdMinutes / 60} ชั่วโมง) หากยกเลิกตอนนี้ คุณจะถูกหัก ${cancelPenalty.pointsDeducted} คะแนนความน่าเชื่อถือทันที และไม่สามารถย้อนกลับได้ หากต้องการนัดรับสินค้านี้อีกครั้งจะต้องสร้างคำขอนัดหมายใหม่`
+            : 'การยกเลิกจะไม่สามารถย้อนกลับได้ หากต้องการนัดรับสินค้านี้อีกครั้งจะต้องสร้างคำขอนัดหมายใหม่'
+        }
+        confirmLabel={cancelPenalty ? `ยืนยันและหัก ${cancelPenalty.pointsDeducted} คะแนน` : 'ยืนยันยกเลิกนัด'}
+        cancelLabel={cancelPenalty ? 'กลับไป' : 'ไม่ยกเลิก'}
+        variant={cancelPenalty ? 'warning' : 'danger'}
         loading={cancelling}
       />
     </div>

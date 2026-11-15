@@ -86,8 +86,13 @@ export function ProductListPage() {
     const category = categories.find((c) => c.slug === activeSlug);
 
     // 1. ดึงสินค้า
+    // includeSold: หน้านี้แสดงสินค้าที่ขายแล้วด้วย (พร้อมป้าย "ขายแล้ว") ส่วนหน้าแรกจะซ่อนของที่ขายแล้ว
+    // ส่ง slug/name ของหมวดไปด้วย เพื่อจับคู่หมวดหมู่ได้แม้ id ของ constants กับ DB ไม่ตรงกัน
     const productPromise = fetchProducts({
+      includeSold: true,
       categoryId: category?.id,
+      categorySlug: category && category.slug !== "all" ? category.slug : undefined,
+      categoryName: category && category.slug !== "all" ? category.name : undefined,
       q,
       sort: sortBy,
       min_price: appliedMinPrice,
@@ -503,9 +508,28 @@ export function ProductListPage() {
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-              {products.map((p) => (
-                <ProductCard key={p.id} product={p} />
-              ))}
+              {products.map((p) => {
+                const isSold = p.status === "sold";
+                const isReserved = p.status === "reserved";
+                return (
+                  <div key={p.id} className="relative">
+                    <div className={isSold ? "opacity-60 grayscale-[40%]" : ""}>
+                      <ProductCard product={p} />
+                    </div>
+                    {(isSold || isReserved) && (
+                      <div className="pointer-events-none absolute inset-x-0 top-[38%] flex justify-center">
+                        <span
+                          className={`rounded-full px-4 py-1.5 text-xs font-extrabold text-white shadow-lg ${
+                            isSold ? "bg-red-600/90" : "bg-amber-500/90"
+                          }`}
+                        >
+                          {isSold ? "ขายแล้ว" : "ติดจอง"}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
