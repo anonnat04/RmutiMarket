@@ -665,18 +665,9 @@ export function MeetupCheckInPage() {
       if (!found) { setNotFound(true); setMeetup(null); return; }
       const mapped = mapAppointment(found);
       const hydrated = hydrateMeetup(mapped);
-      // ใช้ค่าจาก backend เป็นหลัก ส่วนที่ store เติมให้ค่อยซ้อนทับ แต่ห้ามให้สถานะ/เวลายืนยันถูกเขียนทับด้วยค่าที่หายไป
-      setMeetup(
-        hydrated
-          ? {
-              ...mapped,
-              ...hydrated,
-              status: mapped.status === 'confirmed' && hydrated.status === 'pending' ? mapped.status : (hydrated.status || mapped.status),
-              statusCode: mapped.status === 'confirmed' && hydrated.status === 'pending' ? mapped.statusCode : (hydrated.statusCode || mapped.statusCode),
-              confirmedAt: hydrated.confirmedAt || mapped.confirmedAt,
-            }
-          : mapped
-      );
+      // ค่าจาก backend (ฐานข้อมูล) เป็นความจริงเดียว: ให้ซ้อนทับค่าจาก store ในเครื่องเสมอ
+      // กัน store เขียนทับวันที่/เวลา/confirmedAt/สถานะ จนคำนวณคำเตือนตัดคะแนนผิด
+      setMeetup({ ...(hydrated || {}), ...mapped });
     } catch (err) {
       console.warn('Failed to load meetup detail:', err);
       setNotFound(true);
@@ -862,6 +853,19 @@ export function MeetupCheckInPage() {
   // คะแนนที่จะถูกหักถ้ายกเลิกตอนนี้ (null = ยกเลิกได้โดยไม่เสียคะแนน)
   // ถ้า backend เคยตอบค่าจริงมาแล้ว (serverPenalty) ให้ใช้ค่านั้นก่อน
   const cancelPenalty = serverPenalty || getLateCancelPenalty(meetup, myCheckedIn);
+
+  // debug: ดูค่าที่หน้านี้ใช้คำนวณ (เปิด Console ในเบราว์เซอร์) — ลบออกได้เมื่อแก้เสร็จ
+  console.debug('[cancel-penalty]', {
+    status: meetup.status,
+    statusCode: meetup.statusCode,
+    date: meetup.date,
+    time: meetup.time,
+    confirmedAt: meetup.confirmedAt,
+    myCheckedIn,
+    minutesLeft: getMinutesUntilMeetup(meetup),
+    minutesSinceConfirm: meetup.confirmedAt ? (Date.now() - new Date(meetup.confirmedAt).getTime()) / 60000 : null,
+    cancelPenalty,
+  });
 
   // ── เช็คอิน ──
   const handleCheckIn = async () => {
