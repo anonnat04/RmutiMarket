@@ -50,7 +50,7 @@ function isMeetupOverdue(date, time, buyerCheckedIn, sellerCheckedIn) {
   if (!date || !time) return false;
   try {
     const timeClean = String(time).slice(0, 5);
-    const apptDate = new Date(`${date}T${timeClean}:00`);
+    const apptDate = new Date(`${String(date).slice(0, 10)}T${timeClean}:00`);
     if (isNaN(apptDate.getTime())) return false;
     const deadline = new Date(apptDate.getTime() + 45 * 60 * 1000);
     return new Date() > deadline && (!buyerCheckedIn || !sellerCheckedIn);
@@ -80,7 +80,10 @@ function getLateCancelPenalty(meetup, myCheckedIn) {
   if (myCheckedIn) return null;                               // เช็คอินแล้ว = มาตามนัดแล้ว ไม่ตัด
   if (!meetup.date || !meetup.time) return null;
 
-  const apptTime = new Date(`${meetup.date}T${String(meetup.time).slice(0, 5)}:00+07:00`);
+  // ตัดเอาเฉพาะ YYYY-MM-DD กัน backend ส่ง date มาเป็น ISO เต็ม (เช่น 2026-11-15T00:00:00.000Z)
+  // ซึ่งถ้าต่อสตริงตรงๆ จะกลายเป็น Invalid Date แล้วคำเตือนไม่ขึ้นทั้งที่ backend ตัดคะแนนจริง
+  const dateOnly = String(meetup.date).slice(0, 10);
+  const apptTime = new Date(`${dateOnly}T${String(meetup.time).slice(0, 5)}:00+07:00`);
   if (isNaN(apptTime.getTime())) return null;
 
   const now = Date.now();
@@ -118,7 +121,9 @@ function mapAppointment(m) {
   const images = product.images || product.product_images || [];
   const coverImage = product.imageUrl || product.image_url || images.find((i) => i.is_cover || i.is_primary)?.url || images.find((i) => i.is_cover || i.is_primary)?.image_url || images[0]?.url || images[0]?.image_url || '';
 
-  const date = m.appointment_date || m.date || (m.scheduledAt ? m.scheduledAt.split('T')[0] : '');
+  // date อาจมาเป็น "YYYY-MM-DD" หรือ ISO เต็ม → เก็บเฉพาะส่วนวันที่
+  const rawDate = m.appointment_date || m.date || (m.scheduledAt ? m.scheduledAt.split('T')[0] : '');
+  const date = rawDate ? String(rawDate).slice(0, 10) : '';
   const rawTime = m.appointment_time || m.time || m.startTime || (m.scheduledAt ? m.scheduledAt.split('T')[1]?.slice(0, 5) : '12:00');
   const time = rawTime ? String(rawTime).slice(0, 5) : '12:00';
 
@@ -960,6 +965,13 @@ export function MeetupCheckInPage() {
       await api.cancelMeetup(meetup.id, undefined, { confirmPenalty: !!cancelPenalty });
       try {
         cancelRequest(meetup.id);
+      } catch (e) {}
+
+      // ดึงข้อมูลผู้ใช้ล่าสุดจาก backend (รวมคะแนนความน่าเชื่อถือ) มาอัปเดตใน authStore
+      // เพื่อให้คะแนนบนหน้าเว็บตรงกับฐานข้อมูลทันทีหลังโดนตัดคะแนน ไม่ต้องรีเฟรชหน้า
+      // verifyToken จะ logout เฉพาะตอน 401/403 เท่านั้น ถ้าเน็ตสะดุดจะไม่กระทบ session
+      try {
+        await useAuthStore.getState().verifyToken();
       } catch (e) {}
 
       closeCancelDialog();
