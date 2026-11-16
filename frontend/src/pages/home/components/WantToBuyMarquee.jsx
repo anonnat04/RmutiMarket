@@ -61,6 +61,8 @@ export function WantToBuyMarquee() {
                 id: p.users?.id,
                 name: p.users?.display_name || p.users?.username || 'สมาชิก RMUTI',
                 avatarUrl: p.users?.avatar_url || null,
+                trustScore: Number(p.users?.trust_score ?? p.users?.trustScore ?? 100),
+                trust_score: Number(p.users?.trust_score ?? p.users?.trustScore ?? 100),
               },
               createdAt: p.created_at,
               isDb: true,
@@ -80,9 +82,9 @@ export function WantToBuyMarquee() {
     };
   }, []);
 
-  // ดึงเฉพาะโพสต์จริงจาก Database (และโพสต์จริงที่ผู้ใช้เพิ่งสร้าง) โดยกรองโพสต์ของตัวเองออก
+  // ดึงเฉพาะโพสต์จริงจาก Database โดยกรองโพสต์ของตัวเอง และผู้โพสต์ที่ Trust Score < 50 ออก
   const realPosts = useMemo(() => {
-    const list = dbPosts.filter((p) => !isMyPost(p));
+    const list = dbPosts.filter((p) => !isMyPost(p) && (p.author?.trustScore ?? p.author?.trust_score ?? 100) >= 50);
 
     for (const r of localRequests) {
       if (r.status === 'cancelled' || isMyPost(r)) continue;

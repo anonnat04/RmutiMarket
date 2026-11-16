@@ -83,6 +83,8 @@ export function WantToBuyPage() {
               id: p.users?.id || p.buyer_id,
               name: p.users?.display_name || p.users?.username || 'สมาชิก RMUTI',
               avatarUrl: p.users?.avatar_url || p.users?.profile_image_url || null,
+              trustScore: Number(p.users?.trust_score ?? p.users?.trustScore ?? 100),
+              trust_score: Number(p.users?.trust_score ?? p.users?.trustScore ?? 100),
             },
             createdAt: p.created_at,
             status: mappedStatus,
@@ -134,7 +136,11 @@ export function WantToBuyPage() {
 
   const filtered = allRequests.filter((r) => {
     if (r.status === 'cancelled') return false;
-    if (activeTab === 'all' && (r.status !== 'active' || isMinePost(r))) return false;
+    if (activeTab === 'all') {
+      if (r.status !== 'active' || isMinePost(r)) return false;
+      const authorScore = r.author?.trustScore ?? r.author?.trust_score ?? 100;
+      if (authorScore < 50) return false;
+    }
     if (activeTab === 'my' && (!isMinePost(r) || r.status === 'cancelled')) return false;
     if (selectedCategory !== 'all' && r.categoryId !== selectedCategory) return false;
     if (q) {
@@ -342,7 +348,7 @@ export function WantToBuyPage() {
               : 'text-ink-500 hover:text-ink-700'
           }`}
         >
-          โพสทั้งหมด ({allRequests.filter((r) => r.status === 'active' && !isMinePost(r)).length})
+          โพสทั้งหมด ({allRequests.filter((r) => r.status === 'active' && !isMinePost(r) && (r.author?.trustScore ?? r.author?.trust_score ?? 100) >= 50).length})
         </button>
         <button
           onClick={() => setActiveTab('my')}

@@ -143,6 +143,16 @@ export function ProductDetailPage() {
       navigate('/login', { state: { from: `/products/${product.id}` } });
       return;
     }
+    const myScore = user?.trust_score ?? user?.trustScore ?? 100;
+    if (myScore < 50) {
+      alert(`Trust Score ของคุณต่ำกว่า 50 คะแนน (ตอนนี้ ${myScore}) จึงยังไม่สามารถลงขาย ซื้อ หรือตามหาสินค้าได้ ดูสินค้าได้ตามปกติ คะแนนจะได้รับคืนอัตโนมัติทุกสัปดาห์`);
+      return;
+    }
+    const sScore = product.seller?.trustScore ?? product.seller?.trust_score ?? 100;
+    if (sScore < 50) {
+      alert(`ผู้ขายรายนี้มีคะแนน Trust Score ต่ำกว่า 50 คะแนน จึงถูกระงับการทำธุรกรรมชั่วคราว`);
+      return;
+    }
     setShowActionChoiceModal(true);
   };
 
@@ -304,6 +314,18 @@ export function ProductDetailPage() {
   const isReserved = product.status === 'reserved';
   const isUnavailable = isSold || isReserved;
   const categoryLabel = product.categoryName || product.category_name || product.categories?.name || '';
+
+  const sellerTrustScore = product.seller?.trustScore ?? product.seller?.trust_score ?? 100;
+  const isSellerSuspended = sellerTrustScore < 50;
+
+  const sellerSuspendedNotice = (
+    <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-center">
+      <p className="text-sm font-extrabold text-red-700">⛔ สินค้านี้ถูกระงับการทำธุรกรรมชั่วคราว</p>
+      <p className="mt-1 text-xs text-red-600">
+        ผู้ขายมีคะแนนความน่าเชื่อถือต่ำกว่า 50 คะแนน (Trust Score: {sellerTrustScore}/100) จึงยังไม่สามารถทำการซื้อขายหรือนัดรับได้
+      </p>
+    </div>
+  );
 
   // กล่องแจ้งสถานะแทนปุ่มซื้อ เมื่อสินค้าขายแล้ว/ติดจอง
   const unavailableNotice = (
@@ -485,6 +507,8 @@ export function ProductDetailPage() {
                 แก้ไขสินค้า
               </Link>
             </div>
+          ) : isSellerSuspended ? (
+            <div className="hidden md:block">{sellerSuspendedNotice}</div>
           ) : isUnavailable ? (
             // สินค้าขายแล้ว/ติดจอง: แสดงข้อความแทนปุ่มซื้อ (มือถือใช้แถบด้านล่างแทน)
             <div className="hidden md:block">{unavailableNotice}</div>
@@ -562,6 +586,10 @@ export function ProductDetailPage() {
               แก้ไขสินค้า
             </Link>
           </div>
+        ) : isSellerSuspended ? (
+          <p className="py-1 text-center text-xs font-bold text-red-600">
+            ⛔ ระงับการทำธุรกรรมชั่วคราว (Trust Score ผู้ขายต่ำกว่า 50)
+          </p>
         ) : isUnavailable ? (
           <p className={`py-1 text-center text-sm font-extrabold ${isSold ? 'text-red-600' : 'text-amber-700'}`}>
             {isSold ? '🔴 สินค้านี้ขายแล้ว' : '🟡 สินค้านี้ติดจองอยู่'}

@@ -842,6 +842,25 @@ async function createMeetup(req, res, next) {
       return res.status(400).json({ error: "ไม่พบข้อมูลรายการซื้อขาย" });
     }
 
+    // ตรวจสอบว่าผู้ขายมี Trust Score ต่ำกว่า 50 หรือไม่ (ถ้าต่ำกว่า 50 จะไม่สามารถทำธุรกรรมได้)
+    if (txn.seller_id) {
+      const { data: sellerUser } = await supabase
+        .from("users")
+        .select("trust_score")
+        .eq("id", txn.seller_id)
+        .maybeSingle();
+      if (sellerUser && (sellerUser.trust_score ?? 100) < 50) {
+        if (newlyCreatedTxn) {
+          await cancelTransactionAndRelease(txn.id, txn.product_id, new Date().toISOString());
+          newlyCreatedTxn = null;
+        }
+        return res.status(403).json({
+          error: "ผู้ขายรายนี้มีคะแนน Trust Score ต่ำกว่า 50 คะแนน จึงถูกระงับการทำธุรกรรมชั่วคราว",
+          code: "SELLER_TRUST_SCORE_TOO_LOW",
+        });
+      }
+    }
+
     // ผู้ซื้อคนเดิมนัดสินค้าเดิมซ้อนกันไม่ได้ถ้านัดเดิมยืนยันไปแล้ว
     const { data: confirmedAppointment, error: confirmedApptErr } = await supabase
       .from("appointments")

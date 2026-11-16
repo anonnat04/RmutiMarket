@@ -92,7 +92,8 @@ function mapProductToListing(p) {
       display_name: sellerUsername || seller.displayName || "นักศึกษา มทร.อีสาน",
       avatarUrl: seller.avatarUrl,
       avatar_url: seller.avatarUrl,
-      trustScore: seller.trustScore || 100,
+      trustScore: seller.trustScore ?? 100,
+      trust_score: seller.trust_score ?? 100,
       reviewCount: seller.reviewCount || 0,
       verificationLevel: seller.verificationLevel || "student_id_verified",
       location: "มทร.อีสาน นครราชสีมา",
@@ -188,7 +189,13 @@ async function getListings(req, res, next) {
     const { data, error, count } = await query;
     if (error) throw error;
 
-    const listings = (data || []).map(mapProductToListing);
+    // ซ่อนสินค้าของผู้ขายที่มี Trust Score ต่ำกว่า 50 (ไม่สามารถทำธุรกรรมได้)
+    const listings = (data || [])
+      .filter((p) => {
+        const score = p.users?.trust_score ?? 100;
+        return score >= 50;
+      })
+      .map(mapProductToListing);
     res.json({ listings, total: count ?? listings.length, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) {
     next(err);

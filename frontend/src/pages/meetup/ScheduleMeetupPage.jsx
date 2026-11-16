@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { CalendarClock, MapPin, ShoppingBag, ChevronRight, ArrowLeft } from 'lucide-react';
+import { CalendarClock, MapPin, ShoppingBag, ChevronRight, ArrowLeft, AlertTriangle } from 'lucide-react';
 import { fetchProductDetail } from '@/services/productService';
 import { useAuthStore } from '@/store/authStore';
 import { CampusMapPicker } from '@/components/meetup/CampusMapPicker';
@@ -101,6 +101,12 @@ export function ScheduleMeetupPage() {
   // กันกดส่งซ้ำจนสร้างนัดหมายซ้ำในฐานข้อมูล
   const [submitting, setSubmitting] = useState(false);
 
+  const userTrustScore = user?.trust_score ?? user?.trustScore ?? 100;
+  const isTrustScoreTooLow = userTrustScore < 50;
+
+  const sellerTrustScore = product?.seller?.trustScore ?? product?.seller?.trust_score ?? 100;
+  const isSellerScoreTooLow = product ? sellerTrustScore < 50 : false;
+
   useEffect(() => {
     fetchProductDetail(id).then((p) => {
       setProduct(p ?? null);
@@ -153,6 +159,15 @@ export function ScheduleMeetupPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (submitting) return;
+
+    if (isTrustScoreTooLow) {
+      setErrors({ location: `Trust Score ของคุณต่ำกว่า 50 คะแนน (ตอนนี้ ${userTrustScore}) จึงยังไม่สามารถลงขาย ซื้อ หรือสร้างนัดรับได้` });
+      return;
+    }
+    if (isSellerScoreTooLow) {
+      setErrors({ location: `ผู้ขายรายนี้มีคะแนน Trust Score ต่ำกว่า 50 คะแนน จึงถูกระงับการทำธุรกรรมชั่วคราว` });
+      return;
+    }
 
     const next = {};
     if (!date) next.date = 'กรุณาเลือกวันที่';
@@ -283,6 +298,30 @@ export function ScheduleMeetupPage() {
       </div>
 
       <StepBar current={1} />
+
+      {/* ⛔ Trust Score Alert Banner */}
+      {isTrustScoreTooLow && (
+        <div className="mb-5 flex items-start gap-3 rounded-2xl bg-red-50 p-4 border border-red-200 text-xs text-red-900 leading-relaxed shadow-xs">
+          <AlertTriangle size={20} className="shrink-0 text-red-600 mt-0.5" />
+          <div>
+            <p className="font-bold text-red-950 text-sm">⛔ ระงับการทำธุรกรรม (Trust Score: {userTrustScore}/100)</p>
+            <p className="mt-1 text-red-800">
+              คะแนนความน่าเชื่อถือของคุณต่ำกว่า 50 คะแนน จึงยังไม่สามารถส่งคำขอนัดรับ ซื้อ หรือขายสินค้าได้ตามกฎความปลอดภัยของระบบ คะแนนจะได้รับคืนอัตโนมัติทุกสัปดาห์
+            </p>
+          </div>
+        </div>
+      )}
+      {isSellerScoreTooLow && (
+        <div className="mb-5 flex items-start gap-3 rounded-2xl bg-red-50 p-4 border border-red-200 text-xs text-red-900 leading-relaxed shadow-xs">
+          <AlertTriangle size={20} className="shrink-0 text-red-600 mt-0.5" />
+          <div>
+            <p className="font-bold text-red-950 text-sm">⛔ ไม่สามารถนัดรับสินค้ากับผู้ขายรายนี้ได้</p>
+            <p className="mt-1 text-red-800">
+              ผู้ขายรายนี้มีคะแนน Trust Score ต่ำกว่า 50 คะแนน จึงถูกระงับการทำธุรกรรมชั่วคราว
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ─── สินค้าที่จะนัดรับ ───────────────────────────────── */}
       <div
@@ -452,11 +491,25 @@ export function ScheduleMeetupPage() {
         </div>
 
         {/* ─── ส่งคำขอ ─────────────────────────────────────────── */}
-        <Button type="submit" size="lg" disabled={submitting} className="w-full">
+        <Button
+          type="submit"
+          size="lg"
+          disabled={submitting || isTrustScoreTooLow || isSellerScoreTooLow}
+          className="w-full"
+        >
           <span className="flex w-full items-center justify-center gap-2">
-            <CalendarClock size={18} />
-            {submitting ? 'กำลังส่งคำขอ...' : 'ส่งคำขอนัดรับสินค้า'}
-            {!submitting && <ChevronRight size={16} />}
+            {isTrustScoreTooLow || isSellerScoreTooLow ? (
+              <>
+                <AlertTriangle size={18} />
+                <span>ถูกระงับการทำธุรกรรม (Trust Score ต่ำกว่า 50)</span>
+              </>
+            ) : (
+              <>
+                <CalendarClock size={18} />
+                <span>{submitting ? 'กำลังส่งคำขอ...' : 'ส่งคำขอนัดรับสินค้า'}</span>
+                {!submitting && <ChevronRight size={16} />}
+              </>
+            )}
           </span>
         </Button>
       </form>

@@ -155,6 +155,8 @@ export function ProductListPage() {
             id: p.users?.id || p.buyer_id,
             name: p.users?.display_name || p.users?.username || "สมาชิก RMUTI",
             avatarUrl: p.users?.avatar_url || null,
+            trustScore: Number(p.users?.trust_score ?? p.users?.trustScore ?? 100),
+            trust_score: Number(p.users?.trust_score ?? p.users?.trustScore ?? 100),
           },
           createdAt: p.created_at,
           status: p.wanted_post_status?.code?.toLowerCase() === "completed" ? "resolved" : "active",
@@ -207,14 +209,26 @@ export function ProductListPage() {
     });
   }, [activeSlug, q, sortBy, appliedMinPrice, appliedMaxPrice, localRequests, searchParams, myId, myUsername, isMyProduct, isMyPost]);
 
-  // รายการสินค้าที่จะแสดง: กรองสินค้าของตัวเอง และสินค้าที่ขายแล้วออกทั้งหมด
+  // รายการสินค้าที่จะแสดง: กรองสินค้าของตัวเอง, สินค้าที่ขายแล้ว, และผู้ขายที่ Trust Score < 50 ออกทั้งหมด
   const displayedProducts = useMemo(() => {
-    return products.filter((p) => !isMyProduct(p) && p.status !== "sold" && p.statusId !== 3 && p.status_id !== 3);
+    return products.filter((p) => {
+      if (isMyProduct(p)) return false;
+      if (p.status === "sold" || p.statusId === 3 || p.status_id === 3) return false;
+      const sScore = p.seller?.trustScore ?? p.seller?.trust_score ?? p.users?.trust_score ?? 100;
+      if (sScore < 50) return false;
+      return true;
+    });
   }, [products, isMyProduct]);
 
-  // กรองและเรียงลำดับโพสต์ตามหาสินค้า: กรองโพสต์ของตัวเอง และโพสต์ที่ยกเลิกออกทั้งหมด
+  // กรองและเรียงลำดับโพสต์ตามหาสินค้า: กรองโพสต์ของตัวเอง, โพสต์ที่ยกเลิก, และผู้โพสต์ที่ Trust Score < 50 ออกทั้งหมด
   const sortedWantToBuyPosts = useMemo(() => {
-    let list = wantToBuyPosts.filter((p) => !isMyPost(p) && p.status !== "cancelled");
+    let list = wantToBuyPosts.filter((p) => {
+      if (isMyPost(p)) return false;
+      if (p.status === "cancelled") return false;
+      const bScore = p.author?.trustScore ?? p.author?.trust_score ?? 100;
+      if (bScore < 50) return false;
+      return true;
+    });
 
     if (appliedMinPrice !== null) {
       list = list.filter((p) => p.budget >= appliedMinPrice);

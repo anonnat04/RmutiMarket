@@ -37,6 +37,9 @@ export function RecommendedProducts({ products = [], loading }) {
     const eligibleProducts = products.filter((product) => {
       // ไม่แสดงสินค้าที่ขายแล้ว
       if (product.status === 'sold' || product.statusId === 3 || product.status_id === 3) return false;
+      // ไม่แสดงสินค้าของผู้ขายที่ Trust Score < 50
+      const sellerScore = product.seller?.trustScore ?? product.seller?.trust_score ?? 100;
+      if (sellerScore < 50) return false;
       // ไม่แสดงสินค้าของตัวเอง
       if (userId != null) {
         const sellerId = product.seller?.id ?? product.seller_id ?? product.sellerId;

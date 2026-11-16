@@ -109,7 +109,9 @@ export function formatListing(item) {
       fullName,
       displayName,
       avatarUrl: sellerObj.avatar_url || sellerObj.avatarUrl || null,
-      trustScore: sellerObj.average_rating ? Number(sellerObj.average_rating) : (sellerObj.trustScore || 5),
+      trustScore: Number(sellerObj.trust_score ?? sellerObj.trustScore ?? 100),
+      trust_score: Number(sellerObj.trust_score ?? sellerObj.trustScore ?? 100),
+      averageRating: Number(sellerObj.average_rating || 0),
       reviewCount: sellerObj.review_count || sellerObj.reviewCount || 0,
       verificationLevel: sellerObj.verification_level || sellerObj.verificationLevel || "student_verified",
       location: item.campuses?.name || "มทร.อีสาน นครราชสีมา",
@@ -139,6 +141,12 @@ export async function fetchProducts(params) {
         return true;
       });
     }
+
+    // ซ่อนสินค้าของผู้ขายที่มี Trust Score ต่ำกว่า 50 (ไม่สามารถทำธุรกรรมได้)
+    results = results.filter((p) => {
+      const sScore = p.seller?.trustScore ?? p.seller?.trust_score ?? p.users?.trust_score ?? 100;
+      return sScore >= 50;
+    });
 
     // หมายเหตุ: เอา mock data ออกจากผลลัพธ์จริงแล้ว เพื่อไม่ให้ปนกับสินค้าจริงจาก DB
     // ถ้าฐานข้อมูลว่างเปล่าจริงๆ ให้ไป seed ข้อมูลผ่านหน้า CreateProductPage หรือ insert เข้า Supabase ตรงๆ

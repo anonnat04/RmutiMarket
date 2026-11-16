@@ -82,7 +82,16 @@ async function getWantToBuyPosts(req, res, next) {
     const { data, error, count } = await query;
     if (error) throw error;
 
-    const posts = (data || []).map(mapWantedPost);
+    // ซ่อนโพสต์ตามหาของผู้ซื้อที่มี Trust Score ต่ำกว่า 50 (ไม่สามารถทำธุรกรรมได้)
+    // แต่ถ้าเป็นเจ้าของโพสต์เองที่ดูโพสต์ของตน (เช่นในแท็บ "โพสต์ของฉัน") ให้ยังมองเห็นได้
+    const posts = (data || [])
+      .filter((p) => {
+        const isOwner = req.user?.id && String(p.buyer_id) === String(req.user.id);
+        if (isOwner) return true;
+        const score = p.users?.trust_score ?? 100;
+        return score >= 50;
+      })
+      .map(mapWantedPost);
     res.json({ posts, total: count ?? posts.length });
   } catch (err) {
     next(err);
