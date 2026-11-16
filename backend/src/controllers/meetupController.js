@@ -954,8 +954,6 @@ async function createMeetup(req, res, next) {
     } catch (chatMsgErr) {
       console.warn("[createMeetup] auto post chat message error:", chatMsgErr?.message);
     }
-    const { data: insertedNotif } = await supabase.from("notifications").insert(notifData).select("*").single();
-    sendNotificationToUser(partnerId, insertedNotif || notifData);
 
     res.status(201).json({
       message: "สร้างนัดรับสินค้าเรียบร้อยแล้ว",
