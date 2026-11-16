@@ -158,9 +158,21 @@ async function getListings(req, res, next) {
       query = query.eq("condition_id", condId);
     }
 
-    // status=available → เฉพาะสินค้าที่ยังว่าง (หน้าแรก "สินค้าแนะนำ" ไม่แสดงของที่ขายแล้ว/ติดจอง)
-    // ไม่ส่ง status → คืนทุกสถานะ (หน้ารายการสินค้าแสดงของที่ขายแล้วพร้อมป้าย "ขายแล้ว")
-    if (status === "available") query = query.eq("status_id", 1);
+    // status=available → เฉพาะสินค้าที่ยังว่าง (status_id = 1)
+    // status=all → คืนทุกสถานะ
+    // ค่าเริ่มต้นทั่วไป → ไม่แสดงสินค้าที่ขายแล้ว (status_id = 3 คือ SOLD)
+    if (status === "available") {
+      query = query.eq("status_id", 1);
+    } else if (status === "all") {
+      // คืนทุกสถานะ
+    } else {
+      query = query.neq("status_id", 3);
+    }
+
+    // ไม่แสดงสินค้าของตัวเองในหน้าค้นหา/ตลาดทั่วไป
+    if (req.user?.id && !req.query.seller_id && req.query.include_mine !== "true") {
+      query = query.neq("seller_id", req.user.id);
+    }
 
     if (min_price) query = query.gte("price", parseFloat(min_price));
     if (max_price) query = query.lte("price", parseFloat(max_price));

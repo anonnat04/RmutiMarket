@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useWantToBuyStore } from '@/store/wantToBuyStore';
+import { useAuthStore } from '@/store/authStore';
 import { formatCurrency } from '@/utils/formatCurrency';
 
 function timeAgo(dateStr) {
@@ -25,6 +26,19 @@ function timeAgo(dateStr) {
 
 export function WantToBuyMarquee() {
   const navigate = useNavigate();
+  const user = useAuthStore((s) => s.user);
+  const myId = user?.id ? String(user.id) : null;
+  const myUsername = user?.username ? String(user.username).replace(/^@+/, '').trim().toLowerCase() : null;
+
+  const isMyPost = (item) => {
+    if (!myId && !myUsername) return false;
+    const aId = String(item.author?.id || item.buyer_id || item.buyerId || '');
+    if (myId && aId && aId === myId) return true;
+    const aName = String(item.author?.name || item.author?.username || '').replace(/^@+/, '').trim().toLowerCase();
+    if (myUsername && aName && aName === myUsername) return true;
+    return false;
+  };
+
   const localRequests = useWantToBuyStore((s) => s.requests || []);
   const [dbPosts, setDbPosts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -66,12 +80,12 @@ export function WantToBuyMarquee() {
     };
   }, []);
 
-  // ดึงเฉพาะโพสต์จริงจาก Database (และโพสต์จริงที่ผู้ใช้เพิ่งสร้าง) ไม่ใช้ mock data
+  // ดึงเฉพาะโพสต์จริงจาก Database (และโพสต์จริงที่ผู้ใช้เพิ่งสร้าง) โดยกรองโพสต์ของตัวเองออก
   const realPosts = useMemo(() => {
-    const list = [...dbPosts];
+    const list = dbPosts.filter((p) => !isMyPost(p));
 
     for (const r of localRequests) {
-      if (r.status === 'cancelled') continue;
+      if (r.status === 'cancelled' || isMyPost(r)) continue;
       if (!list.some((p) => String(p.id) === String(r.id))) {
         list.push({
           id: r.id,
@@ -90,7 +104,7 @@ export function WantToBuyMarquee() {
     }
 
     return list;
-  }, [dbPosts, localRequests]);
+  }, [dbPosts, localRequests, myId, myUsername]);
 
   // สร้าง list ที่ยาวพอสำหรับ loop marquee ให้เลื่อนเนียนสนิทไร้รอยต่อ (Seamless Loop)
   // โดยวนซ้ำเฉพาะโพสต์จริงที่มีอยู่ใน Database

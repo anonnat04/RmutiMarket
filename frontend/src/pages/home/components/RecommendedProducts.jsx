@@ -14,7 +14,9 @@ export function RecommendedProducts({ products = [], loading }) {
   const searchKeywords = useFeedStore((s) => s.searchKeywords);
   const seededInterests = useFeedStore((s) => s.seededInterests);
   const interests = useAuthStore((s) => s.interests);
-  const userId = useAuthStore((s) => s.user?.id);
+  const user = useAuthStore((s) => s.user);
+  const userId = user?.id;
+  const username = user?.username ? String(user.username).replace(/^@+/, '').trim().toLowerCase() : null;
 
   // แก้ไข: เดิม import "interestCategories" จาก constants/categories.jsx
   // ซึ่งถูกลบไปแล้ว (เพราะใช้ id ปลอมแบบ "cat-electronics" ไม่ตรงกับ
@@ -32,14 +34,22 @@ export function RecommendedProducts({ products = [], loading }) {
   // Compute smart personalized sorting for recommended products
   const smartProducts = useMemo(() => {
     if (!products || products.length === 0) return [];
-    const eligibleProducts = userId == null
-      ? products
-      : products.filter((product) => {
-          const sellerId = product.seller?.id ?? product.seller_id ?? product.sellerId;
-          return sellerId == null || String(sellerId) !== String(userId);
-        });
+    const eligibleProducts = products.filter((product) => {
+      // ไม่แสดงสินค้าที่ขายแล้ว
+      if (product.status === 'sold' || product.statusId === 3 || product.status_id === 3) return false;
+      // ไม่แสดงสินค้าของตัวเอง
+      if (userId != null) {
+        const sellerId = product.seller?.id ?? product.seller_id ?? product.sellerId;
+        if (sellerId != null && String(sellerId) === String(userId)) return false;
+      }
+      if (username) {
+        const sUser = String(product.seller?.username || '').replace(/^@+/, '').trim().toLowerCase();
+        if (sUser && sUser === username) return false;
+      }
+      return true;
+    });
     return useFeedStore.getState().getRecommendedFeed(eligibleProducts, wishlistIds);
-  }, [products, wishlistIds, viewCounts, likedCategories, searchKeywords, seededInterests, userId]);
+  }, [products, wishlistIds, viewCounts, likedCategories, searchKeywords, seededInterests, userId, username]);
 
   // ตรวจสอบว่ามีการ personalize แล้วหรือยัง
   const hasInterests = interests && interests.length > 0;

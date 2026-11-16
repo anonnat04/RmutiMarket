@@ -161,14 +161,7 @@ export function ScheduleMeetupPage() {
     else if (!isWithinMeetupHours(time)) next.time = `⏰ ${MEETUP_HOURS_TEXT}`;
     if (!locationValue) next.location = 'กรุณาเลือกจุดนัดรับบนแผนที่';
 
-    // ── ตรวจสอบเวลานัดหมายซ้อนทับ ──
-    if (date && time && !next.time) {
-      const conflict = getConflictingMeetup(date, time);
-      if (conflict) {
-        const conflictTitle = conflict.productTitle || conflict.product?.title || 'รายการอื่น';
-        next.time = `⚠️ เวลานัดหมาย ${time} น. ซ้อนทับกับนัดรับสินค้าอื่นของคุณ ("${conflictTitle}") กรุณาเลือกเวลาอื่นที่ห่างกันอย่างน้อย 30 นาที`;
-      }
-    }
+    // อนุญาตให้นัดหมายซ้อนเวลากันได้ตามความสะดวก (หากไม่มาเช็คอินตามเวลาจะถูกตัดคะแนนตามกฎ)
 
     setErrors(next);
     if (Object.keys(next).length > 0) return;
@@ -244,7 +237,7 @@ export function ScheduleMeetupPage() {
         });
       });
 
-      navigate('/meetups', { state: { justCreated: meetupId } });
+      navigate('/meetups?tab=pending', { state: { justCreated: meetupId } });
       // หมายเหตุ: ไม่ setSubmitting(false) ที่นี่โดยตั้งใจ เพราะกำลังจะออกจากหน้านี้อยู่แล้ว
     } catch (err) {
       console.error("Failed to create meetup:", err);

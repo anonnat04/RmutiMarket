@@ -120,13 +120,25 @@ export function formatListing(item) {
 
 export async function fetchProducts(params) {
   try {
-    // includeSold = true (หน้ารายการสินค้า): แสดงทุกสถานะ รวมของที่ขายแล้ว/ติดจอง พร้อมป้ายสถานะ
-    // ค่าเริ่มต้น (หน้าแรก "สินค้าแนะนำ"): แสดงเฉพาะสินค้าที่ยังว่างขาย ไม่โชว์ของที่ขายแล้ว
+    // includeSold = false (ค่าเริ่มต้น): ไม่แสดงสินค้าที่ขายแล้ว (sold)
     const { includeSold = false, categorySlug, categoryName, ...apiParams } = params || {};
-    const res = await api.getListings(includeSold ? apiParams : { ...apiParams, status: "available" });
+    const res = await api.getListings(includeSold ? { ...apiParams, status: "all" } : { ...apiParams, status: "available" });
     let results = (res?.listings || [])
       .map(formatListing)
-      .filter((p) => (includeSold ? ["active", "reserved", "sold"].includes(p.status) : p.status === "active"));
+      .filter((p) => (includeSold ? ["active", "reserved", "sold"].includes(p.status) : p.status !== "sold" && p.statusId !== 3 && p.status_id !== 3));
+
+    // กรองสินค้าของผู้ใช้ที่ระบุออก (เช่น สินค้าของตัวเองในหน้าตลาด)
+    if (params?.excludeUserId || params?.excludeUsername) {
+      const exId = params.excludeUserId ? String(params.excludeUserId) : null;
+      const exUser = params.excludeUsername ? String(params.excludeUsername).replace(/^@+/, "").trim().toLowerCase() : null;
+      results = results.filter((p) => {
+        const sId = String(p.seller?.id || p.seller_id || p.sellerId || "");
+        if (exId && sId && sId === exId) return false;
+        const sUser = String(p.seller?.username || "").replace(/^@+/, "").trim().toLowerCase();
+        if (exUser && sUser && sUser === exUser) return false;
+        return true;
+      });
+    }
 
     // หมายเหตุ: เอา mock data ออกจากผลลัพธ์จริงแล้ว เพื่อไม่ให้ปนกับสินค้าจริงจาก DB
     // ถ้าฐานข้อมูลว่างเปล่าจริงๆ ให้ไป seed ข้อมูลผ่านหน้า CreateProductPage หรือ insert เข้า Supabase ตรงๆ

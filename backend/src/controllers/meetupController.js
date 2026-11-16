@@ -320,6 +320,12 @@ function mapAppointment(a) {
     sellerId: txn.seller_id,
     product_id: txn.product_id,
     productId: txn.product_id,
+    product_title: prod.title || "สินค้า",
+    productTitle: prod.title || "สินค้า",
+    product_image: primaryImg,
+    productImage: primaryImg,
+    image_url: primaryImg,
+    imageUrl: primaryImg,
     agreed_price: price,
     agreedPrice: price,
     price,
@@ -645,37 +651,52 @@ async function getMyMeetups(req, res, next) {
 }
 
 // ----------------------------------------------------------------
-// Helper: เปิดธุรกรรมใหม่ + จองสินค้า (AVAILABLE -> RESERVED) แบบ atomic
-// ใช้ได้ทั้งตอนซื้อครั้งแรก และตอนขอนัดใหม่หลังนัดเดิมถูกยกเลิก/ตัดจบ/ไม่มาตามนัด
+// Helper: เปิดธุรกรรมใหม่ (สินค้าคงสถานะว่าง status_id = 1 ไม่เปลี่ยนเป็นจอง)
+// ผู้ซื้อคนเดิมนัดสินค้าเดิมซ้อนได้แค่ 1 รายการที่ยังไม่จบ (คนละคนนัดซ้อนกันได้)
 // ----------------------------------------------------------------
 async function openNewTransaction(productId, buyerId, sellerId) {
-  // จองสินค้าเฉพาะตอนที่ยังว่าง (1 = AVAILABLE) กันสองคนจองพร้อมกัน
-  const { data: claimed } = await supabase
+  // ตรวจสอบสินค้า: ต้องมีอยู่จริงและยังไม่ขาย (3 = SOLD)
+  const { data: prod, error: pErr } = await supabase
     .from("products")
-    .update({ status_id: 2 }) // 2 = RESERVED
+    .select("id, status_id")
     .eq("id", productId)
-    .eq("status_id", 1)
-    .select("id");
-  if (!claimed?.length) {
-    return { error: "สินค้านี้ไม่ว่างแล้ว (มีผู้อื่นจองหรือขายไปแล้ว)" };
+    .single();
+
+  if (pErr || !prod) {
+    return { error: "ไม่พบสินค้า" };
+  }
+  if (Number(prod.status_id) === 3) {
+    return { error: "สินค้านี้ขายแล้ว ไม่สามารถนัดรับได้" };
   }
 
+  // ผู้ซื้อคนเดิมนัดสินค้าเดิมซ้อนได้แค่ 1 รายการที่ยังไม่จบ
+  const { data: existingTxn } = await supabase
+    .from("transactions")
+    .select("id, buyer_id, seller_id, status_id, product_id")
+    .eq("product_id", productId)
+    .eq("buyer_id", buyerId)
+    .is("cancelled_at", null)
+    .is("completed_at", null)
+    .in("status_id", [1, 2])
+    .maybeSingle();
+
+  if (existingTxn) {
+    return { txn: existingTxn };
+  }
+
+  // สร้างธุรกรรมใหม่ในสถานะ PENDING (1) โดยสินค้ายังคงสถานะว่าง (1 = AVAILABLE)
   const { data: newTxn, error: tErr } = await supabase
     .from("transactions")
     .insert({
       product_id: productId,
       buyer_id: buyerId,
       seller_id: sellerId,
-      status_id: 2, // 2 = CONFIRMED
+      status_id: 1, // 1 = PENDING (รอยืนยันนัดหมาย)
     })
     .select("id, buyer_id, seller_id, status_id, product_id")
     .single();
 
-  if (tErr) {
-    // สร้างธุรกรรมไม่สำเร็จ คืนสินค้ากลับเป็นว่าง
-    await supabase.from("products").update({ status_id: 1 }).eq("id", productId).eq("status_id", 2);
-    throw tErr;
-  }
+  if (tErr) throw tErr;
   return { txn: newTxn };
 }
 
@@ -764,10 +785,8 @@ async function createMeetup(req, res, next) {
         .eq("id", txn.product_id)
         .maybeSingle();
       if (linkedProductErr) throw linkedProductErr;
-      if (Number(linkedProduct?.status_id) !== 1) {
-        return res.status(409).json({ error: Number(linkedProduct?.status_id) === 3
-          ? "สินค้านี้ขายแล้ว ไม่สามารถนัดรับได้"
-          : "สินค้านี้ติดจองอยู่ จึงยังนัดรับไม่ได้" });
+      if (Number(linkedProduct?.status_id) === 3) {
+        return res.status(409).json({ error: "สินค้านี้ขายแล้ว ไม่สามารถนัดรับได้" });
       }
       // ดีลที่ขายสำเร็จแล้ว (3) ห้ามนัดซ้ำ
       if (Number(txn.status_id) === 3) {
@@ -791,10 +810,8 @@ async function createMeetup(req, res, next) {
 
       if (!product) return res.status(404).json({ error: "ไม่พบสินค้า" });
       if (product.seller_id === req.user.id) return res.status(400).json({ error: "ไม่สามารถซื้อสินค้าของตนเองได้" });
-      if (Number(product.status_id) !== 1) {
-        return res.status(409).json({ error: Number(product.status_id) === 3
-          ? "สินค้านี้ขายแล้ว ไม่สามารถนัดรับได้"
-          : "สินค้านี้ติดจองอยู่ จึงยังนัดรับไม่ได้" });
+      if (Number(product.status_id) === 3) {
+        return res.status(409).json({ error: "สินค้านี้ขายแล้ว ไม่สามารถนัดรับได้" });
       }
 
       const targetSellerId = sellerId ? parseInt(sellerId) : product.seller_id;
@@ -825,8 +842,7 @@ async function createMeetup(req, res, next) {
       return res.status(400).json({ error: "ไม่พบข้อมูลรายการซื้อขาย" });
     }
 
-    // Never allow a second request while a confirmed appointment is active,
-    // even when the proposed time is far away from the existing time.
+    // ผู้ซื้อคนเดิมนัดสินค้าเดิมซ้อนกันไม่ได้ถ้านัดเดิมยืนยันไปแล้ว
     const { data: confirmedAppointment, error: confirmedApptErr } = await supabase
       .from("appointments")
       .select("id")
@@ -840,51 +856,7 @@ async function createMeetup(req, res, next) {
         await cancelTransactionAndRelease(txn.id, txn.product_id, new Date().toISOString());
         newlyCreatedTxn = null;
       }
-      return res.status(409).json({ error: "รายการนี้มีนัดรับที่ยืนยันแล้วอยู่ ไม่สามารถนัดซ้อนเพิ่มได้" });
-    }
-
-    // ── ตรวจเวลานัดหมายซ้ำ/ทับซ้อน (Overlap Check) ──
-    const targetMin = toMinutes(finalTime);
-
-    const { data: dayAppts, error: dayApptErr } = await supabase
-      .from("appointments")
-      .select(`
-        id, appointment_date, appointment_time, status_id,
-        transactions!inner(id, buyer_id, seller_id, product_id)
-      `)
-      .eq("appointment_date", finalDate)
-      .in("status_id", [1, 2]);
-    if (dayApptErr) throw dayApptErr;
-
-    if (dayAppts?.length) {
-      const conflict = dayAppts.find((a) => {
-        const t = a.transactions;
-        if (!t) return false;
-        // A pending proposal for this same transaction can be replaced after
-        // validation; confirmed appointments must never be silently replaced.
-        if (String(t.id) === String(txn.id) && Number(a.status_id) === 1) return false;
-        const involvesParty =
-          String(t.buyer_id) === String(txn.buyer_id) ||
-          String(t.seller_id) === String(txn.buyer_id) ||
-          String(t.buyer_id) === String(txn.seller_id) ||
-          String(t.seller_id) === String(txn.seller_id) ||
-          String(t.product_id) === String(txn.product_id);
-
-        if (!involvesParty) return false;
-
-        const apptMin = toMinutes(a.appointment_time);
-        return Math.abs(apptMin - targetMin) < 40;
-      });
-
-      if (conflict) {
-        if (newlyCreatedTxn) {
-          await cancelTransactionAndRelease(txn.id, txn.product_id, new Date().toISOString());
-          newlyCreatedTxn = null;
-        }
-        return res.status(400).json({
-          error: `เวลานัดหมาย ${finalTime} น. ชนกับนัดอื่นภายในช่วง 40 นาที กรุณาเลือกเวลาใหม่`,
-        });
-      }
+      return res.status(409).json({ error: "คุณมีนัดรับที่ยืนยันแล้วสำหรับสินค้านี้อยู่ ไม่สามารถนัดซ้อนเพิ่มได้" });
     }
 
     // Replace old pending proposals only after all validation passes, so a bad
@@ -933,6 +905,55 @@ async function createMeetup(req, res, next) {
       reference_type: "meetup",
       reference_id: appointment.id,
     };
+    const { data: insertedNotif } = await supabase.from("notifications").insert(notifData).select("*").single();
+    sendNotificationToUser(partnerId, insertedNotif || notifData);
+
+    // แจ้งเตือนแบบเรียลไทม์ผ่าน Socket.IO ทั้งสองฝ่าย
+    emitMeetupUpdate(appointment.id, {
+      meetupId: appointment.id,
+      status: "pending",
+      statusCode: "PENDING",
+      buyerId: txn.buyer_id,
+      sellerId: txn.seller_id,
+      productId: txn.product_id,
+      appointmentDate: finalDate,
+      appointmentTime: finalTime,
+    });
+
+    // ส่งข้อความแจ้งในห้องแชทอัตโนมัติ (ถ้ามีห้องแชทของคู่นี้อยู่)
+    try {
+      const { data: convs } = await supabase
+        .from("conversations")
+        .select("id")
+        .eq("product_id", txn.product_id);
+      if (convs?.length) {
+        for (const c of convs) {
+          const { data: mems } = await supabase
+            .from("conversation_members")
+            .select("user_id")
+            .eq("conversation_id", c.id);
+          const uids = (mems || []).map((m) => String(m.user_id));
+          if (uids.includes(String(txn.buyer_id)) && uids.includes(String(txn.seller_id))) {
+            const locText = locationName || finalDetail || "จุดนัดรับ มทร.อีสาน";
+            const chatContent = `📅 นัดรับสินค้า: วันที่ ${finalDate} เวลา ${finalTime} น. ณ ${locText} (กรุณาไปที่หน้านัดรับเพื่อกดยืนยัน)`;
+            const { data: insertedMsg } = await supabase.from("messages").insert({
+              conversation_id: c.id,
+              sender_id: req.user.id,
+              content: chatContent,
+              message_type: "TEXT",
+            }).select("*").single();
+
+            if (insertedMsg) {
+              const { emitNewMessage } = require("../services/chatSocket");
+              emitNewMessage(c.id, insertedMsg);
+            }
+            break;
+          }
+        }
+      }
+    } catch (chatMsgErr) {
+      console.warn("[createMeetup] auto post chat message error:", chatMsgErr?.message);
+    }
     const { data: insertedNotif } = await supabase.from("notifications").insert(notifData).select("*").single();
     sendNotificationToUser(partnerId, insertedNotif || notifData);
 
@@ -1190,6 +1211,47 @@ async function completeMeetup(req, res, next) {
     await supabase.from("products").update({
       status_id: 3, // 3 = ขายแล้ว (SOLD)
     }).eq("id", txn.product_id);
+
+    // ปิด/ยกเลิกนัดหมายและธุรกรรมอื่นๆ ของสินค้านี้ที่ยังค้างอยู่ เนื่องจากมีผู้ซื้อคนนี้ซื้อสำเร็จไปแล้ว
+    try {
+      const { data: otherTxns } = await supabase
+        .from("transactions")
+        .select("id, buyer_id")
+        .eq("product_id", txn.product_id)
+        .neq("id", completedTxnId)
+        .in("status_id", [1, 2]);
+
+      if (otherTxns?.length) {
+        const otherTxnIds = otherTxns.map((t) => t.id);
+        await supabase.from("transactions").update({
+          status_id: 4,
+          cancelled_at: now,
+        }).in("id", otherTxnIds);
+
+        await supabase.from("appointments").update({
+          status_id: 4,
+          cancelled_at: now,
+          cancellation_reason: "สินค้ารายการนี้ถูกปิดการขายให้ผู้ซื้อรายอื่นแล้ว",
+        }).in("transaction_id", otherTxnIds).in("status_id", [1, 2]);
+
+        for (const ot of otherTxns) {
+          if (ot.buyer_id) {
+            const soldOtherNotif = {
+              user_id: ot.buyer_id,
+              type: "meetup_cancelled",
+              title: "สินค้าถูกปิดการขายแล้ว 📦",
+              message: "สินค้ารายการนี้ถูกส่งมอบสำเร็จให้กับผู้ซื้อรายอื่นแล้ว คำขอนัดรับของคุณจึงถูกยกเลิก",
+              reference_type: "product",
+              reference_id: txn.product_id,
+            };
+            await supabase.from("notifications").insert(soldOtherNotif);
+            sendNotificationToUser(ot.buyer_id, soldOtherNotif);
+          }
+        }
+      }
+    } catch (cancelOtherErr) {
+      console.warn("[completeMeetup] auto cancel other deals warning:", cancelOtherErr?.message);
+    }
 
     // Increment successful_deal_count on buyer & seller and recover seller trust score
     if (txn.buyer_id) {

@@ -51,9 +51,10 @@ function buildDealInfo(product, productTxs, participantsKey) {
   const productStatus = product?.status_id != null ? Number(product.status_id) : null;
   // "สิ้นสุด" = สินค้าขายแล้ว หรือมีดีลปิดงานสำเร็จแล้วเท่านั้น (ยกเลิก/ไม่มาตามนัด ไม่นับ)
   const isDealClosed = productStatus === PRODUCT_SOLD || Boolean(completedTx);
-  const hasOpenTx = txList.some((tx) => OPEN_TX_STATUS.includes(Number(tx.status_id)));
-  // สินค้ายังว่าง และไม่มีดีลค้าง → นัดรับได้ (แม้เคยยกเลิก/ไม่มาตามนัด)
-  const canScheduleMeetup = productStatus === PRODUCT_AVAILABLE && !hasOpenTx && !isDealClosed;
+  // ตรวจเฉพาะดีลที่เปิดค้างอยู่ของ "คู่นี้" (คนละคนสามารถนัดสินค้าชิ้นเดียวกันได้)
+  const hasOpenPairTx = pairTxs.some((tx) => OPEN_TX_STATUS.includes(Number(tx.status_id)));
+  // สินค้ายังไม่ขาย และคู่นี้ยังไม่มีดีลค้าง → นัดรับได้
+  const canScheduleMeetup = productStatus !== PRODUCT_SOLD && !hasOpenPairTx && !isDealClosed;
 
   return {
     transactionStatusId: txStatus,
@@ -187,9 +188,8 @@ async function getConversations(req, res, next) {
   try {
     const myId = req.user.id;
 
-    // ลบห้องแชทของดีลที่ยกเลิก/ไม่มาตามนัด ที่เกี่ยวข้องกับฉันก่อนเสมอ
-    // (ทำให้แชทหายทันทีหลังยกเลิกนัด โดยไม่ต้องรอ job ตามรอบ)
-    await deleteCancelledDealChats({ userId: myId });
+    // ไม่ลบห้องแชทอัตโนมัติเพียงเพราะมีการยกเลิกนัด เพื่อให้ผู้ใช้ยังคงพูดคุยตกลงเวลากันต่อได้
+    // await deleteCancelledDealChats({ userId: myId });
 
     // 1. ลองดึงจาก schema ใหม่: conversation_members
     const { data: myMemberships, error: memErr } = await supabase

@@ -134,7 +134,7 @@ export function WantToBuyPage() {
 
   const filtered = allRequests.filter((r) => {
     if (r.status === 'cancelled') return false;
-    if (activeTab === 'all' && r.status !== 'active') return false;
+    if (activeTab === 'all' && (r.status !== 'active' || isMinePost(r))) return false;
     if (activeTab === 'my' && (!isMinePost(r) || r.status === 'cancelled')) return false;
     if (selectedCategory !== 'all' && r.categoryId !== selectedCategory) return false;
     if (q) {
@@ -342,7 +342,7 @@ export function WantToBuyPage() {
               : 'text-ink-500 hover:text-ink-700'
           }`}
         >
-          โพสทั้งหมด ({allRequests.filter((r) => r.status === 'active').length})
+          โพสทั้งหมด ({allRequests.filter((r) => r.status === 'active' && !isMinePost(r)).length})
         </button>
         <button
           onClick={() => setActiveTab('my')}

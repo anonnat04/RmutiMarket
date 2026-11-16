@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { CalendarClock, MapPin, ChevronDown, ChevronUp, Bell, ArrowLeft, ChevronRight, CheckCircle2, XCircle, RefreshCw, Star, AlertTriangle } from 'lucide-react';
+import { Link, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
+import { CalendarClock, MapPin, ChevronDown, ChevronUp, Bell, ArrowLeft, ChevronRight, CheckCircle2, XCircle, RefreshCw, Star, AlertTriangle, ShoppingBag } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useMeetupStore, getCheckInWindow } from '@/store/meetupStore';
 import { useNotificationStore } from '@/store/notificationStore';
@@ -11,6 +11,7 @@ import { Button } from '@/components/common/Button';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { CAMPUS_CENTER, meetupPoints } from '@/constants/meetupPoints';
 import { api } from '@/lib/api';
+import { getSocket } from '@/services/socket';
 
 
 // ⚠️ หมายเหตุสำคัญ: ระบบนี้ไม่มี "เลื่อนนัด" อีกต่อไป
@@ -84,7 +85,20 @@ function mapAppointmentFromApi(m) {
   let mappedStatus = m.status === 'no_show' ? 'no_show' : (m.status ? mapStatusCode(String(m.status).toUpperCase()) : mapStatusCode(rawStatusCode));
 
   const images = product.images || product.product_images || [];
-  const coverImage = product.imageUrl || product.image_url || images.find((i) => i.is_cover || i.is_primary)?.url || images.find((i) => i.is_cover || i.is_primary)?.image_url || images[0]?.url || images[0]?.image_url || '';
+  const coverImage =
+    m.productImage ||
+    m.product_image ||
+    m.imageUrl ||
+    m.image_url ||
+    product.imageUrl ||
+    product.image_url ||
+    product.coverImage ||
+    images.find((i) => i.is_cover || i.is_primary)?.url ||
+    images.find((i) => i.is_cover || i.is_primary)?.image_url ||
+    images[0]?.url ||
+    images[0]?.image_url ||
+    (typeof product.images === 'string' ? product.images : '') ||
+    '';
 
   const date = m.appointment_date || m.date || (m.scheduledAt ? m.scheduledAt.split('T')[0] : '');
   const rawTime = m.appointment_time || m.time || m.startTime || (m.scheduledAt ? m.scheduledAt.split('T')[1]?.slice(0, 5) : '12:00');
@@ -251,6 +265,7 @@ function tabMatches(tab, status) {
 
 export function MeetupListPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const user = useAuthStore((s) => s.user);
   const meetups = useMeetupStore((s) => s.meetups);
@@ -311,6 +326,21 @@ export function MeetupListPage() {
   useEffect(() => {
     fetchMeetups();
   }, [user]);
+
+  // รับการอัปเดตนัดหมายแบบเรียลไทม์ผ่าน Socket.IO
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const handleUpdate = () => {
+      fetchMeetups();
+    };
+    socket.on('meetup_updated', handleUpdate);
+    socket.on('meetup_status_update', handleUpdate);
+    return () => {
+      socket.off('meetup_updated', handleUpdate);
+      socket.off('meetup_status_update', handleUpdate);
+    };
+  }, []);
 
   const allMeetups = useMemo(() => {
     // DB เป็น source of truth — ใช้เป็น base แล้ว dedup ด้วย transactionId + productId-buyerId-sellerId
@@ -389,6 +419,14 @@ export function MeetupListPage() {
       markTabAsSeen(activeTab);
     }
   }, [activeTab, myMeetups]);
+
+  // ── เมื่อเพิ่งสร้างคำขอนัดรับใหม่ ให้เปิดแท็บ "รอดำเนินการ" และรีเฟรชทันที ──
+  useEffect(() => {
+    if (location.state?.justCreated) {
+      setActiveTab('pending');
+      fetchMeetups();
+    }
+  }, [location.state]);
 
   // ── อ่าน ?tab=X&highlight=Y จาก URL เมื่อมาจากแจ้งเตือน ──────────────────
   useEffect(() => {
@@ -689,13 +727,29 @@ export function MeetupListPage() {
                   boxShadow: isHighlighted ? '0 0 0 4px #fed7aa55' : undefined,
                 }}
               >
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div>
-                  <p className="text-sm font-semibold text-ink-900">{m.productTitle}</p>
-                  <p className="text-xs text-ink-500">{role === 'buyer' ? 'ผู้ขาย' : 'ผู้ซื้อ'}: {otherName}</p>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  {m.productImage ? (
+                    <img
+                      src={m.productImage}
+                      alt={m.productTitle}
+                      className="w-14 h-14 rounded-xl object-cover border border-gray-200 shrink-0 bg-gray-50 shadow-2xs"
+                    />
+                  ) : (
+                    <div className="w-14 h-14 rounded-xl bg-orange-50 border border-orange-200/60 flex items-center justify-center shrink-0 text-orange-400">
+                      <ShoppingBag size={22} />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-ink-900 truncate">{m.productTitle}</p>
+                    <p className="text-xs text-ink-500">{role === 'buyer' ? 'ผู้ขาย' : 'ผู้ซื้อ'}: <span className="font-semibold text-ink-700">{otherName}</span></p>
+                    {m.productPrice > 0 && (
+                      <p className="text-xs font-bold text-brand-600 mt-0.5">฿{Number(m.productPrice).toLocaleString()}</p>
+                    )}
+                  </div>
                 </div>
                 {m.status === 'completed' && myReview ? (
-                  <span className="inline-block rounded-full px-3 py-1 text-xs font-bold bg-emerald-100 text-emerald-800">
+                  <span className="inline-block rounded-full px-3 py-1 text-xs font-bold bg-emerald-100 text-emerald-800 shrink-0">
                     ✅ เสร็จสิ้นแล้ว
                   </span>
                 ) : (

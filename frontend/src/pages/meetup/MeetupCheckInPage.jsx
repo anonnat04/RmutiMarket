@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, MapPin, CalendarClock, Navigation,
   PackageCheck, ShieldCheck, Radio, XCircle, Clock,
-  Maximize2, Minimize2, ZoomIn, ZoomOut, X, CheckCircle2, Star, AlertTriangle
+  Maximize2, Minimize2, ZoomIn, ZoomOut, X, CheckCircle2, Star, AlertTriangle, ShoppingBag
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useMeetupStore, getCheckInWindow, haversineDistanceMeters } from '@/store/meetupStore';
@@ -154,7 +154,20 @@ function mapAppointment(m) {
   let mappedStatus = m.status === 'no_show' ? 'no_show' : (m.status ? mapStatusCode(String(m.status).toUpperCase()) : mapStatusCode(rawStatusCode));
 
   const images = product.images || product.product_images || [];
-  const coverImage = product.imageUrl || product.image_url || images.find((i) => i.is_cover || i.is_primary)?.url || images.find((i) => i.is_cover || i.is_primary)?.image_url || images[0]?.url || images[0]?.image_url || '';
+  const coverImage =
+    m.productImage ||
+    m.product_image ||
+    m.imageUrl ||
+    m.image_url ||
+    product.imageUrl ||
+    product.image_url ||
+    product.coverImage ||
+    images.find((i) => i.is_cover || i.is_primary)?.url ||
+    images.find((i) => i.is_cover || i.is_primary)?.image_url ||
+    images[0]?.url ||
+    images[0]?.image_url ||
+    (typeof product.images === 'string' ? product.images : '') ||
+    '';
 
   // date อาจมาเป็น "YYYY-MM-DD" หรือ ISO เต็ม → เก็บเฉพาะส่วนวันที่
   const rawDate = m.appointment_date || m.date || (m.scheduledAt ? m.scheduledAt.split('T')[0] : '');
@@ -237,10 +250,14 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const miniMarkersRef = useRef({});
+  const leafletRef = useRef(null);
+  const [mapReady, setMapReady] = useState(0);
 
   const fullMapRef = useRef(null);
   const fullMapInstanceRef = useRef(null);
   const fullMarkersRef = useRef({});
+  const fullLeafletRef = useRef(null);
+  const [fullMapReady, setFullMapReady] = useState(0);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -275,6 +292,22 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
     });
   };
 
+  // Helper สำหรับ Fit bounds ให้ครอบคลุมทุกจุดบนแผนที่
+  const fitAll = (map, L) => {
+    if (!map || !L) return;
+    const pts = [[targetLat, targetLng]];
+    if (buyerCoords?.lat && buyerCoords?.lng) pts.push([buyerCoords.lat, buyerCoords.lng]);
+    if (sellerCoords?.lat && sellerCoords?.lng) pts.push([sellerCoords.lat, sellerCoords.lng]);
+    if (pts.length > 1) {
+      try {
+        const bounds = L.latLngBounds(pts);
+        map.fitBounds(bounds, { padding: [45, 45], maxZoom: 16 });
+      } catch (_) {}
+    } else {
+      map.setView([targetLat, targetLng], 16);
+    }
+  };
+
   // 1. Initial Mini Map
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current || !meetup) return;
@@ -290,6 +323,8 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
     import('leaflet').then((mod) => {
       if (mapInstanceRef.current) return;
       const L = mod.default ?? mod;
+      leafletRef.current = L;
+
       const map = L.map(mapRef.current, {
         center: [targetLat, targetLng],
         zoom: 16,
@@ -302,12 +337,41 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
 
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
+      // 🟢 วงกลมสีเขียว รัศมี 200 เมตร รอบจุดนัดรับ (ขอบเขตพื้นที่เช็คอิน)
+      const circle = L.circle([targetLat, targetLng], {
+        radius: 200,
+        color: '#16a34a',
+        fillColor: '#22c55e',
+        fillOpacity: 0.18,
+        weight: 2,
+        dashArray: '6, 6',
+      }).addTo(map);
+      circle.bindPopup('🟢 พื้นที่เช็คอิน (รัศมี 200 เมตร รอบจุดนัดรับ)');
+
       // Marker จุดนัดรับ (สีส้ม)
       const targetIcon = createMarkerIcon(L, '#f97316', `📍 ${meetup.locationName || 'จุดนัดรับ'}`);
       const targetMarker = L.marker([targetLat, targetLng], { icon: targetIcon }).addTo(map);
 
-      miniMarkersRef.current = { target: targetMarker };
+      miniMarkersRef.current = { target: targetMarker, circle };
+
+      // ใส่ Marker ผู้ซื้อทันทีถ้ามีพิกัด
+      if (buyerCoords?.lat && buyerCoords?.lng) {
+        const bIcon = createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`, -135);
+        miniMarkersRef.current.buyer = L.marker([buyerCoords.lat, buyerCoords.lng], { icon: bIcon }).addTo(map);
+      }
+
+      // ใส่ Marker ผู้ขายทันทีถ้ามีพิกัด
+      if (sellerCoords?.lat && sellerCoords?.lng) {
+        const sIcon = createMarkerIcon(L, '#16a34a', `🏷️ ${sellerLabel}`);
+        miniMarkersRef.current.seller = L.marker([sellerCoords.lat, sellerCoords.lng], { icon: sIcon }).addTo(map);
+      }
+
       mapInstanceRef.current = map;
+      setMapReady((v) => v + 1);
+
+      // ปรับมุมมองอัตโนมัติให้เห็นทั้งผู้ซื้อ ผู้ขาย และจุดนัดรับ
+      fitAll(map, L);
+
       setTimeout(() => map?.invalidateSize(), 200);
       setTimeout(() => map?.invalidateSize(), 600);
     });
@@ -321,41 +385,48 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
     };
   }, [meetup?.locationId, meetup?.locationLat, meetup?.locationLng, targetLat, targetLng]);
 
-  // Update Markers ใน Mini Map เมื่อพิกัดผู้ซื้อ / ผู้ขาย เปลี่ยน
+  // Update Markers และ Circle ใน Mini Map เมื่อพิกัดเปลี่ยน
   useEffect(() => {
-    if (!mapInstanceRef.current) return;
-    import('leaflet').then((mod) => {
-      const L = mod.default ?? mod;
-      const map = mapInstanceRef.current;
-      if (!map) return;
+    const map = mapInstanceRef.current;
+    const L = leafletRef.current;
+    if (!map || !L) return;
 
-      // ผู้ซื้อ (สีน้ำเงิน)
-      if (buyerCoords?.lat && buyerCoords?.lng) {
-        if (!miniMarkersRef.current.buyer) {
-          const icon = createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`, -135);
-          miniMarkersRef.current.buyer = L.marker([buyerCoords.lat, buyerCoords.lng], { icon }).addTo(map);
-        } else {
-          miniMarkersRef.current.buyer.setLatLng([buyerCoords.lat, buyerCoords.lng]);
-        }
-      } else if (miniMarkersRef.current.buyer) {
-        map.removeLayer(miniMarkersRef.current.buyer);
-        delete miniMarkersRef.current.buyer;
-      }
+    // อัปเดต Marker จุดนัดรับ และ วงกลม 200 เมตร
+    if (miniMarkersRef.current.target) {
+      miniMarkersRef.current.target.setLatLng([targetLat, targetLng]);
+    }
+    if (miniMarkersRef.current.circle) {
+      miniMarkersRef.current.circle.setLatLng([targetLat, targetLng]);
+    }
 
-      // ผู้ขาย (สีเขียว)
-      if (sellerCoords?.lat && sellerCoords?.lng) {
-        if (!miniMarkersRef.current.seller) {
-          const icon = createMarkerIcon(L, '#16a34a', `🏷️ ${sellerLabel}`);
-          miniMarkersRef.current.seller = L.marker([sellerCoords.lat, sellerCoords.lng], { icon }).addTo(map);
-        } else {
-          miniMarkersRef.current.seller.setLatLng([sellerCoords.lat, sellerCoords.lng]);
-        }
-      } else if (miniMarkersRef.current.seller) {
-        map.removeLayer(miniMarkersRef.current.seller);
-        delete miniMarkersRef.current.seller;
+    // ผู้ซื้อ (สีน้ำเงิน)
+    if (buyerCoords?.lat && buyerCoords?.lng) {
+      if (!miniMarkersRef.current.buyer) {
+        const icon = createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`, -135);
+        miniMarkersRef.current.buyer = L.marker([buyerCoords.lat, buyerCoords.lng], { icon }).addTo(map);
+      } else {
+        miniMarkersRef.current.buyer.setLatLng([buyerCoords.lat, buyerCoords.lng]);
+        miniMarkersRef.current.buyer.setIcon(createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`, -135));
       }
-    });
-  }, [buyerCoords?.lat, buyerCoords?.lng, sellerCoords?.lat, sellerCoords?.lng, buyerLabel, sellerLabel]);
+    } else if (miniMarkersRef.current.buyer) {
+      map.removeLayer(miniMarkersRef.current.buyer);
+      delete miniMarkersRef.current.buyer;
+    }
+
+    // ผู้ขาย (สีเขียว)
+    if (sellerCoords?.lat && sellerCoords?.lng) {
+      if (!miniMarkersRef.current.seller) {
+        const icon = createMarkerIcon(L, '#16a34a', `🏷️ ${sellerLabel}`);
+        miniMarkersRef.current.seller = L.marker([sellerCoords.lat, sellerCoords.lng], { icon }).addTo(map);
+      } else {
+        miniMarkersRef.current.seller.setLatLng([sellerCoords.lat, sellerCoords.lng]);
+        miniMarkersRef.current.seller.setIcon(createMarkerIcon(L, '#16a34a', `🏷️ ${sellerLabel}`));
+      }
+    } else if (miniMarkersRef.current.seller) {
+      map.removeLayer(miniMarkersRef.current.seller);
+      delete miniMarkersRef.current.seller;
+    }
+  }, [mapReady, buyerCoords?.lat, buyerCoords?.lng, sellerCoords?.lat, sellerCoords?.lng, buyerLabel, sellerLabel, targetLat, targetLng]);
 
   // 2. Fullscreen Map Instance
   useEffect(() => {
@@ -364,6 +435,8 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
     import('leaflet').then((mod) => {
       if (fullMapInstanceRef.current) return;
       const L = mod.default ?? mod;
+      fullLeafletRef.current = L;
+
       const map = L.map(fullMapRef.current, {
         center: [targetLat, targetLng],
         zoom: 16,
@@ -376,11 +449,22 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
 
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
+      // 🟢 วงกลมสีเขียว รัศมี 200 เมตร ในโหมดเต็มจอ
+      const circle = L.circle([targetLat, targetLng], {
+        radius: 200,
+        color: '#16a34a',
+        fillColor: '#22c55e',
+        fillOpacity: 0.18,
+        weight: 2,
+        dashArray: '6, 6',
+      }).addTo(map);
+      circle.bindPopup('🟢 พื้นที่เช็คอิน (รัศมี 200 เมตร รอบจุดนัดรับ)');
+
       // Marker จุดนัดรับ
       const targetIcon = createMarkerIcon(L, '#f97316', `📍 ${meetup.locationName || 'จุดนัดรับ'}`);
       const targetMarker = L.marker([targetLat, targetLng], { icon: targetIcon }).addTo(map);
 
-      fullMarkersRef.current = { target: targetMarker };
+      fullMarkersRef.current = { target: targetMarker, circle };
 
       // Marker ผู้ซื้อ
       if (buyerCoords?.lat && buyerCoords?.lng) {
@@ -395,6 +479,9 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
       }
 
       fullMapInstanceRef.current = map;
+      setFullMapReady((v) => v + 1);
+
+      fitAll(map, L);
 
       setTimeout(() => {
         map.invalidateSize();
@@ -412,45 +499,76 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
 
   // Update Markers ใน Fullscreen Map
   useEffect(() => {
-    if (!fullMapInstanceRef.current) return;
-    import('leaflet').then((mod) => {
-      const L = mod.default ?? mod;
-      const map = fullMapInstanceRef.current;
-      if (!map) return;
+    const map = fullMapInstanceRef.current;
+    const L = fullLeafletRef.current;
+    if (!map || !L) return;
 
-      if (buyerCoords?.lat && buyerCoords?.lng) {
-        if (!fullMarkersRef.current.buyer) {
-          const icon = createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`);
-          fullMarkersRef.current.buyer = L.marker([buyerCoords.lat, buyerCoords.lng], { icon }).addTo(map);
-        } else {
-          fullMarkersRef.current.buyer.setLatLng([buyerCoords.lat, buyerCoords.lng]);
-        }
-      } else if (fullMarkersRef.current.buyer) {
-        map.removeLayer(fullMarkersRef.current.buyer);
-        delete fullMarkersRef.current.buyer;
-      }
+    if (fullMarkersRef.current.target) {
+      fullMarkersRef.current.target.setLatLng([targetLat, targetLng]);
+    }
+    if (fullMarkersRef.current.circle) {
+      fullMarkersRef.current.circle.setLatLng([targetLat, targetLng]);
+    }
 
-      if (sellerCoords?.lat && sellerCoords?.lng) {
-        if (!fullMarkersRef.current.seller) {
-          const icon = createMarkerIcon(L, '#16a34a', `🏷️ ${sellerLabel}`);
-          fullMarkersRef.current.seller = L.marker([sellerCoords.lat, sellerCoords.lng], { icon }).addTo(map);
-        } else {
-          fullMarkersRef.current.seller.setLatLng([sellerCoords.lat, sellerCoords.lng]);
-        }
-      } else if (fullMarkersRef.current.seller) {
-        map.removeLayer(fullMarkersRef.current.seller);
-        delete fullMarkersRef.current.seller;
+    if (buyerCoords?.lat && buyerCoords?.lng) {
+      if (!fullMarkersRef.current.buyer) {
+        const icon = createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`, -135);
+        fullMarkersRef.current.buyer = L.marker([buyerCoords.lat, buyerCoords.lng], { icon }).addTo(map);
+      } else {
+        fullMarkersRef.current.buyer.setLatLng([buyerCoords.lat, buyerCoords.lng]);
+        fullMarkersRef.current.buyer.setIcon(createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`, -135));
       }
-    });
-  }, [buyerCoords?.lat, buyerCoords?.lng, sellerCoords?.lat, sellerCoords?.lng, buyerLabel, sellerLabel]);
+    } else if (fullMarkersRef.current.buyer) {
+      map.removeLayer(fullMarkersRef.current.buyer);
+      delete fullMarkersRef.current.buyer;
+    }
+
+    if (sellerCoords?.lat && sellerCoords?.lng) {
+      if (!fullMarkersRef.current.seller) {
+        const icon = createMarkerIcon(L, '#16a34a', `🏷️ ${sellerLabel}`);
+        fullMarkersRef.current.seller = L.marker([sellerCoords.lat, sellerCoords.lng], { icon }).addTo(map);
+      } else {
+        fullMarkersRef.current.seller.setLatLng([sellerCoords.lat, sellerCoords.lng]);
+        fullMarkersRef.current.seller.setIcon(createMarkerIcon(L, '#16a34a', `🏷️ ${sellerLabel}`));
+      }
+    } else if (fullMarkersRef.current.seller) {
+      map.removeLayer(fullMarkersRef.current.seller);
+      delete fullMarkersRef.current.seller;
+    }
+  }, [fullMapReady, buyerCoords?.lat, buyerCoords?.lng, sellerCoords?.lat, sellerCoords?.lng, buyerLabel, sellerLabel, targetLat, targetLng]);
 
   return (
     <>
       {/* Container แผนที่ปกติ */}
       <div className="relative group rounded-2xl overflow-hidden border border-gray-200 shadow-2xs z-0 isolate">
-        <div ref={mapRef} style={{ height: 230, width: '100%', cursor: 'grab' }} />
+        <div ref={mapRef} style={{ height: 250, width: '100%', cursor: 'grab' }} />
 
-        {/* ปุ่มควบคุมลอยบนแผนที่ */}
+        {/* ปุ่มควบคุมลอยบนแผนที่ MiniMap */}
+        <div className="absolute top-2.5 left-2.5 z-10 flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              if (mapInstanceRef.current) {
+                mapInstanceRef.current.setView([targetLat, targetLng], 16);
+              }
+            }}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white/95 text-ink-800 shadow-md backdrop-blur-xs hover:bg-orange-50 hover:text-[#f95721] text-xs font-bold transition-all border border-gray-100"
+            title="ซูมไปยังจุดนัดรับและวงกลม 200 เมตร"
+          >
+            🎯 จุดนัดรับ (200ม.)
+          </button>
+          {(buyerCoords?.lat || sellerCoords?.lat) && (
+            <button
+              type="button"
+              onClick={() => fitAll(mapInstanceRef.current, leafletRef.current)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white/95 text-blue-700 shadow-md backdrop-blur-xs hover:bg-blue-50 text-xs font-bold transition-all border border-gray-100"
+              title="ขยายมุมมองให้เห็นทุกจุดบนแผนที่"
+            >
+              📍 ดูภาพรวม
+            </button>
+          )}
+        </div>
+
         <div className="absolute top-2.5 right-2.5 z-10 flex flex-col gap-1.5">
           <button
             type="button"
@@ -465,7 +583,10 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
 
         {/* แถบคำอธิบายจุดสีบนแผนที่ (Legend) */}
         <div className="absolute bottom-2 left-2 right-2 z-10 flex flex-wrap items-center justify-between gap-1.5 bg-white/90 backdrop-blur-xs px-2.5 py-1.5 rounded-xl border border-gray-100 text-[10px] font-semibold text-ink-700 shadow-xs pointer-events-none">
-          <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="flex items-center gap-1">
+              <span className="w-2.5 h-2.5 rounded-full border border-green-600 bg-green-400/40 inline-block" /> วงกลมเขียว 200ม. (จุดเช็คอิน)
+            </span>
             <span className="flex items-center gap-1">
               <span className="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block" /> จุดนัดรับ
             </span>
@@ -476,7 +597,7 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 inline-block" /> จุดผู้ขาย
             </span>
           </div>
-          <span className="text-gray-400">แตะ/ลากได้</span>
+          <span className="text-gray-400 hidden sm:inline">แตะ/ลากได้</span>
         </div>
       </div>
 
@@ -493,15 +614,18 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
                 <h3 className="text-sm font-extrabold text-ink-900 truncate">
                   {meetup.locationName || 'จุดนัดรับ มทร.อีสาน'}
                 </h3>
-                <div className="flex items-center gap-3 text-[11px] text-gray-500 mt-0.5">
+                <div className="flex flex-wrap items-center gap-3 text-[11px] text-gray-500 mt-0.5">
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full border border-green-600 bg-green-400/40 inline-block" /> วงกลม 200 ม. (พื้นที่เช็คอิน)
+                  </span>
                   <span className="flex items-center gap-1">
                     <span className="w-2 h-2 rounded-full bg-orange-500 inline-block" /> จุดนัดรับ
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-blue-600 inline-block" /> จุดผู้ซื้อ
+                    <span className="w-2 h-2 rounded-full bg-blue-600 inline-block" /> ผู้ซื้อ
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-emerald-600 inline-block" /> จุดผู้ขาย
+                    <span className="w-2 h-2 rounded-full bg-emerald-600 inline-block" /> ผู้ขาย
                   </span>
                 </div>
               </div>
@@ -512,13 +636,22 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
                 type="button"
                 onClick={() => {
                   if (fullMapInstanceRef.current) {
-                    fullMapInstanceRef.current.setView([targetLat, targetLng], 17);
+                    fullMapInstanceRef.current.setView([targetLat, targetLng], 16);
                   }
                 }}
-                className="hidden sm:inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-gray-200 text-xs font-bold text-ink-700 hover:bg-gray-50 transition-colors"
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-gray-200 text-xs font-bold text-ink-700 hover:bg-gray-50 transition-colors"
               >
-                กลับจุดนัดรับ
+                🎯 จุดนัดรับ (200ม.)
               </button>
+              {(buyerCoords?.lat || sellerCoords?.lat) && (
+                <button
+                  type="button"
+                  onClick={() => fitAll(fullMapInstanceRef.current, fullLeafletRef.current)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 text-xs font-bold text-blue-700 hover:bg-blue-100 transition-colors"
+                >
+                  📍 ดูภาพรวม
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setIsFullscreen(false)}
@@ -1089,9 +1222,22 @@ export function MeetupCheckInPage() {
         >
           <ArrowLeft size={18} />
         </button>
-        <div>
-          <h1 className="text-xl font-extrabold text-ink-900">📍 เช็คอิน &amp; ยืนยันรับสินค้า</h1>
-          <p className="text-xs text-ink-500">{meetup.productTitle} · {role === 'buyer' ? 'ผู้ขาย' : 'ผู้ซื้อ'}: {otherName}</p>
+        <div className="flex items-center gap-3 min-w-0">
+          {meetup.productImage ? (
+            <img
+              src={meetup.productImage}
+              alt={meetup.productTitle}
+              className="w-12 h-12 rounded-xl object-cover border border-gray-200 shadow-2xs shrink-0 bg-gray-50"
+            />
+          ) : (
+            <div className="w-12 h-12 rounded-xl bg-orange-50 border border-orange-200/60 flex items-center justify-center shrink-0 text-orange-400">
+              <ShoppingBag size={22} />
+            </div>
+          )}
+          <div className="min-w-0">
+            <h1 className="text-xl font-extrabold text-ink-900">📍 เช็คอิน &amp; ยืนยันรับสินค้า</h1>
+            <p className="text-xs text-ink-500 truncate">{meetup.productTitle} · {role === 'buyer' ? 'ผู้ขาย' : 'ผู้ซื้อ'}: <span className="font-semibold text-ink-700">{otherName}</span></p>
+          </div>
         </div>
       </div>
 

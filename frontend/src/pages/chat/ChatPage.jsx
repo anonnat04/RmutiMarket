@@ -891,10 +891,8 @@ export function ChatPage() {
                       );
                     }
 
-                    // ปุ่มนัดรับแสดงเมื่อสินค้ายัง "ว่าง" และไม่มีดีลค้าง (backend คำนวณเป็น canScheduleMeetup)
-                    // ไม่ผูกกับสถานะนัดหมายเก่าที่ยกเลิก/ไม่มาตามนัดแล้ว
-                    // API ฝั่ง backend ยังตรวจซ้ำอีกชั้นเพื่อกันการสร้างนัดซ้อน
-                    if (Number(active.statusId) !== 1 || active.canScheduleMeetup === false) {
+                    // ปุ่มนัดรับแสดงเมื่อสินค้ายังไม่ขาย (status !== 3) และคู่นี้ยังไม่มีดีลค้าง (canScheduleMeetup)
+                    if (Number(active.statusId) === 3 || active.canScheduleMeetup === false) {
                       return null;
                     }
 

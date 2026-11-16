@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useSearchParams, useNavigate, Link } from "react-router-dom";
 import {
   SlidersHorizontal,
@@ -23,6 +23,7 @@ import { EmptyState } from "@/components/common/EmptyState";
 import { fetchProducts } from "@/services/productService";
 import { api } from "@/lib/api";
 import { useWantToBuyStore } from "@/store/wantToBuyStore";
+import { useAuthStore } from "@/store/authStore";
 import { formatCurrency } from "@/utils/formatCurrency";
 
 function timeAgo(dateStr) {
@@ -72,6 +73,30 @@ export function ProductListPage() {
   const [wantToBuyPosts, setWantToBuyPosts] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const user = useAuthStore((s) => s.user);
+  const myId = user?.id ? String(user.id) : null;
+  const myUsername = user?.username ? String(user.username).replace(/^@+/, "").trim().toLowerCase() : null;
+
+  // ตรวจสอบว่าเป็นสินค้าของตัวเองหรือไม่
+  const isMyProduct = useCallback((p) => {
+    if (!myId && !myUsername) return false;
+    const sId = String(p.seller?.id || p.seller_id || p.sellerId || "");
+    if (myId && sId && sId === myId) return true;
+    const sUsername = String(p.seller?.username || p.seller?.displayName || "").replace(/^@+/, "").trim().toLowerCase();
+    if (myUsername && sUsername && sUsername === myUsername) return true;
+    return false;
+  }, [myId, myUsername]);
+
+  // ตรวจสอบว่าเป็นโพสต์ตามหาของตัวเองหรือไม่
+  const isMyPost = useCallback((item) => {
+    if (!myId && !myUsername) return false;
+    const aId = String(item.author?.id || item.buyer_id || item.buyerId || "");
+    if (myId && aId && aId === myId) return true;
+    const aName = String(item.author?.name || item.author?.username || "").replace(/^@+/, "").trim().toLowerCase();
+    if (myUsername && aName && aName === myUsername) return true;
+    return false;
+  }, [myId, myUsername]);
+
   const localRequests = useWantToBuyStore((s) => s.requests || []);
 
   // เมื่อ URL เปลี่ยนประเภท ให้เปลี่ยนแท็บตาม
@@ -85,11 +110,11 @@ export function ProductListPage() {
     setLoading(true);
     const category = categories.find((c) => c.slug === activeSlug);
 
-    // 1. ดึงสินค้า
-    // includeSold: หน้านี้แสดงสินค้าที่ขายแล้วด้วย (พร้อมป้าย "ขายแล้ว") ส่วนหน้าแรกจะซ่อนของที่ขายแล้ว
-    // ส่ง slug/name ของหมวดไปด้วย เพื่อจับคู่หมวดหมู่ได้แม้ id ของ constants กับ DB ไม่ตรงกัน
+    // 1. ดึงสินค้า (ไม่แสดงสินค้าที่ขายแล้ว และไม่แสดงสินค้าของตัวเอง)
     const productPromise = fetchProducts({
-      includeSold: true,
+      includeSold: false,
+      excludeUserId: myId,
+      excludeUsername: myUsername,
       categoryId: category?.id,
       categorySlug: category && category.slug !== "all" ? category.slug : undefined,
       categoryName: category && category.slug !== "all" ? category.name : undefined,
@@ -99,8 +124,8 @@ export function ProductListPage() {
       max_price: appliedMaxPrice,
     });
 
-    // 2. ดึงโพสต์ตามหาสินค้า
-    const wtbParams = {};
+    // 2. ดึงโพสต์ตามหาสินค้า (ไม่ดึงโพสต์ของตัวเอง)
+    const wtbParams = { exclude_mine: true };
     if (q) wtbParams.q = q;
     if (category && category.id !== "all" && category.id !== "cat-1") {
       wtbParams.category = category.slug || category.id;
@@ -111,10 +136,12 @@ export function ProductListPage() {
     });
 
     Promise.all([productPromise, wtbPromise]).then(([prods, wtbRes]) => {
-      const fetchedProducts = prods || [];
+      const fetchedProducts = (prods || [])
+        .filter((p) => p.status !== "sold" && p.statusId !== 3 && p.status_id !== 3)
+        .filter((p) => !isMyProduct(p));
       setProducts(fetchedProducts);
 
-      // รวมโพสต์ตามหาจาก backend และ local store
+      // รวมโพสต์ตามหาจาก backend และ local store (กรองโพสต์ของตัวเองออก)
       const dbList = (wtbRes?.posts || [])
         .filter((p) => p.wanted_post_status?.code !== "CANCELLED")
         .map((p) => ({
@@ -131,10 +158,11 @@ export function ProductListPage() {
           },
           createdAt: p.created_at,
           status: p.wanted_post_status?.code?.toLowerCase() === "completed" ? "resolved" : "active",
-        }));
+        }))
+        .filter((p) => !isMyPost(p));
 
       for (const r of localRequests) {
-        if (r.status === "cancelled") continue;
+        if (r.status === "cancelled" || isMyPost(r)) continue;
         if (!dbList.some((item) => String(item.id) === String(r.id))) {
           let match = true;
           if (q) {
@@ -177,11 +205,16 @@ export function ProductListPage() {
 
       setLoading(false);
     });
-  }, [activeSlug, q, sortBy, appliedMinPrice, appliedMaxPrice, localRequests, searchParams]);
+  }, [activeSlug, q, sortBy, appliedMinPrice, appliedMaxPrice, localRequests, searchParams, myId, myUsername, isMyProduct, isMyPost]);
 
-  // กรองและเรียงลำดับโพสต์ตามหาสินค้าตามตัวเลือกราคา
+  // รายการสินค้าที่จะแสดง: กรองสินค้าของตัวเอง และสินค้าที่ขายแล้วออกทั้งหมด
+  const displayedProducts = useMemo(() => {
+    return products.filter((p) => !isMyProduct(p) && p.status !== "sold" && p.statusId !== 3 && p.status_id !== 3);
+  }, [products, isMyProduct]);
+
+  // กรองและเรียงลำดับโพสต์ตามหาสินค้า: กรองโพสต์ของตัวเอง และโพสต์ที่ยกเลิกออกทั้งหมด
   const sortedWantToBuyPosts = useMemo(() => {
-    let list = [...wantToBuyPosts];
+    let list = wantToBuyPosts.filter((p) => !isMyPost(p) && p.status !== "cancelled");
 
     if (appliedMinPrice !== null) {
       list = list.filter((p) => p.budget >= appliedMinPrice);
@@ -199,7 +232,7 @@ export function ProductListPage() {
     }
 
     return list;
-  }, [wantToBuyPosts, sortBy, appliedMinPrice, appliedMaxPrice]);
+  }, [wantToBuyPosts, sortBy, appliedMinPrice, appliedMaxPrice, isMyPost]);
 
   // การกดใช้ช่วงราคา
   const handleApplyPriceFilter = (e) => {
@@ -238,7 +271,7 @@ export function ProductListPage() {
             </h1>
             {!loading && (
               <p className="text-[11px] text-ink-500 truncate mt-0.5">
-                พบสินค้า {products.length} รายการ · โพสต์ตามหา {wantToBuyPosts.length} รายการ
+                พบสินค้า {displayedProducts.length} รายการ · โพสต์ตามหา {sortedWantToBuyPosts.length} รายการ
               </p>
             )}
           </div>
@@ -270,7 +303,7 @@ export function ProductListPage() {
           }`}
         >
           <ShoppingBag size={15} className="shrink-0" />
-          <span className="truncate">สินค้าที่ลงขาย ({products.length})</span>
+          <span className="truncate">สินค้าที่ลงขาย ({displayedProducts.length})</span>
         </button>
 
         <button
@@ -487,7 +520,7 @@ export function ProductListPage() {
                 <div key={i} className="aspect-[3/4] animate-pulse rounded-2xl bg-surface-muted" />
               ))}
             </div>
-          ) : products.length === 0 ? (
+          ) : displayedProducts.length === 0 ? (
             <div className="rounded-2xl border border-gray-100 bg-white p-8 text-center space-y-3">
               <EmptyState
                 title="ไม่พบสินค้าที่ตรงกับการค้นหา"
@@ -508,22 +541,15 @@ export function ProductListPage() {
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-              {products.map((p) => {
-                const isSold = p.status === "sold";
+              {displayedProducts.map((p) => {
                 const isReserved = p.status === "reserved";
                 return (
                   <div key={p.id} className="relative">
-                    <div className={isSold ? "opacity-60 grayscale-[40%]" : ""}>
-                      <ProductCard product={p} />
-                    </div>
-                    {(isSold || isReserved) && (
+                    <ProductCard product={p} />
+                    {isReserved && (
                       <div className="pointer-events-none absolute inset-x-0 top-[38%] flex justify-center">
-                        <span
-                          className={`rounded-full px-4 py-1.5 text-xs font-extrabold text-white shadow-lg ${
-                            isSold ? "bg-red-600/90" : "bg-amber-500/90"
-                          }`}
-                        >
-                          {isSold ? "ขายแล้ว" : "ติดจอง"}
+                        <span className="rounded-full px-4 py-1.5 text-xs font-extrabold text-white shadow-lg bg-amber-500/90">
+                          ติดจอง
                         </span>
                       </div>
                     )}
