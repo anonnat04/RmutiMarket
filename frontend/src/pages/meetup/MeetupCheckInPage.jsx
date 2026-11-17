@@ -761,6 +761,7 @@ export function MeetupCheckInPage() {
   const [feedback, setFeedback] = useState(null);
   const [, forceTick] = useState(0);
   const checkInInFlightRef = useRef(false);
+  const pollingInFlightRef = useRef(false);
   const feedbackTimerRef = useRef(null);
 
   // ── GPS & ระยะห่าง ──
@@ -896,10 +897,12 @@ export function MeetupCheckInPage() {
     };
   }, [id, myId, meetup?.locationLat, meetup?.locationLng]);
 
-  // ── Auto-poll ทุก 4 วินาที เพื่อดึงสถานะเช็คอินแบบ Realtime แม้ Socket หลุด ──
+  // ── Auto-poll ทุก 15 วินาที เพื่อดึงสถานะเช็คอินแบบ Realtime แม้ Socket หลุด ──
   useEffect(() => {
     if (!id) return;
     const interval = setInterval(async () => {
+      if (pollingInFlightRef.current) return;
+      pollingInFlightRef.current = true;
       try {
         const res = await api.getMyMeetups();
         const found = (res.meetups || []).find((m) => String(m.id) === String(id));
@@ -920,8 +923,10 @@ export function MeetupCheckInPage() {
         }
       } catch (e) {
         // Silent background polling
+      } finally {
+        pollingInFlightRef.current = false;
       }
-    }, 4000);
+    }, 15000);
     return () => clearInterval(interval);
   }, [id]);
 
