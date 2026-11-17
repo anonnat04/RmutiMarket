@@ -187,10 +187,130 @@ async function recoverScoreOnDeal(sellerId, transactionId) {
         .eq("id", sellerId);
       if (scoreErr) {
         console.error("[recoverScoreOnDeal] users update error:", scoreErr);
+        return;
       }
+
+      // ส่ง Notification แจ้งเตือนผู้ขาย
+      await persistAndSendNotification(sellerId, {
+        type: "score_recovery",
+        title: "🎉 ได้รับ Trust Score คืน +20 คะแนน!",
+        message: `คุณขายสินค้าสำเร็จ ระบบคืนคะแนนความน่าเชื่อถือให้ +${pointsAdded} คะแนน (คะแนนปัจจุบัน: ${newScore}/100)`,
+        reference_type: "transaction",
+        reference_id: transactionId,
+      });
     }
   } catch (err) {
     console.error("[recoverScoreOnDeal] error:", err);
+  }
+}
+
+// ----------------------------------------------------------------
+// Background Job: คืนคะแนนความน่าเชื่อถือประจำวันอาทิตย์ (+5 คะแนน สูงสุด 100)
+// สำหรับผู้ใช้งานทุกคนที่คะแนนยังไม่เต็ม 100
+// ----------------------------------------------------------------
+async function processWeeklySundayRecovery(force = false) {
+  try {
+    const now = new Date();
+    // แปลงเวลาเป็นโซนเวลาประเทศไทย (Asia/Bangkok)
+    const bkkString = now.toLocaleString("en-US", { timeZone: "Asia/Bangkok" });
+    const bkkDate = new Date(bkkString);
+    const dayOfWeek = bkkDate.getDay(); // 0 = Sunday
+
+    if (dayOfWeek !== 0 && !force) {
+      return { executed: false, reason: "Today is not Sunday" };
+    }
+
+    // หาวันที่เริ่มต้นของวันอาทิตย์นี้ตามเวลาไทย (00:00:00)
+    const year = bkkDate.getFullYear();
+    const month = String(bkkDate.getMonth() + 1).padStart(2, "0");
+    const day = String(bkkDate.getDate()).padStart(2, "0");
+    const todayBangkokMidnight = new Date(`${year}-${month}-${day}T00:00:00+07:00`).toISOString();
+
+    // ดึงผู้ใช้ทั้งหมดที่คะแนน trust_score ต่ำกว่า 100
+    const { data: usersBelow100, error: usersErr } = await supabase
+      .from("users")
+      .select("id, username, trust_score, role")
+      .lt("trust_score", 100);
+
+    if (usersErr) {
+      console.error("[processWeeklySundayRecovery] fetch users error:", usersErr);
+      return { executed: false, error: usersErr.message };
+    }
+
+    if (!usersBelow100 || usersBelow100.length === 0) {
+      return { executed: true, recoveredCount: 0, message: "No users need recovery" };
+    }
+
+    // ดึงประวัติว่าวันอาทิตย์นี้ผู้ใช้คนไหนได้รับ WEEKLY_RECOVERY ไปแล้วบ้าง
+    const { data: alreadyRecovered, error: histCheckErr } = await supabase
+      .from("user_score_history")
+      .select("user_id")
+      .eq("source_type", "RECOVERY")
+      .eq("reason", "WEEKLY_RECOVERY")
+      .gte("created_at", todayBangkokMidnight);
+
+    if (histCheckErr) {
+      console.error("[processWeeklySundayRecovery] check history error:", histCheckErr);
+    }
+
+    const processedSet = new Set((alreadyRecovered || []).map((r) => r.user_id));
+    let recoveredCount = 0;
+
+    for (const user of usersBelow100) {
+      if (processedSet.has(user.id)) {
+        continue;
+      }
+
+      const currentScore = user.trust_score ?? 100;
+      if (currentScore >= 100) continue;
+
+      const newScore = Math.min(100, currentScore + 5);
+      const pointsAdded = newScore - currentScore;
+      if (pointsAdded <= 0) continue;
+
+      // บันทึกลง user_score_history (source_id = 2 ตามตาราง score_recovery_rules id 2: WEEKLY_RECOVERY)
+      const { error: insErr } = await supabase.from("user_score_history").insert({
+        user_id: user.id,
+        change_amount: pointsAdded,
+        score_after: newScore,
+        source_type: "RECOVERY",
+        source_id: 2,
+        reason: "WEEKLY_RECOVERY",
+      });
+
+      if (insErr) {
+        console.error(`[processWeeklySundayRecovery] history insert failed for user ${user.id}:`, insErr);
+        continue;
+      }
+
+      // อัปเดต trust_score ของผู้ใช้
+      const { error: upErr } = await supabase
+        .from("users")
+        .update({ trust_score: newScore })
+        .eq("id", user.id);
+
+      if (upErr) {
+        console.error(`[processWeeklySundayRecovery] user score update failed for user ${user.id}:`, upErr);
+        continue;
+      }
+
+      // ส่งการแจ้งเตือนเข้าแอป
+      await persistAndSendNotification(user.id, {
+        type: "score_recovery",
+        title: "🎉 ได้รับ Trust Score คืน +5 คะแนน!",
+        message: `ระบบคืนคะแนนความน่าเชื่อถือประจำวันอาทิตย์ให้คุณ +${pointsAdded} คะแนน (คะแนนปัจจุบัน: ${newScore}/100)`,
+        reference_type: "system",
+        reference_id: null,
+      });
+
+      recoveredCount++;
+    }
+
+    console.log(`[processWeeklySundayRecovery] Complete: restored scores for ${recoveredCount} users.`);
+    return { executed: true, recoveredCount };
+  } catch (err) {
+    console.error("[processWeeklySundayRecovery] fatal error:", err);
+    return { executed: false, error: err.message };
   }
 }
 
@@ -1456,4 +1576,6 @@ module.exports = {
   completeMeetup,
   cancelMeetup,
   checkAndProcessNoShows,
+  processWeeklySundayRecovery,
+  recoverScoreOnDeal,
 };

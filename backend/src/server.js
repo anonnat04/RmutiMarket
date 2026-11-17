@@ -119,13 +119,21 @@ app.get("/api/test-error", () => {
 const io = setupChatSocket(server, checkOrigin);
 
 // ── Auto No-Show Background Job (ตรวจจับและตัดจบนัดหมายที่เกิน 45 นาที + ตัดคะแนน) ──
-const { checkAndProcessNoShows } = require("./controllers/meetupController");
+const { checkAndProcessNoShows, processWeeklySundayRecovery } = require("./controllers/meetupController");
 setInterval(() => {
   checkAndProcessNoShows().catch((e) => console.warn("[Auto-NoShow Background Job]", e.message));
 }, 60 * 1000);
 setTimeout(() => {
   checkAndProcessNoShows().catch(() => {});
 }, 3000);
+
+// ── Weekly Trust Score Recovery Job (คืน 5 คะแนนทุกวันอาทิตย์ สำหรับผู้ใช้ที่คะแนนไม่เต็ม 100) ──
+setInterval(() => {
+  processWeeklySundayRecovery().catch((e) => console.warn("[Weekly Trust Score Recovery Job]", e.message));
+}, 30 * 60 * 1000); // ตรวจสอบทุก 30 นาที
+setTimeout(() => {
+  processWeeklySundayRecovery().catch(() => {});
+}, 5000); // ตรวจสอบครั้งแรก 5 วินาทีหลัง server เปิด
 
 // ── Chat Retention Background Job (ลบห้องแชทที่เกิน 7 วันหลังปิดการขาย) ──
 const { deleteExpiredChats } = require("./controllers/chatController");

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Users, ShieldCheck, Search, Ban, CheckCircle, Loader2, ChevronLeft, ChevronRight,
-  Phone, Star, RefreshCw, Trash2, CheckCircle2, X, AlertTriangle,
+  Phone, Star, RefreshCw, CheckCircle2, X,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAdminStore } from '@/store/adminStore';
@@ -50,11 +50,6 @@ export function AdminUsersPage() {
   const [err, setErr] = useState('');
   const [notice, setNotice] = useState('');
   const [busyId, setBusyId] = useState(null);
-
-  // Delete User Modal state
-  const [toDeleteUser, setToDeleteUser] = useState(null);
-  const [deletingUser, setDeletingUser] = useState(false);
-  const [deleteUserReason, setDeleteUserReason] = useState('');
 
 
   // หน่วงการค้นหา 350ms ไม่ให้ยิง API ทุกตัวอักษร
@@ -128,23 +123,6 @@ export function AdminUsersPage() {
     });
   };
 
-  const confirmDeleteUser = async () => {
-    if (!toDeleteUser) return;
-    setDeletingUser(true);
-    setErr('');
-    try {
-      const res = await api.adminDeleteUser(token, toDeleteUser.id, deleteUserReason.trim());
-      setNotice(res.message || 'ลบบัญชีผู้ใช้เรียบร้อยแล้ว');
-      setToDeleteUser(null);
-      setDeleteUserReason('');
-      await load();
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setDeletingUser(false);
-    }
-  };
-
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
@@ -156,7 +134,7 @@ export function AdminUsersPage() {
             จัดการบัญชีผู้ใช้งาน
           </h1>
           <p className="text-xs text-gray-500 mt-0.5">
-            ตรวจสอบข้อมูลนักศึกษา ระงับบัญชีผู้มีพฤติกรรมเสี่ยง ลบบัญชี และตรวจสอบรีวิว
+            ตรวจสอบข้อมูลนักศึกษา ระงับบัญชีผู้มีพฤติกรรมเสี่ยง และตรวจสอบรีวิว
           </p>
         </div>
         <button
@@ -383,18 +361,6 @@ export function AdminUsersPage() {
                           <Ban size={12} /> ระงับบัญชี
                         </button>
                       )}
-
-                      <button
-                        disabled={busyId === u.id}
-                        onClick={() => {
-                          setToDeleteUser(u);
-                          setDeleteUserReason('');
-                        }}
-                        className="flex items-center gap-1 rounded-xl bg-gray-50 border border-red-200 px-2.5 py-1.5 text-[11px] font-bold text-red-600 hover:bg-red-600 hover:text-white hover:border-red-600 transition-all disabled:opacity-50"
-                        title="ลบบัญชีนี้ออกจากระบบ"
-                      >
-                        <Trash2 size={12} /> ลบ
-                      </button>
                     </div>
                   </td>
                 </tr>
@@ -429,61 +395,6 @@ export function AdminUsersPage() {
           </button>
         </div>
       </div>
-
-      {/* Delete User Modal */}
-      {toDeleteUser && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => !deletingUser && setToDeleteUser(null)}
-        >
-          <div
-            className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-100">
-                <Trash2 size={18} className="text-red-500" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-gray-900">ลบบัญชีผู้ใช้งาน</h3>
-                <p className="text-xs text-gray-500">
-                  {toDeleteUser.display_name || toDeleteUser.full_name || toDeleteUser.username} ({toDeleteUser.email})
-                </p>
-              </div>
-            </div>
-
-            <p className="mt-4 text-xs text-gray-600 leading-relaxed">
-              การลบบัญชีจะเพิกถอนสิทธิ์การเข้าสู่ระบบทั้งหมด หากผู้ใช้นี้มีประวัติการซื้อขายที่เกี่ยวข้อง ระบบจะเก็บบันทึกธุรกรรมไว้เพื่อความโปร่งใส
-            </p>
-
-            <label className="mt-4 block text-xs font-semibold text-gray-700">เหตุผลในการลบ</label>
-            <textarea
-              value={deleteUserReason}
-              onChange={(e) => setDeleteUserReason(e.target.value)}
-              rows={3}
-              placeholder="เช่น มีพฤติกรรมหลอกลวง, สร้างบัญชีปลอม, ผู้ใช้ขอลบบัญชี"
-              className="mt-1 w-full resize-none rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs outline-none focus:border-orange-400 focus:bg-white"
-            />
-
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                disabled={deletingUser}
-                onClick={() => setToDeleteUser(null)}
-                className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-              >
-                ยกเลิก
-              </button>
-              <button
-                disabled={deletingUser}
-                onClick={confirmDeleteUser}
-                className="flex items-center gap-1.5 rounded-xl bg-red-500 px-4 py-2 text-xs font-bold text-white hover:bg-red-600 disabled:opacity-60"
-              >
-                {deletingUser ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />} ยืนยันลบบัญชี
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

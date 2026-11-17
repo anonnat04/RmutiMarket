@@ -20,6 +20,7 @@ router.post("/users/:userId/ban", adminController.banUser);
 router.post("/users/:userId/score", adminController.adjustUserScore);
 router.post("/users/:userId/unban", adminController.unbanUser);
 router.delete("/users/:userId", adminController.deleteUser);
+router.post("/trigger-weekly-recovery", adminController.triggerWeeklyRecovery);
 
 // Student card verifications
 router.get("/verifications/pending", adminController.getPendingVerifications);

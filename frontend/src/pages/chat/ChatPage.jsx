@@ -11,7 +11,6 @@ import {
   Radio,
   X,
   Maximize2,
-  Trash2,
   ArrowLeft,
 } from "lucide-react";
 import { EmptyState } from "@/components/common/EmptyState";
@@ -831,17 +830,6 @@ export function ChatPage() {
                     </div>
                   </div>
                 </div>
-
-                {/* Delete Chat Button */}
-                <button
-                  type="button"
-                  onClick={() => setDeleteConvTarget(active.id)}
-                  className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600 transition-colors shadow-2xs"
-                  title="ลบห้องแชทนี้"
-                >
-                  <Trash2 size={13} />
-                  <span>ลบแชท</span>
-                </button>
               </div>
 
               {/* Product Info Strip & Quick Meetup Button */}

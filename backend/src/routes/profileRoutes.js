@@ -14,6 +14,7 @@ router.post("/wishlist/:listingId", requireUserAuth, profileController.addToWish
 router.delete("/wishlist/:listingId", requireUserAuth, profileController.removeFromWishlist);
 router.post("/verify-student-card", requireUserAuth, profileController.submitStudentCard);
 router.put("/interests", requireUserAuth, profileController.updateInterests);
+router.delete("/me", requireUserAuth, profileController.deleteMyAccount);
 
 // Public (wildcard route)
 router.get("/:userId", profileController.getPublicProfile);

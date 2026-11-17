@@ -480,6 +480,20 @@ async function submitStudentCard(req, res, next) {
   }
 }
 
+// ----------------------------------------------------------------
+// DELETE /api/profile/me  — ผู้ใช้ลบบัญชีตัวเอง
+// ----------------------------------------------------------------
+async function deleteMyAccount(req, res, next) {
+  try {
+    const { deleteUserAccount } = require("./adminController");
+    const userId = req.user.id;
+    await deleteUserAccount(userId, "ผู้ใช้ขอลบบัญชีด้วยตนเอง");
+    res.json({ message: "ลบบัญชีและข้อมูลทั้งหมดเรียบร้อยแล้ว" });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getMyProfile,
   getPublicProfile,
@@ -490,4 +504,5 @@ module.exports = {
   removeFromWishlist,
   updateInterests,
   submitStudentCard,
+  deleteMyAccount,
 };

@@ -139,6 +139,8 @@ async function getUsers(req, res, next) {
 
     if (status && status !== "all") {
       query = query.eq("status", status);
+    } else {
+      query = query.neq("status", "deleted");
     }
 
     query = query.order("created_at", { ascending: false }).range(offset, offset + parseInt(limit) - 1);
@@ -269,6 +271,176 @@ async function unbanUser(req, res, next) {
 }
 
 // ----------------------------------------------------------------
+// Helper: Cascade delete user account and all related data
+// (แชท, สินค้าที่โพสต์, โพสต์ตามหาสินค้า, ฯลฯ ต้องหายทั้งหมด)
+// ----------------------------------------------------------------
+async function deleteUserAccount(targetUid, reason = "ลบบัญชีผู้ใช้") {
+  const uid = parseInt(targetUid);
+  if (isNaN(uid)) throw new Error("รหัสผู้ใช้ไม่ถูกต้อง");
+
+  // 1. โพสตามหาสินค้า (Wanted / Want-to-buy posts)
+  try {
+    await supabase.from("wanted_posts").delete().eq("buyer_id", uid);
+  } catch (err) {
+    console.error("[deleteUserAccount] error deleting wanted_posts:", err?.message || err);
+  }
+
+  // 2. สินค้าที่โพสขาย (Products / Listings)
+  try {
+    const { data: userProducts } = await supabase
+      .from("products")
+      .select("id")
+      .eq("seller_id", uid);
+
+    const prodIds = (userProducts || []).map((p) => p.id);
+    if (prodIds.length > 0) {
+      // ลบห้องแชทที่คุยเกี่ยวกับสินค้าของ user นี้
+      const { data: prodConvs } = await supabase
+        .from("conversations")
+        .select("id")
+        .in("product_id", prodIds);
+      if (prodConvs && prodConvs.length > 0) {
+        await deleteConversations(prodConvs.map((c) => c.id));
+      }
+
+      // ลบธุรกรรม / นัดหมาย / การคืน ที่เกี่ยวกับสินค้าเหล่านี้
+      const { data: prodTxs } = await supabase
+        .from("transactions")
+        .select("id")
+        .in("product_id", prodIds);
+      if (prodTxs && prodTxs.length > 0) {
+        const txIds = prodTxs.map((t) => t.id);
+        await supabase.from("appointments").delete().in("transaction_id", txIds);
+        await supabase.from("return_requests").delete().in("transaction_id", txIds);
+        await supabase.from("transactions").delete().in("id", txIds);
+      }
+
+      // ลบ wishlists, reports, images ของสินค้า
+      await supabase.from("wishlists").delete().in("listing_id", prodIds);
+      await supabase.from("reports").delete().eq("target_type", "product").in("target_id", prodIds);
+      await supabase.from("product_images").delete().in("product_id", prodIds);
+      await supabase.from("products").delete().in("id", prodIds);
+    }
+  } catch (err) {
+    console.error("[deleteUserAccount] error deleting products:", err?.message || err);
+  }
+
+  // 3. แชท (Chats) ของผู้ใช้
+  try {
+    // หาห้องแชทที่ user นี้เข้าร่วม (เป็นสมาชิก หรือ เป็น buyer/seller)
+    const { data: userMemberConvs } = await supabase
+      .from("conversation_members")
+      .select("conversation_id")
+      .eq("user_id", uid);
+
+    const memberConvIds = (userMemberConvs || []).map((c) => c.conversation_id);
+
+    // หาห้องแชทจากตาราง conversations โดยตรง (เผื่อมีคอลัมน์ buyer_id หรือ seller_id)
+    let directConvIds = [];
+    try {
+      const { data: dConvs } = await supabase
+        .from("conversations")
+        .select("id")
+        .or(`buyer_id.eq.${uid},seller_id.eq.${uid}`);
+      if (dConvs) directConvIds = dConvs.map((c) => c.id);
+    } catch {
+      // Ignore if columns don't exist
+    }
+
+    const allConvIds = [...new Set([...memberConvIds, ...directConvIds])];
+    if (allConvIds.length > 0) {
+      await deleteConversations(allConvIds);
+    }
+
+    // ลบข้อความที่ผู้ใช้เคยส่งในห้องอื่น ๆ (ถ้ายังมีเหลือ)
+    const { data: userMsgs } = await supabase
+      .from("messages")
+      .select("id")
+      .eq("sender_id", uid);
+    if (userMsgs && userMsgs.length > 0) {
+      const msgIds = userMsgs.map((m) => m.id);
+      await supabase.from("message_attachments").delete().in("message_id", msgIds);
+      await supabase.from("messages").delete().in("id", msgIds);
+    }
+
+    await supabase.from("conversation_members").delete().eq("user_id", uid);
+  } catch (err) {
+    console.error("[deleteUserAccount] error deleting chats:", err?.message || err);
+  }
+
+  // 4. ธุรกรรม / นัดหมาย ที่ผู้ใช้เป็นผู้ซื้อหรือผู้ขาย
+  try {
+    const { data: userTxs } = await supabase
+      .from("transactions")
+      .select("id")
+      .or(`buyer_id.eq.${uid},seller_id.eq.${uid}`);
+    if (userTxs && userTxs.length > 0) {
+      const txIds = userTxs.map((t) => t.id);
+      await supabase.from("appointments").delete().in("transaction_id", txIds);
+      await supabase.from("return_requests").delete().in("transaction_id", txIds);
+      await supabase.from("transactions").delete().in("id", txIds);
+    }
+  } catch (err) {
+    console.error("[deleteUserAccount] error deleting transactions:", err?.message || err);
+  }
+
+  // 5. ข้อมูลที่เกี่ยวข้องอื่น ๆ
+  try {
+    await supabase.from("wishlists").delete().eq("user_id", uid);
+
+    const { data: userRevs } = await supabase
+      .from("reviews")
+      .select("id")
+      .or(`reviewer_id.eq.${uid},reviewee_id.eq.${uid}`);
+    if (userRevs && userRevs.length > 0) {
+      const revIds = userRevs.map((r) => r.id);
+      await supabase.from("review_images").delete().in("review_id", revIds);
+      await supabase.from("reviews").delete().in("id", revIds);
+    }
+
+    await supabase.from("reports").delete().eq("reporter_id", uid);
+    await supabase.from("reports").delete().eq("target_type", "user").eq("target_id", uid);
+
+    await supabase.from("notifications").delete().eq("user_id", uid);
+    await supabase.from("support_tickets").delete().eq("user_id", uid);
+    await supabase.from("user_interests").delete().eq("user_id", uid);
+    await supabase.from("user_penalties").delete().eq("user_id", uid);
+    await supabase.from("user_score_history").delete().eq("user_id", uid);
+
+    await supabase.from("sessions").delete().eq("user_id", uid);
+    await supabase.from("login_attempts").delete().eq("user_id", uid);
+    await supabase.from("otp_codes").delete().eq("user_id", uid);
+    await supabase.from("otp_request_log").delete().eq("user_id", uid);
+    await supabase.from("password_reset_tokens").delete().eq("user_id", uid);
+  } catch (err) {
+    console.error("[deleteUserAccount] error cleaning dependencies:", err?.message || err);
+  }
+
+  // 6. ลบแถวผู้ใช้ในตาราง users (หากติด FK ให้ fallback อัปเดตสถานะเป็น deleted พร้อมล้างข้อมูลส่วนตัว)
+  const { error: delErr } = await supabase.from("users").delete().eq("id", uid);
+  if (delErr) {
+    console.warn("[deleteUserAccount] Could not hard-delete user row, updating to deleted status:", delErr.message);
+    await supabase
+      .from("users")
+      .update({
+        status: "deleted",
+        username: `deleted_${uid}`,
+        full_name: "บัญชีถูกลบแล้ว",
+        university_email: `deleted_${uid}@deleted.invalid`,
+        email: `deleted_${uid}@deleted.invalid`,
+        phone: null,
+        student_id: null,
+        avatar_url: null,
+        profile_image_url: null,
+        bio: null,
+        ban_reason: reason || "ลบบัญชีผู้ใช้",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", uid);
+  }
+}
+
+// ----------------------------------------------------------------
 // DELETE /api/admin/users/:userId
 // ----------------------------------------------------------------
 async function deleteUser(req, res, next) {
@@ -277,10 +449,10 @@ async function deleteUser(req, res, next) {
     const targetUid = parseInt(userId);
     const { reason = "ลบบัญชีโดยผู้ดูแลระบบ" } = req.body;
 
-    await supabase.from("users").update({ status: "banned", ban_reason: reason }).eq("id", targetUid);
+    await deleteUserAccount(targetUid, reason);
     await logAdminAction(req.admin?.id, "user.delete", "user", targetUid, { reason }, req.ip);
 
-    res.json({ message: "ลบบัญชีผู้ใช้สำเร็จ" });
+    res.json({ message: "ลบบัญชีผู้ใช้ สินค้า แชท และโพสต์ตามหาสำเร็จ" });
   } catch (err) {
     next(err);
   }
@@ -684,8 +856,20 @@ async function adjustUserScore(req, res, next) {
   }
 }
 
+async function triggerWeeklyRecovery(req, res, next) {
+  try {
+    const { force = true } = req.body || {};
+    const { processWeeklySundayRecovery } = require("./meetupController");
+    const result = await processWeeklySundayRecovery(Boolean(force));
+    res.json({ message: "ดำเนินการกู้คืนคะแนนประจำสัปดาห์เรียบร้อยแล้ว", result });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   adjustUserScore,
+  triggerWeeklyRecovery,
   getStats,
   getSellerLeaderboard,
   getUsers,
@@ -693,6 +877,7 @@ module.exports = {
   banUser,
   unbanUser,
   deleteUser,
+  deleteUserAccount,
   getAdminListings,
   deleteListing,
   removeListing,
