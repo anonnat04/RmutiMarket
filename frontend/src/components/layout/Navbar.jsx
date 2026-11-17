@@ -5,11 +5,13 @@ import { NotificationDropdown } from './NotificationDropdown';
 import { useFeedStore } from '@/store/feedStore';
 import { useAuthStore } from '@/store/authStore';
 import { useChatStore } from '@/store/chatStore';
+import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import logoImg from '@/assets/logo.png';
 
 export function Navbar() {
   const [q, setQ] = useState('');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const menuRef = useRef(null);
   const navigate = useNavigate();
 
@@ -43,8 +45,13 @@ export function Navbar() {
   };
 
   const handleLogout = () => {
-    logout();
     setUserMenuOpen(false);
+    setShowLogoutConfirm(true);
+  };
+
+  const handleConfirmLogout = () => {
+    setShowLogoutConfirm(false);
+    logout();
     navigate('/login', { replace: true });
   };
 
@@ -275,6 +282,17 @@ export function Navbar() {
         </div>
 
       </div>
+
+      <ConfirmDialog
+        open={showLogoutConfirm}
+        onClose={() => setShowLogoutConfirm(false)}
+        onConfirm={handleConfirmLogout}
+        title="ยืนยันการออกจากระบบ?"
+        description="คุณต้องการออกจากระบบบัญชีผู้ใช้นี้ใช่หรือไม่"
+        confirmLabel="ออกจากระบบ"
+        cancelLabel="ยกเลิก"
+        variant="danger"
+      />
     </header>
   );
 }

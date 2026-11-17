@@ -28,6 +28,7 @@ import { useNotificationStore } from '@/store/notificationStore';
 import { useWishlistStore } from '@/store/cartWishlistStore';
 import { useAuthStore } from '@/store/authStore';
 import { Button } from '@/components/common/Button';
+import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { ProductCard } from '@/components/product/ProductCard';
 import { formatListing } from '@/services/productService';
 
@@ -144,6 +145,7 @@ export function SelfProfilePage({ user, logout, navigate }) {
 
   const [profileData, setProfileData] = useState(null);
   const [statsData, setStatsData] = useState(null);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editForm, setEditForm] = useState({
     username: '',
@@ -467,6 +469,16 @@ export function SelfProfilePage({ user, logout, navigate }) {
               </Link>
             );
           })}
+
+          {/* ออกจากระบบ — อยู่ท้ายสุดของรายการเมนู */}
+          <button
+            type="button"
+            onClick={() => setShowLogoutConfirm(true)}
+            className="w-full flex items-center gap-3 px-4 py-3 text-xs font-bold text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors border-t border-gray-100 group"
+          >
+            <LogOut size={16} className="shrink-0 text-red-500 group-hover:translate-x-0.5 transition-transform" />
+            <span className="flex-1 text-left">ออกจากระบบ</span>
+          </button>
         </div>
       </aside>
 
@@ -732,21 +744,6 @@ export function SelfProfilePage({ user, logout, navigate }) {
             </div>
           )}
         </div>
-
-        {/* Logout Button */}
-        <div className="pt-2">
-          <Button
-            variant="outline"
-            className="text-red-600 border-red-200 hover:bg-red-50"
-            onClick={() => {
-              logout();
-              navigate('/');
-            }}
-          >
-            <LogOut size={16} className="mr-2" />
-            ออกจากระบบ
-          </Button>
-        </div>
       </div>
 
       {/* ─── Edit Profile Modal (แก้ได้แค่ username กับเบอร์โทร) ─── */}
@@ -900,6 +897,22 @@ export function SelfProfilePage({ user, logout, navigate }) {
           </div>
         </div>
       )}
+
+      {/* ─── Modal ยืนยันออกจากระบบ ─── */}
+      <ConfirmDialog
+        open={showLogoutConfirm}
+        onClose={() => setShowLogoutConfirm(false)}
+        onConfirm={() => {
+          setShowLogoutConfirm(false);
+          logout();
+          navigate('/');
+        }}
+        title="ยืนยันการออกจากระบบ?"
+        description="คุณต้องการออกจากระบบบัญชีผู้ใช้นี้ใช่หรือไม่"
+        confirmLabel="ออกจากระบบ"
+        cancelLabel="ยกเลิก"
+        variant="danger"
+      />
     </div>
   );
 }

@@ -171,7 +171,7 @@ async function getListings(req, res, next) {
     }
 
     // กรองสินค้าของตัวเองเฉพาะเมื่อไคลเอนต์ระบุ exclude_mine="true" มาอย่างชัดเจน
-    if (req.query.exclude_mine === "true" && req.user?.id && !req.query.seller_id) {
+    if (req.user?.id && !req.query.seller_id) {
       query = query.neq("seller_id", req.user.id);
     }
 

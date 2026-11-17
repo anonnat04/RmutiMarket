@@ -564,6 +564,7 @@ async function expireStalePendingAppointments() {
 // ----------------------------------------------------------------
 async function checkAndProcessNoShows() {
   try {
+    await closeUnconfirmedDeliveries();
     await expireStalePendingAppointments();
 
     const noShowRule = await getPenaltyRule("NO_SHOW");
@@ -700,6 +701,34 @@ async function checkAndProcessNoShows() {
     }
   } catch (err) {
     console.error("[checkAndProcessNoShows] error:", err.message);
+  }
+}
+
+// Both users checked in, but delivery was never confirmed by both sides.
+// Give the other participant 24 hours from the second check-in, then close
+// without completing the transaction or changing either trust score.
+async function closeUnconfirmedDeliveries() {
+  const { data: rows, error } = await supabase.from("appointments")
+    .select("id, transaction_id, buyer_checked_in_at, seller_checked_in_at, transactions(id, product_id, buyer_id, seller_id, buyer_received, seller_handed_over, status_id)")
+    .eq("status_id", 2).eq("buyer_checked_in", true).eq("seller_checked_in", true);
+  if (error || !rows?.length) return;
+  const { data: status } = await supabase.from("transaction_status").select("id, name").ilike("name", "%UNCONFIRMED%").maybeSingle();
+  const unconfirmedId = status?.id || 6;
+  const now = Date.now();
+  for (const appt of rows) {
+    const checkedAt = [appt.buyer_checked_in_at, appt.seller_checked_in_at].map((v) => Date.parse(v)).filter(Number.isFinite);
+    if (checkedAt.length !== 2 || now - Math.max(...checkedAt) < 24 * 60 * 60 * 1000) continue;
+    const txn = appt.transactions;
+    if (!txn || (txn.buyer_received && txn.seller_handed_over)) continue;
+    const { data: claimed } = await supabase.from("appointments").update({ status_id: 4, cancelled_at: new Date().toISOString(), cancellation_reason: "UNCONFIRMED: ทั้งสองฝ่ายเช็คอินแล้ว แต่ไม่มีการยืนยันส่งมอบครบภายใน 24 ชั่วโมง" }).eq("id", appt.id).eq("status_id", 2).select("id");
+    if (!claimed?.length) continue;
+    await supabase.from("transactions").update({ status_id: unconfirmedId, cancelled_at: new Date().toISOString() }).eq("id", txn.id).eq("status_id", 2);
+    await supabase.from("products").update({ status_id: 1 }).eq("id", txn.product_id).eq("status_id", 2);
+    for (const userId of [txn.buyer_id, txn.seller_id]) if (userId) await persistAndSendNotification(userId, {
+      type: "deal_unconfirmed", title: "ปิดรายการเป็นยังไม่ยืนยัน", message: "ทั้งสองฝ่ายเช็คอินสำเร็จ แต่ไม่มีการยืนยันส่งมอบครบภายใน 24 ชั่วโมง จึงไม่มีการปรับ Trust Score หรือเปิดรีวิว",
+      reference_type: "meetup", reference_id: appt.id,
+    });
+    emitMeetupUpdate(appt.id, { meetupId: appt.id, status: "unconfirmed", statusCode: "UNCONFIRMED", buyerId: txn.buyer_id, sellerId: txn.seller_id });
   }
 }
 
@@ -1154,6 +1183,8 @@ async function acceptMeetup(req, res, next) {
 
     // Update transaction status to 2 = ยืนยันแล้ว (CONFIRMED)
     await supabase.from("transactions").update({ status_id: 2 }).eq("id", appt.transaction_id);
+    const { data: acceptedTxn } = await supabase.from("transactions").select("product_id").eq("id", appt.transaction_id).maybeSingle();
+    if (acceptedTxn?.product_id) await supabase.from("products").update({ status_id: 2 }).eq("id", acceptedTxn.product_id).eq("status_id", 1);
 
     const partnerId = appt.transactions?.buyer_id === req.user.id
       ? appt.transactions?.seller_id
@@ -1287,7 +1318,7 @@ async function completeMeetup(req, res, next) {
     const { id } = req.params;
     const { data: appt } = await supabase
       .from("appointments")
-      .select("id, transaction_id, status_id, buyer_checked_in, seller_checked_in, transactions(id, product_id, buyer_id, seller_id, status_id)")
+      .select("id, transaction_id, status_id, buyer_checked_in, seller_checked_in, buyer_checked_in_at, seller_checked_in_at, transactions(id, product_id, buyer_id, seller_id, status_id, buyer_received, seller_handed_over)")
       .eq("id", id)
       .single();
 
@@ -1302,7 +1333,22 @@ async function completeMeetup(req, res, next) {
     }
 
     const txn = appt.transactions;
+    const isBuyer = String(txn.buyer_id) === String(req.user.id);
+    const ownConfirmation = isBuyer ? txn.buyer_received : txn.seller_handed_over;
+    if (ownConfirmation) return res.status(409).json({ error: "คุณยืนยันส่งมอบรายการนี้ไปแล้ว กำลังรออีกฝ่ายยืนยัน" });
     const now = new Date().toISOString();
+
+    // Each participant records their own confirmation. The deal only completes
+    // after both sides confirm; this makes repeated taps harmless.
+    const ownColumn = isBuyer ? "buyer_received" : "seller_handed_over";
+    const { data: confirmationRows, error: confirmErr } = await supabase.from("transactions")
+      .update({ [ownColumn]: true }).eq("id", txn.id).eq("status_id", 2).eq(ownColumn, false).select("id");
+    if (confirmErr) throw confirmErr;
+    if (!confirmationRows?.length) return res.status(409).json({ error: "ยืนยันรายการนี้ไปแล้ว กรุณารีเฟรชสถานะ" });
+    if (!txn[isBuyer ? "seller_handed_over" : "buyer_received"]) {
+      return res.json({ message: "บันทึกการยืนยันแล้ว กำลังรออีกฝ่ายยืนยัน", pendingOtherParty: true,
+        buyerReceived: isBuyer, sellerHandedOver: !isBuyer });
+    }
 
     // Complete transaction
     let completedTxnId = txn.id;
@@ -1311,7 +1357,7 @@ async function completeMeetup(req, res, next) {
       buyer_received: true,
       seller_handed_over: true,
       completed_at: now,
-    }).eq("id", txn.id).eq("status_id", 2).select("id");
+    }).eq("id", txn.id).eq("status_id", 2).eq("buyer_received", true).eq("seller_handed_over", true).select("id");
 
     if (txUpdErr && (txUpdErr.message?.includes("code") || txUpdErr.code === "42703")) {
       // Fallback if database trigger recover_score_on_deal failed due to missing 'code' column in transaction_status
@@ -1576,6 +1622,7 @@ module.exports = {
   completeMeetup,
   cancelMeetup,
   checkAndProcessNoShows,
+  closeUnconfirmedDeliveries,
   processWeeklySundayRecovery,
   recoverScoreOnDeal,
 };

@@ -15,7 +15,7 @@ const { sendNotificationToUser, emitNewMessage, emitMessagesRead } = require("..
 //  4) ลบแชทอัตโนมัติหลัง 7 วัน "เฉพาะ" แชทของสินค้าที่ขายสำเร็จเท่านั้น
 // ----------------------------------------------------------------
 const TX_COLUMNS = "id, product_id, buyer_id, seller_id, status_id, completed_at, cancelled_at, created_at";
-const RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 วัน (ใช้กับสินค้าที่ขายสำเร็จเท่านั้น)
+const RETENTION_MS = Infinity; // เก็บประวัติแชทไว้แม้ธุรกรรมเสร็จสิ้น
 
 // transactions.status_id: 1=PENDING, 2=CONFIRMED, 3=COMPLETED, 4=CANCELLED, 5=NO_SHOW
 const TX_COMPLETED = 3;
@@ -1090,7 +1090,7 @@ async function runChatCleanup({ sales = false, cancelled = false, productId = nu
             .filter((tx) => Number(tx.status_id) === TX_COMPLETED)
             .map((tx) => Date.parse(tx.completed_at))
             .filter(Number.isFinite);
-          if (completedTimes.length && Math.max(...completedTimes) < cutoff) return true;
+          if (completedTimes.length && Math.max(...completedTimes) < cutoff) return false;
         }
 
         // ── กติกา B: ยกเลิกนัด/ไม่มาตามนัด → ลบทันที ──

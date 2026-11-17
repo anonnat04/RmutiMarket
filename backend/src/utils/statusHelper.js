@@ -39,6 +39,7 @@ const TRANSACTION_STATUS = {
   CONFIRMED: { id: 2, code: "CONFIRMED", name: "ยืนยันแล้ว", ui: "confirmed" },
   COMPLETED: { id: 3, code: "COMPLETED", name: "ซื้อขายเสร็จ", ui: "completed" },
   CANCELLED: { id: 4, code: "CANCELLED", name: "ยกเลิก", ui: "cancelled" },
+  UNCONFIRMED: { id: 6, code: "UNCONFIRMED", name: "ยังไม่ยืนยัน", ui: "unconfirmed" },
 };
 
 const APPOINTMENT_STATUS = {

@@ -14,6 +14,8 @@ import {
   Bell,
   PlusCircle,
   User,
+  Star,
+  CircleHelp,
   X,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
@@ -28,8 +30,10 @@ const allNavItems = [
   { label: 'การแจ้งเตือน', path: '/notifications', icon: Bell, desc: 'ข้อความแจ้งเตือน', color: 'bg-orange-50 text-orange-600' },
   { label: 'แชทข้อความ', path: '/chat', icon: MessageCircle, desc: 'พูดคุยกับผู้ซื้อ/ผู้ขาย', color: 'bg-indigo-50 text-indigo-600' },
   { label: 'รายการโปรด', path: '/wishlist', icon: Heart, desc: 'สินค้าที่บันทึกไว้', color: 'bg-pink-50 text-pink-600' },
-  { label: 'รีวิว & ความน่าเชื่อถือ', path: '/reviews', icon: Award, desc: 'Trust Score และคะแนน', color: 'bg-yellow-50 text-yellow-600' },
+  { label: 'คะแนนความน่าเชื่อถือ', path: '/my-score', icon: Award, desc: 'ดูคะแนน Trust Score', color: 'bg-emerald-50 text-emerald-600' },
+  { label: 'รีวิวของฉัน', path: '/reviews', icon: Star, desc: 'คะแนนและรีวิว', color: 'bg-yellow-50 text-yellow-600' },
   { label: 'ประวัติการซื้อขาย', path: '/transactions', icon: Receipt, desc: 'บิลและประวัติทำรายการ', color: 'bg-slate-50 text-slate-600' },
+  { label: 'ประวัติการแจ้งปัญหา', path: '/my-reports', icon: CircleHelp, desc: 'ติดตามเรื่องที่แจ้ง', color: 'bg-rose-50 text-rose-600' },
   { label: 'โปรไฟล์ของฉัน', path: '/profile', icon: User, desc: 'ข้อมูลส่วนตัว & คะแนน', color: 'bg-brand-50 text-brand-700' },
   { label: 'ระบบ Admin', path: '/admin', icon: ShieldCheck, desc: 'Admin Portal', color: 'bg-orange-50 text-orange-600', adminBadge: true },
 ];

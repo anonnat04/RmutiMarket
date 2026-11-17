@@ -1081,12 +1081,18 @@ export function MeetupCheckInPage() {
   const executeConfirmDelivery = async () => {
     setCompleting(true);
     try {
-      await api.completeMeetup(meetup.id);
+      const result = await api.completeMeetup(meetup.id);
+      if (result?.pendingOtherParty) {
+        setMeetup((prev) => prev ? { ...prev, buyerReceived: result.buyerReceived, sellerHandedOver: result.sellerHandedOver } : null);
+        setShowDeliveryConfirm(false);
+        showFeedback('success', 'บันทึกการยืนยันแล้ว', 'รออีกฝ่ายยืนยันภายใน 24 ชั่วโมง');
+        return;
+      }
       useMeetupStore.getState().markDelivered(meetup.id, 'buyer');
       useMeetupStore.getState().markDelivered(meetup.id, 'seller');
       setMeetup((prev) => prev ? { ...prev, status: 'completed', statusCode: 'COMPLETED' } : null);
       setShowDeliveryConfirm(false);
-      // เด้งหน้ารีวิวทันทีตามที่ผู้ใช้ร้องขอ
+      // เปิดรีวิวได้เมื่อทั้งสองฝ่ายยืนยันและธุรกรรมปิดสำเร็จเท่านั้น
       setShowReviewModal(true);
     } catch (err) {
       showFeedback('warning', 'ยังยืนยันส่งมอบไม่ได้', err.message || 'เกิดข้อผิดพลาดในการยืนยันรับสินค้า');
