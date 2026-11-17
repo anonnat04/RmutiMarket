@@ -250,7 +250,7 @@ export default function RegisterView({ goTo }) {
             icon={CreditCard}
             value={form.studentId}
             onChange={handleStudentIdChange}
-            placeholder="เช่น 67172310611-6"
+            placeholder="เช่น 67172310600-0"
             maxLength={13}
             error={!!errors.studentId}
           />
