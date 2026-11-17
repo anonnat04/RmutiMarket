@@ -60,6 +60,9 @@ async function requireUserAuth(req, res, next) {
     if (error || !user) {
       return res.status(401).json({ error: "ไม่พบบัญชีผู้ใช้ในระบบ" });
     }
+    if (user.status === "deleted") {
+      return res.status(401).json({ error: "บัญชีนี้ถูกลบแล้ว กรุณาเข้าสู่ระบบด้วยบัญชีอื่น" });
+    }
     if (user.status === "banned" || user.status === "suspended") {
       return res.status(403).json({ error: "บัญชีของคุณถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ" });
     }

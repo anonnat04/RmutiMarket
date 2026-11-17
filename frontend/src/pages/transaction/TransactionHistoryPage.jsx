@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Receipt, Search, Filter, Calendar, MapPin, CheckCircle2, XCircle, RotateCcw, Clock, ArrowLeft, ArrowUpRight, Star } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
-import { useMeetupStore } from '@/store/meetupStore';
 import { EmptyState } from '@/components/common/EmptyState';
 import { Button } from '@/components/common/Button';
 import { formatCurrency } from '@/utils/formatCurrency';
@@ -35,7 +34,6 @@ const statusMap = {
 export function TransactionHistoryPage() {
   const user = useAuthStore((s) => s.user);
   const myId = user?.id ?? 'me';
-  const meetups = useMeetupStore((s) => s.meetups);
 
   const [dbTxns, setDbTxns] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -61,6 +59,7 @@ export function TransactionHistoryPage() {
               status: t.status === 'completed' ? 'completed' : (meetup?.status || t.status),
               date: t.completed_at || t.created_at,
               locationName: meetup?.meetup_points?.name || 'จุดนัดรับ มทร.อีสาน',
+              locationDetail: meetup?.meetingDetail || meetup?.meeting_detail || '',
               isDb: true,
             };
           });
@@ -71,12 +70,7 @@ export function TransactionHistoryPage() {
       .finally(() => setLoading(false));
   }, [user, myId]);
 
-  const allItems = [...dbTxns];
-  for (const m of meetups) {
-    if ((m.buyerId === myId || m.sellerId === myId) && !allItems.some((item) => item.id === m.id)) {
-      allItems.push(m);
-    }
-  }
+  const allItems = dbTxns;
 
   const [filterType, setFilterType] = useState('all'); // all | buy | sell
   const [filterStatus, setFilterStatus] = useState('all'); // all | completed | return | other
@@ -237,6 +231,11 @@ export function TransactionHistoryPage() {
                   {item.returnReason && (
                     <p className="text-xs text-orange-600 bg-orange-50/70 p-2 rounded-lg border border-orange-100">
                       เหตุผลขอคืน: {item.returnReason}
+                    </p>
+                  )}
+                  {item.locationDetail && (
+                    <p className="text-xs text-orange-800 bg-orange-50/70 p-2 rounded-lg border border-orange-100 break-words">
+                      📌 รายละเอียดจุดเพิ่มเติม: {item.locationDetail}
                     </p>
                   )}
                 </div>

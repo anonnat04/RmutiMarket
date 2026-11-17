@@ -51,6 +51,6 @@ export const useWishlistStore = create()(
 
       clearWishlist: () => set({ productIds: [] }),
     }),
-    { name: "cm-wishlist" }
+    { name: "cm-wishlist", version: 1, migrate: () => ({}), partialize: () => ({}) }
   )
 );

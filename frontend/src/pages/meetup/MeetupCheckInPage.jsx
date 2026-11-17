@@ -217,7 +217,7 @@ function mapAppointment(m) {
     sellerCheckedInAt: m.sellerCheckedInAt || m.seller_checked_in_at || null,
     buyerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
     sellerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
-    note: m.note || m.location_detail || m.locationDetail || '',
+    note: m.meetingDetail || m.meeting_detail || '',
     reviews: m.reviews || txn.reviews || [],
     isDb: true,
   };
@@ -541,7 +541,7 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
     <>
       {/* Container แผนที่ปกติ */}
       <div className="relative group rounded-2xl overflow-hidden border border-gray-200 shadow-2xs z-0 isolate">
-        <div ref={mapRef} style={{ height: 250, width: '100%', cursor: 'grab' }} />
+        <div ref={mapRef} style={{ height: 'clamp(210px, 58vw, 250px)', width: '100%', maxWidth: '100%', cursor: 'grab' }} />
 
         {/* ปุ่มควบคุมลอยบนแผนที่ MiniMap */}
         <div className="absolute top-2.5 left-2.5 z-10 flex items-center gap-1.5">
@@ -1301,6 +1301,11 @@ export function MeetupCheckInPage() {
         <p className="mt-2 flex items-center gap-1 text-xs text-ink-500">
           <MapPin size={13} className="text-brand-500" /> {meetup.locationName}
         </p>
+        {meetup.note && (
+          <p className="mt-1 rounded-lg bg-orange-50 px-2.5 py-2 text-xs leading-relaxed text-orange-900 break-words">
+            📌 รายละเอียดจุดเพิ่มเติม: {meetup.note}
+          </p>
+        )}
       </div>
 
       {/* ─── ระยะห่างเรียลไทม์ ─── */}

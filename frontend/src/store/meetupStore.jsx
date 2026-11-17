@@ -389,6 +389,8 @@ export const useMeetupStore = create()(
 
       getMeetupById: (meetupId) => get().meetups.find((m) => m.id === meetupId) || null,
 
+      clearMeetups: () => set({ meetups: [] }),
+
       // ─── เพิ่มใหม่: ฝังข้อมูลนัดหมายจาก backend เข้า store ในเครื่อง ───
       // จำเป็นเพราะ checkIn()/markDelivered()/cancelRequest() ทำงานกับ
       // state.meetups ในเครื่องเท่านั้น แต่นัดรับที่สร้างจริงตอนนี้มาจาก backend
@@ -428,6 +430,6 @@ export const useMeetupStore = create()(
         return get().getMeetupById(data.id);
       },
     }),
-    { name: 'cm-meetups' }
+    { name: 'cm-meetups', version: 1, migrate: () => ({}), partialize: () => ({}) }
   )
 );

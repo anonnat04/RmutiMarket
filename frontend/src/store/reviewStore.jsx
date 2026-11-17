@@ -1,57 +1,12 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-const INITIAL_REVIEWS = [
-  {
-    id: 'rev-1',
-    targetUserId: 's1', // seller id
-    reviewerId: 'u-kanok',
-    reviewerName: 'kanok_engineer',
-    reviewerRole: 'ผู้ซื้อ',
-    rating: 5,
-    comment: 'นัดตรงเวลา สินค้าตรงปก สภาพดีมากครับ',
-    productTitle: 'iPad Air 5 64GB WiFi',
-    createdAt: '2026-05-24T10:30:00Z',
-  },
-  {
-    id: 'rev-2',
-    targetUserId: 's1',
-    reviewerId: 'u-nong',
-    reviewerName: 'nong_cs',
-    reviewerRole: 'ผู้ซื้อ',
-    rating: 5,
-    comment: 'ผู้ขายนิสัยดี เป็นกันเอง แนะนำเลยครับ',
-    productTitle: 'เสื้อช็อปวิศวะ มทร.อีสาน',
-    createdAt: '2026-05-20T14:15:00Z',
-  },
-  {
-    id: 'rev-3',
-    targetUserId: 's1',
-    reviewerId: 'u-ice',
-    reviewerName: 'ice_business',
-    reviewerRole: 'ผู้ซื้อ',
-    rating: 4,
-    comment: 'ต่อรองราคาง่าย สินค้ามีรอยนิดหน่อยแต่ตรงตามรูป',
-    productTitle: 'กล้อง Canon EOS M50',
-    createdAt: '2026-05-18T09:00:00Z',
-  },
-  {
-    id: 'rev-4',
-    targetUserId: 'me',
-    reviewerId: 's1',
-    reviewerName: 'อาจารย์/รุ่นพี่ มทร.',
-    reviewerRole: 'ผู้ขาย',
-    rating: 5,
-    comment: 'มารับสินค้าตรงเวลา พูดจาสุภาพมากครับ',
-    productTitle: 'หนังสือแคลคูลัส 1',
-    createdAt: '2026-06-01T16:00:00Z',
-  },
-];
-
 export const useReviewStore = create()(
   persist(
     (set, get) => ({
-      reviews: INITIAL_REVIEWS,
+      reviews: [],
+
+      clearReviews: () => set({ reviews: [] }),
 
       addReview: ({ targetUserId, reviewerId, reviewerName, reviewerRole, rating, comment, productTitle, meetupId, images }) => {
         const newReview = {
@@ -139,6 +94,6 @@ export const useReviewStore = create()(
         };
       },
     }),
-    { name: 'rmuti-reviews' }
+    { name: 'rmuti-reviews', version: 1, migrate: () => ({}), partialize: () => ({}) }
   )
 );

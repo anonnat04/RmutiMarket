@@ -28,6 +28,6 @@ export const useMyListingsStore = create()(
       // (ที่บันทึกไว้แบบ optimistic ตอนกดลงขาย) จะปนมากับบัญชีใหม่บนเครื่องเดียวกัน
       clearListings: () => set({ listings: [] }),
     }),
-    { name: "cm-my-listings" }
+    { name: "cm-my-listings", version: 1, migrate: () => ({}), partialize: () => ({}) }
   )
 );

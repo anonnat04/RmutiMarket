@@ -400,7 +400,7 @@ export function CampusMapPicker({ value, onChange }) {
         </div>
 
         {/* ─── Map container ──────────────────────────────────────── */}
-        <div ref={mapRef} style={{ height: 380, width: '100%' }} />
+        <div ref={mapRef} style={{ height: 'clamp(250px, 62vw, 380px)', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }} />
       </div>
 
       {/* ─── GPS status bar ─────────────────────────────────────── */}

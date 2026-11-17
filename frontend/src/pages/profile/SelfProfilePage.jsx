@@ -21,8 +21,6 @@ import {
   Edit2,
   X,
 } from 'lucide-react';
-import { useReviewStore } from '@/store/reviewStore';
-import { useMeetupStore } from '@/store/meetupStore';
 import { useMyListingsStore } from '@/store/myListingsStore';
 import { useNotificationStore } from '@/store/notificationStore';
 import { useWishlistStore } from '@/store/cartWishlistStore';
@@ -134,7 +132,6 @@ export function SelfProfilePage({ user, logout, navigate }) {
   const setListings = useMyListingsStore((s) => s.setListings);
   const wishlistIds = useWishlistStore((s) => s.productIds);
   const fetchWishlist = useWishlistStore((s) => s.fetchWishlist);
-  const meetups = useMeetupStore((s) => s.meetups);
   const notifications = useNotificationStore((s) => s.notifications);
 
   // ไม่แสดงสินค้าที่ "นัดรับแล้ว/จองแล้ว/ขายแล้ว" ในหน้าโปรไฟล์ตัวเองอีกต่อไป
@@ -345,16 +342,8 @@ export function SelfProfilePage({ user, logout, navigate }) {
     }
   };
 
-  const myId = user?.id ?? 'me';
-
-  const allReviews = useReviewStore((s) => s.reviews);
-  const storeReviews = useMemo(
-    () => allReviews.filter((r) => String(r.targetUserId) === String(myId)),
-    [allReviews, myId]
-  );
-
   const combinedReviews = useMemo(() => {
-    const list = dbReviews.map((r) => ({
+    return dbReviews.map((r) => ({
       id: r.id,
       reviewerName: r.reviewer?.display_name || 'ผู้ใช้งาน',
       reviewerRole: r.reviewer_role || null,
@@ -363,22 +352,7 @@ export function SelfProfilePage({ user, logout, navigate }) {
       images: r.images || [],
       createdAt: r.created_at,
     }));
-    const dbIds = new Set(list.map((r) => String(r.id)));
-    storeReviews.forEach((r) => {
-      if (!dbIds.has(String(r.id))) {
-        list.push({
-          id: r.id,
-          reviewerName: r.reviewerName || 'ผู้ใช้งาน',
-          reviewerRole: r.reviewerRole || null,
-          rating: Number(r.rating || 5),
-          comment: r.comment || '',
-          images: r.images || [],
-          createdAt: r.createdAt,
-        });
-      }
-    });
-    return list;
-  }, [dbReviews, storeReviews]);
+  }, [dbReviews]);
 
   const topReviewCount = Number(statsData?.reviewCount ?? combinedReviews.length ?? 0);
   const topAverageRating = Number(statsData?.averageRating ?? (combinedReviews.length ? combinedReviews.reduce((sum, r) => sum + r.rating, 0) / combinedReviews.length : 0));
@@ -411,9 +385,7 @@ export function SelfProfilePage({ user, logout, navigate }) {
     return { star, count, pct };
   });
 
-  const myMeetups = meetups.filter(
-    (m) => String(m.buyerId) === String(myId) || String(m.sellerId) === String(myId)
-  );
+  const myMeetupCount = Number(statsData?.meetupsCount ?? 0);
 
   const unread = notifications.filter((n) => !n.read).length;
 
@@ -435,7 +407,7 @@ export function SelfProfilePage({ user, logout, navigate }) {
     { label: 'สินค้าของฉัน', icon: Store, value: visibleListings.length, path: '/my-products' },
     { label: 'โพสตามหาสินค้า', icon: Search, value: dbMyRequestsCount, path: '/want-to-buy' },
     { label: 'รายการโปรด', icon: Heart, value: wishlistIds.length, path: '/wishlist' },
-    { label: 'การนัดรับสินค้า', icon: CalendarClock, value: myMeetups.length, unit: 'นัดหมาย', path: '/meetups' },
+    { label: 'การนัดรับสินค้า', icon: CalendarClock, value: myMeetupCount, unit: 'นัดหมาย', path: '/meetups' },
     { label: 'ประวัติการซื้อขาย', icon: Receipt, value: statsData?.transactionCount ?? 0, unit: 'รายการ', path: '/transactions' },
   ];
 

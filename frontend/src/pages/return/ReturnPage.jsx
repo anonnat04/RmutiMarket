@@ -1,12 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, XCircle, RotateCcw, Clock, Calendar, ArrowLeft, ShieldCheck, HelpCircle, FileText, ChevronRight } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
-import { useMeetupStore } from '@/store/meetupStore';
-import { useNotificationStore } from '@/store/notificationStore';
 import { Button } from '@/components/common/Button';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ReturnModal } from '@/components/meetup/ReturnModal';
+import { api } from '@/lib/api';
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
@@ -25,70 +24,64 @@ function formatDate(dateStr) {
 
 export function ReturnPage() {
   const user = useAuthStore((s) => s.user);
-  const meetups = useMeetupStore((s) => s.meetups);
-  const requestReturn = useMeetupStore((s) => s.requestReturn);
-  const respondToReturn = useMeetupStore((s) => s.respondToReturn);
-  const addNotification = useNotificationStore((s) => s.addNotification);
-
   const [selectedMeetup, setSelectedMeetup] = useState(null);
   const [activeTab, setActiveTab] = useState('requests'); // 'requests' | 'eligible'
+  const [returnRequests, setReturnRequests] = useState([]);
+  const [eligibleForReturn, setEligibleForReturn] = useState([]);
 
   const myId = user?.id ?? 'me';
-  const myMeetups = meetups.filter((m) => m.buyerId === myId || m.sellerId === myId);
 
-  // คำร้องขอคืนสินค้า
-  const returnRequests = myMeetups.filter((m) =>
-    ['return_requested', 'return_accepted', 'return_rejected'].includes(m.status)
-  );
-
-  // รายการที่สำเร็จแล้วยังอยู่ใน 3 วัน (สามารถขอคืนได้)
-  const eligibleForReturn = myMeetups.filter((m) => {
-    if (m.status !== 'completed' || m.buyerId !== myId) return false;
-    if (m.allowsReturn === false) return false; // ผู้ขายระบุไม่รับคืน
-    if (!m.completedAt) return true;
-    const returnLimitMs = (m.returnPolicyDays || 3) * 24 * 60 * 60 * 1000;
-    const timeSinceCompleted = Date.now() - new Date(m.completedAt).getTime();
-    return timeSinceCompleted <= returnLimitMs;
-  });
-
-  const handleReturnSubmit = (reason) => {
-    if (!selectedMeetup) return;
-    requestReturn(selectedMeetup.id, reason);
-
-    // ⚠️ หักคะแนนผู้ขาย 1 ดาวทันทีเมื่อมีคำร้องขอคืนสินค้าตำหนิไม่ตรง
-    import('@/store/reviewStore').then(({ useReviewStore }) => {
-      useReviewStore.getState().applyReturnPenalty({
-        sellerId: selectedMeetup.sellerId,
-        buyerName: selectedMeetup.buyerName,
-        productTitle: selectedMeetup.productTitle,
-        returnReason: reason,
-        meetupId: selectedMeetup.id,
+  const loadReturns = async () => {
+    if (!user?.id) return;
+    try {
+      const [returnsRes, transactionsRes] = await Promise.all([api.getMyReturns(), api.getMyTransactions()]);
+      const requests = (returnsRes?.returns || []).map((r) => {
+        const txn = r.transactions || {};
+        const product = txn.products || {};
+        return {
+          id: r.id, transactionId: txn.id, buyerId: txn.buyer_id, sellerId: txn.seller_id,
+          buyerName: txn.buyer?.username || txn.buyer?.full_name || 'ผู้ซื้อ',
+          sellerName: txn.seller?.username || txn.seller?.full_name || 'ผู้ขาย',
+          productTitle: product.title || 'สินค้า', returnReason: r.reason, returnRequestedAt: r.created_at,
+          status: r.status === 'accepted' ? 'return_accepted' : r.status === 'rejected' ? 'return_rejected' : 'return_requested',
+        };
       });
-    });
-
-    // แจ้งเตือนผู้ขาย
-    addNotification({
-      userId: selectedMeetup.sellerId,
-      title: '⚠️ มีคำร้องขอคืนสินค้าและถูกหัก 1 ดาว',
-      message: `ผู้ซื้อขอคืนสินค้า "${selectedMeetup.productTitle}" เนื่องจาก: ${reason} (ระบบได้บันทึกคะแนน 1 ดาวในประวัติความน่าเชื่อถือแล้ว)`,
-      type: 'return',
-      link: '/returns',
-    });
-
-    setSelectedMeetup(null);
+      const requestedTransactionIds = new Set(requests.map((r) => String(r.transactionId)));
+      const eligible = (transactionsRes?.transactions || [])
+        .filter((t) => String(t.buyer_id) === String(user.id) && t.status === 'completed' && !requestedTransactionIds.has(String(t.id)))
+        .filter((t) => !t.completed_at || Date.now() - new Date(t.completed_at).getTime() <= 24 * 60 * 60 * 1000)
+        .map((t) => ({ id: t.id, transactionId: t.id, buyerId: t.buyer_id, sellerId: t.seller_id,
+          sellerName: t.seller?.display_name || t.seller?.username || t.seller?.full_name || 'ผู้ขาย',
+          productTitle: t.products?.title || 'สินค้า', completedAt: t.completed_at }));
+      setReturnRequests(requests);
+      setEligibleForReturn(eligible);
+    } catch (err) {
+      console.warn('Could not load returns from database:', err);
+      setReturnRequests([]);
+      setEligibleForReturn([]);
+    }
   };
 
-  const handleSellerRespond = (meetup, action) => {
-    respondToReturn(meetup.id, action);
+  useEffect(() => { loadReturns(); }, [user?.id]);
 
-    // แจ้งเตือนผู้ซื้อ
-    addNotification({
-      userId: meetup.buyerId,
-      title: action === 'accept' ? '✅ ยอมรับคำร้องขอคืนสินค้า' : '❌ ปฏิเสธคำร้องขอคืนสินค้า',
-      message: `คำร้องขอคืนสินค้า "${meetup.productTitle}" ได้รับการตอบรับเรียบร้อยแล้ว`,
-      type: 'return',
-      link: '/returns',
-    });
+  const handleReturnSubmit = async (reason) => {
+    if (!selectedMeetup) return;
+    try {
+      await api.createReturnRequest({ transactionId: selectedMeetup.transactionId, reason });
+      setSelectedMeetup(null);
+      await loadReturns();
+    } catch (err) {
+      alert(err.message || 'ส่งคำร้องขอคืนสินค้าไม่สำเร็จ');
+    }
+  };
+
+  const handleSellerRespond = async (meetup, action) => {
+    try {
+      await api.respondToReturnRequest(meetup.id, action);
+      await loadReturns();
+    } catch (err) {
+      alert(err.message || 'บันทึกการตอบคำร้องไม่สำเร็จ');
+    }
   };
 
   return (

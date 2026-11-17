@@ -7,5 +7,6 @@ router.use(requireUserAuth);
 
 router.get("/", returnController.getMyReturns);
 router.post("/", returnController.createReturnRequest);
+router.patch("/:id", returnController.respondToReturnRequest);
 
 module.exports = router;

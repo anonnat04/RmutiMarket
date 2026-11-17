@@ -390,12 +390,19 @@ function mapAppointment(a) {
   const buyer = txn.buyer ? formatUser(txn.buyer) : {};
   const seller = txn.seller ? formatUser(txn.seller) : {};
 
+  // ข้อมูลนัดหมายที่เหลือจากบัญชี/สินค้าเก่าซึ่งถูกลบไปแล้วต้องไม่ส่งให้
+  // หน้าผู้ใช้ เพราะไม่มีคู่ค้าจริงให้ทำรายการต่อได้
+  if (!txn.id || !prod.id || !txn.buyer || !txn.seller ||
+      txn.buyer.status === "deleted" || txn.seller.status === "deleted") {
+    return null;
+  }
+
   const scheduledAt = `${a.appointment_date}T${a.appointment_time}`;
   const price = parseFloat(prod.price || 0);
 
-  // locationName ต้องมาจาก locations.name เท่านั้น — location_detail เป็นหมายเหตุของผู้ใช้ ไม่ใช่ชื่อจุด
+  // locationName ต้องมาจาก locations.name และรายละเอียดเพิ่มเติมอยู่ใน meeting_detail
   const realLocName = a.locations?.name || "จุดนัดรับ มทร.อีสาน";
-  const cleanNote = a.location_detail ? a.location_detail.replace(/^จุดนัด:\s*/, "").trim() : null;
+  const meetingDetail = a.meeting_detail ? String(a.meeting_detail).trim() : null;
 
   const locObj = a.locations ? {
     ...a.locations,
@@ -415,7 +422,9 @@ function mapAppointment(a) {
     locationId: a.location_id,
     location_detail: a.location_detail,
     locationDetail: a.location_detail,
-    note: cleanNote || '',
+    meeting_detail: meetingDetail,
+    meetingDetail,
+    note: meetingDetail || '',
     status_id: a.status_id,
     status: apptStatus.ui,
     statusCode: apptStatus.code,
@@ -764,7 +773,7 @@ async function getMyMeetups(req, res, next) {
       .from("appointments")
       .select(`
         id, transaction_id, appointment_date, appointment_time,
-        location_id, location_detail, status_id,
+        location_id, location_detail, meeting_detail, status_id,
         buyer_checked_in, seller_checked_in, buyer_checked_in_at, seller_checked_in_at,
         created_at, confirmed_at, created_by, cancelled_at, cancellation_reason,
         appointment_status(id, name),
@@ -773,8 +782,8 @@ async function getMyMeetups(req, res, next) {
           id, product_id, buyer_id, seller_id, status_id, buyer_received, seller_handed_over,
           transaction_status(id, name),
           products(id, title, price, product_images(id, image_url, is_primary)),
-          buyer:users!buyer_id(id, username, full_name, avatar_url, profile_image_url),
-          seller:users!seller_id(id, username, full_name, avatar_url, profile_image_url),
+          buyer:users!buyer_id(id, username, full_name, avatar_url, profile_image_url, status),
+          seller:users!seller_id(id, username, full_name, avatar_url, profile_image_url, status),
           reviews(id, reviewer_id, reviewee_id, rating, comment, created_at)
         )
       `, { count: "exact" })
@@ -789,11 +798,12 @@ async function getMyMeetups(req, res, next) {
       .order("appointment_date", { ascending: true })
       .range(offset, offset + parseInt(limit) - 1);
 
-    const { data, error, count } = await query;
+    const { data, error } = await query;
     if (error) throw error;
 
-    const formatted = (data || []).map(mapAppointment);
-    res.json({ meetups: formatted, total: count });
+    // กรองข้อมูลตกค้างที่อาจเกิดก่อนตั้งค่า foreign key แบบ cascade
+    const formatted = (data || []).map(mapAppointment).filter(Boolean);
+    res.json({ meetups: formatted, total: formatted.length });
   } catch (err) {
     next(err);
   }
@@ -855,13 +865,13 @@ async function openNewTransaction(productId, buyerId, sellerId) {
 async function createMeetup(req, res, next) {
   let newlyCreatedTxn = null;
   try {
-    let { transactionId, listingId, productId, sellerId, meetupPointId, locationId, scheduledAt, date, appointmentDate, time, appointmentTime, note, locationDetail, locationName, locationLat, locationLng } = req.body;
+    let { transactionId, listingId, productId, sellerId, meetupPointId, locationId, scheduledAt, date, appointmentDate, time, appointmentTime, meetingDetail, locationName, locationLat, locationLng } = req.body;
 
     const targetProductId = productId || listingId;
     const finalLocationRaw = locationId || meetupPointId;
     const finalDate = appointmentDate || date || (scheduledAt ? scheduledAt.split("T")[0] : todayInBangkok());
     const finalTime = appointmentTime || time || (scheduledAt ? scheduledAt.split("T")[1]?.slice(0, 5) : "12:00");
-    const finalDetail = note || locationDetail || null;  // หมายเหตุ/note เท่านั้น ไม่เอา locationName
+    const finalMeetingDetail = meetingDetail == null ? null : String(meetingDetail).trim().slice(0, 300);
 
     // ── ตรวจเวลานัดรับต้องอยู่ในช่วง 08:00 – 20:00 และไม่ใช่เวลาที่ผ่านมาแล้ว ──
     if (!isWithinMeetupHours(finalTime)) {
@@ -1053,7 +1063,8 @@ async function createMeetup(req, res, next) {
         appointment_date: finalDate,
         appointment_time: finalTime,
         location_id: resolvedLocationId,
-        location_detail: finalDetail,
+        location_detail: locationName || null,
+        meeting_detail: finalMeetingDetail || null,
         status_id: 1, // 1 = รอการยืนยัน (PENDING)
         created_by: req.user.id,
       })
@@ -1102,8 +1113,9 @@ async function createMeetup(req, res, next) {
             .eq("conversation_id", c.id);
           const uids = (mems || []).map((m) => String(m.user_id));
           if (uids.includes(String(txn.buyer_id)) && uids.includes(String(txn.seller_id))) {
-            const locText = locationName || finalDetail || "จุดนัดรับ มทร.อีสาน";
-            const chatContent = `📅 นัดรับสินค้า: วันที่ ${finalDate} เวลา ${finalTime} น. ณ ${locText} (กรุณาไปที่หน้านัดรับเพื่อกดยืนยัน)`;
+            const locText = locationName || "จุดนัดรับ มทร.อีสาน";
+            const detailText = finalMeetingDetail ? ` — รายละเอียด: ${finalMeetingDetail}` : "";
+            const chatContent = `📅 นัดรับสินค้า: วันที่ ${finalDate} เวลา ${finalTime} น. ณ ${locText}${detailText} (กรุณาไปที่หน้านัดรับเพื่อกดยืนยัน)`;
             const { data: insertedMsg } = await supabase.from("messages").insert({
               conversation_id: c.id,
               sender_id: req.user.id,

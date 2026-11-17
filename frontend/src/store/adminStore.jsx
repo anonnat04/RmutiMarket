@@ -95,8 +95,8 @@ const INITIAL_LISTINGS = [
 export const useAdminStore = create()(
   persist(
     (set, get) => ({
-      users: INITIAL_USERS,
-      listings: INITIAL_LISTINGS,
+      users: [],
+      listings: [],
 
       // User Management
       toggleUserStatus: (userId, newStatus, reason = '') => {
@@ -132,6 +132,6 @@ export const useAdminStore = create()(
         };
       },
     }),
-    { name: 'rmuti-admin' }
+    { name: 'rmuti-admin', version: 1, migrate: () => ({}), partialize: () => ({}) }
   )
 );

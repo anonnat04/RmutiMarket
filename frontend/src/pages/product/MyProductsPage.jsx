@@ -18,7 +18,6 @@ const tabs = [
 
 export function MyProductsPage() {
   const navigate = useNavigate();
-  const localListings = useMyListingsStore((s) => s.listings);
   const updateStatus = useMyListingsStore((s) => s.updateStatus);
   const [dbListings, setDbListings] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -62,14 +61,7 @@ export function MyProductsPage() {
     load();
   }, [currentUserId]);
 
-  const listings = useMemo(() => {
-    const map = new Map();
-    dbListings.forEach((p) => map.set(String(p.id), p));
-    localListings.forEach((p) => {
-      if (!map.has(String(p.id))) map.set(String(p.id), p);
-    });
-    return Array.from(map.values());
-  }, [dbListings, localListings]);
+  const listings = useMemo(() => dbListings, [dbListings]);
 
   const handleConfirmDelete = async () => {
     if (!deleteTargetId) return;

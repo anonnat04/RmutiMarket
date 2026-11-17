@@ -129,7 +129,8 @@ export const useFeedStore = create()(
 
       /** รายการ interests ที่ seeded (อ่านจาก authStore โดยตรง) */
       getSeededInterests: () => get().seededInterests,
+      clearFeed: () => set({ viewCounts: {}, categoryViewCounts: {}, likedCategories: {}, searchKeywords: [], seededInterests: [] }),
     }),
-    { name: "cm-user-feed-store" }
+    { name: "cm-user-feed-store", version: 1, migrate: () => ({}), partialize: () => ({}) }
   )
 );

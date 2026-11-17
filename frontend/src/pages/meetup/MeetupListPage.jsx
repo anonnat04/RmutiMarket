@@ -138,7 +138,7 @@ function mapAppointmentFromApi(m) {
     sellerCheckedInAt: m.sellerCheckedInAt || m.seller_checked_in_at || null,
     buyerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
     sellerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
-    note: m.note || m.location_detail || m.locationDetail || '',
+    note: m.meetingDetail || m.meeting_detail || '',
     reviews: m.reviews || txn.reviews || [],
     isDb: true,
   };
@@ -268,7 +268,6 @@ export function MeetupListPage() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const user = useAuthStore((s) => s.user);
-  const meetups = useMeetupStore((s) => s.meetups);
   const respondToRequest = useMeetupStore((s) => s.respondToRequest);
   const cancelRequest = useMeetupStore((s) => s.cancelRequest);
   const submitReview = useMeetupStore((s) => s.submitReview);
@@ -342,34 +341,12 @@ export function MeetupListPage() {
     };
   }, []);
 
-  const allMeetups = useMemo(() => {
-    // DB เป็น source of truth — ใช้เป็น base แล้ว dedup ด้วย transactionId + productId-buyerId-sellerId
-    const seenIds = new Set();
-    const seenTxnIds = new Set();
-    const seenCombo = new Set();
-    const combined = [];
-    for (const m of dbMeetups) {
-      seenIds.add(String(m.id));
-      if (m.transactionId) seenTxnIds.add(String(m.transactionId));
-      const combo = `${m.productId}-${m.buyerId}-${m.sellerId}-${m.status}`;
-      seenCombo.add(combo);
-      combined.push(m);
-    }
-    // เพิ่มรายการจาก localStorage เฉพาะที่ไม่ซ้ำกับ DB
-    for (const m of meetups) {
-      if (seenIds.has(String(m.id))) continue;
-      if (m.transactionId && seenTxnIds.has(String(m.transactionId))) continue;
-      const combo = `${m.productId}-${m.buyerId}-${m.sellerId}-${m.status}`;
-      if (seenCombo.has(combo)) continue;
-      combined.push(m);
-    }
-    return combined;
-  }, [dbMeetups, meetups]);
+  // นัดหมายจริงต้องมาจาก API เท่านั้น ห้ามรวมข้อมูลจำลอง/ข้อมูลค้างใน
+  // localStorage เพราะข้อมูลนั้นอยู่ข้ามการสลับหรือลบบัญชีได้
+  const allMeetups = useMemo(() => dbMeetups, [dbMeetups]);
 
   const myMeetups = useMemo(() => {
     return allMeetups.filter((m) => {
-      if (m.isDb) return true; // รายการจาก API /api/meetups คือของ user ปัจจุบันโดยตรง
-      if (!myId || myId === 'me') return true;
       return String(m.buyerId) === String(myId) || String(m.sellerId) === String(myId);
     });
   }, [allMeetups, myId]);
@@ -768,6 +745,12 @@ export function MeetupListPage() {
                   {mapOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                 </button>
               </div>
+
+              {m.note && (
+                <p className="rounded-lg bg-orange-50 px-3 py-2 text-xs leading-relaxed text-orange-900 break-words">
+                  📌 รายละเอียดจุดเพิ่มเติม: {m.note}
+                </p>
+              )}
 
               {mapOpen && (
                 <div style={{ marginTop: 4 }}>

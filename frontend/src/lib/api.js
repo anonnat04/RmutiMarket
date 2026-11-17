@@ -210,6 +210,11 @@ export const api = {
   getUserReviews: (userId) => request(`/api/reviews/user/${userId}`),
   createReview: (data) => request("/api/reviews", { method: "POST", body: data }),
 
+  // ─── Return APIs ───
+  getMyReturns: () => request("/api/returns"),
+  createReturnRequest: (data) => request("/api/returns", { method: "POST", body: data }),
+  respondToReturnRequest: (id, action) => request(`/api/returns/${id}`, { method: "PATCH", body: { action } }),
+
   // ─── Transaction APIs ───
   getMyTransactions: (params = {}) => {
     const qs = new URLSearchParams(params);

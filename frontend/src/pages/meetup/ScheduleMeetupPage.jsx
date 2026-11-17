@@ -97,6 +97,7 @@ export function ScheduleMeetupPage() {
     return isWithinMeetupHours(now) ? now : '09:00';
   });
   const [locationValue, setLocationValue] = useState(null); // { type, id } | { type, lat, lng, name }
+  const [locationDetail, setLocationDetail] = useState('');
   const [errors, setErrors] = useState({});
   // กันกดส่งซ้ำจนสร้างนัดหมายซ้ำในฐานข้อมูล
   const [submitting, setSubmitting] = useState(false);
@@ -218,8 +219,7 @@ export function ScheduleMeetupPage() {
         locationLng: lng,
         date,
         time,
-        note: `จุดนัด: ${locationName}`,
-        locationDetail: locationName,
+        meetingDetail: locationDetail.trim() || null,
       };
 
       // แก้ไข: เดิมหลังจากยิง api.createMeetup() (เขียนลง backend/appointments จริง)
@@ -488,6 +488,22 @@ export function ScheduleMeetupPage() {
           {errors.location && (
             <p className="mt-2 text-xs font-medium text-red-500">{errors.location}</p>
           )}
+        </div>
+
+        <div className="cm-card p-4">
+          <label htmlFor="location-detail" className="mb-1.5 block text-sm font-bold text-ink-900">
+            📌 ระบุรายละเอียดจุดเพิ่มเติม <span className="text-xs font-normal text-ink-400">(ไม่บังคับ)</span>
+          </label>
+          <textarea
+            id="location-detail"
+            value={locationDetail}
+            onChange={(e) => setLocationDetail(e.target.value.slice(0, 300))}
+            maxLength={300}
+            rows={3}
+            placeholder="เช่น รอหน้าประตูอาคารฝั่งลานจอดรถ หรือโต๊ะใกล้ร้านกาแฟ"
+            className="block w-full resize-y rounded-xl border border-surface-border bg-white px-3 py-2.5 text-sm text-ink-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+          />
+          <p className="mt-1 text-right text-[10px] text-ink-400">{locationDetail.length}/300</p>
         </div>
 
         {/* ─── ส่งคำขอ ─────────────────────────────────────────── */}

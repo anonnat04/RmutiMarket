@@ -72,6 +72,10 @@ function mapTransaction(t) {
         statusName: apptStatus.name,
         scheduled_at: `${a.appointment_date} ${a.appointment_time}`,
         scheduledAt: `${a.appointment_date}T${a.appointment_time}`,
+        location_detail: a.location_detail || null,
+        locationDetail: a.location_detail || null,
+        meeting_detail: a.meeting_detail || null,
+        meetingDetail: a.meeting_detail || null,
         meetup_points: a.locations || { name: a.location_detail || "จุดนัดรับ มทร.อีสาน" },
         locations: a.locations || { name: a.location_detail || "จุดนัดรับ มทร.อีสาน" },
       };
@@ -98,7 +102,7 @@ async function getMyTransactions(req, res, next) {
         buyer:users!buyer_id(id, username, full_name, avatar_url, profile_image_url, phone),
         seller:users!seller_id(id, username, full_name, avatar_url, profile_image_url, phone),
         appointments(
-          id, appointment_date, appointment_time, location_id, location_detail, status_id,
+          id, appointment_date, appointment_time, location_id, location_detail, meeting_detail, status_id,
           appointment_status(id, name),
           locations(id, name, description, latitude, longitude)
         )
@@ -145,7 +149,7 @@ async function getTransactionById(req, res, next) {
         buyer:users!buyer_id(id, username, full_name, avatar_url, profile_image_url, phone),
         seller:users!seller_id(id, username, full_name, avatar_url, profile_image_url, phone),
         appointments(
-          id, appointment_date, appointment_time, location_id, location_detail, status_id,
+          id, appointment_date, appointment_time, location_id, location_detail, meeting_detail, status_id,
           appointment_status(id, name),
           locations(id, name, description, latitude, longitude)
         )

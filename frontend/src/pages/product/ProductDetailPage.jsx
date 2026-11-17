@@ -135,6 +135,7 @@ export function ProductDetailPage() {
   });
   const [timeError, setTimeError] = useState('');
   const [locationOpen, setLocationOpen] = useState(false);
+  const [locationDetail, setLocationDetail] = useState('');
   const [submittingBuy, setSubmittingBuy] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
 
@@ -222,9 +223,7 @@ export function ProductDetailPage() {
         locationLng: point?.lng || null,
         date: meetupDate,
         time: meetupTime,
-        // ไม่มีข้อความถึงผู้ขายแล้ว (ฐานข้อมูลไม่มีที่เก็บ) ส่งแค่ชื่อจุดนัดเหมือนหน้าเลือกแผนที่
-        note: `จุดนัด: ${selectedLocation}`,
-        locationDetail: selectedLocation,
+        meetingDetail: locationDetail.trim() || null,
       });
 
       const meetupId = res?.meetupId;
@@ -919,6 +918,22 @@ export function ProductDetailPage() {
                       หรือเปิดแผนที่มหาวิทยาลัยแบบละเอียด <ArrowRight size={12} />
                     </button>
                   </div>
+                </div>
+
+                <div>
+                  <label htmlFor="instant-location-detail" className="mb-1.5 block text-xs font-bold text-ink-800">
+                    📌 ระบุรายละเอียดจุดเพิ่มเติม <span className="font-normal text-ink-400">(ไม่บังคับ)</span>
+                  </label>
+                  <textarea
+                    id="instant-location-detail"
+                    value={locationDetail}
+                    onChange={(e) => setLocationDetail(e.target.value.slice(0, 300))}
+                    maxLength={300}
+                    rows={2}
+                    placeholder="เช่น รอหน้าประตูอาคาร หรือโต๊ะใกล้ร้านกาแฟ"
+                    className="block w-full resize-y rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-ink-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+                  />
+                  <p className="mt-1 text-right text-[10px] text-ink-400">{locationDetail.length}/300</p>
                 </div>
 
                 {/* Date & Time */}

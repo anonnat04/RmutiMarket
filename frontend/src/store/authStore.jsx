@@ -14,6 +14,13 @@ export const useAuthStore = create()(
       setHydrated: () => set({ isHydrated: true }),
 
       login: (user, token) => {
+        // สลับบัญชีบนเครื่องเดียวกันได้โดยไม่พกข้อมูลธุรกรรมของบัญชีเดิมไปด้วย
+        import('@/store/myListingsStore').then(({ useMyListingsStore }) => useMyListingsStore.getState().clearListings());
+        import('@/store/meetupStore').then(({ useMeetupStore }) => useMeetupStore.getState().clearMeetups());
+        import('@/store/reviewStore').then(({ useReviewStore }) => useReviewStore.getState().clearReviews());
+        import('@/store/cartWishlistStore').then(({ useWishlistStore }) => useWishlistStore.getState().clearWishlist());
+        import('@/store/notificationStore').then(({ useNotificationStore }) => useNotificationStore.setState({ notifications: [], loaded: false }));
+        import('@/store/feedStore').then(({ useFeedStore }) => useFeedStore.getState().clearFeed());
         set({
           user: { ...user, role: user?.role || 'user' },
           token: token || null,
@@ -73,6 +80,20 @@ export const useAuthStore = create()(
         // เคลียร์สินค้าที่เคยลงขาย
         import('@/store/myListingsStore').then(({ useMyListingsStore }) => {
           useMyListingsStore.getState().clearListings();
+        });
+
+        // นัดรับที่ persist ไว้เป็นข้อมูลชั่วคราวของเบราว์เซอร์ ไม่ให้ข้ามไป
+        // ปรากฏในบัญชีที่ล็อกอินถัดไป
+        import('@/store/meetupStore').then(({ useMeetupStore }) => {
+          useMeetupStore.getState().clearMeetups();
+        });
+
+        import('@/store/reviewStore').then(({ useReviewStore }) => {
+          useReviewStore.getState().clearReviews();
+        });
+
+        import('@/store/feedStore').then(({ useFeedStore }) => {
+          useFeedStore.getState().clearFeed();
         });
 
         set({

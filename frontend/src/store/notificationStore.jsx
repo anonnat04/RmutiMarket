@@ -140,9 +140,8 @@ export const useNotificationStore = create()(
           if (res?.notifications) {
             const backendList = res.notifications.map(mapBackendNotification);
             set((state) => {
-              const combined = dedupeNotifications([...backendList, ...state.notifications]);
               return {
-                notifications: combined,
+                notifications: dedupeNotifications(backendList),
                 loaded: true,
               };
             });
@@ -169,29 +168,9 @@ export const useNotificationStore = create()(
         });
       },
 
-      // ใช้สำหรับแจ้งเตือนที่สร้างขึ้นเฉพาะฝั่ง frontend (มีระบบตรวจจับและกันแจ้งเตือนซ้ำ)
-      addNotification: (notification) => {
-        set((state) => {
-          const isDuplicate = state.notifications.some(
-            (n) =>
-              (n.title || '').trim() === (notification.title || '').trim() &&
-              (n.message || '').trim() === (notification.message || '').trim()
-          );
-          if (isDuplicate) return state;
-
-          const newNotif = {
-            id: `notif-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            read: false,
-            createdAt: new Date().toISOString(),
-            ...notification,
-            link: notification.link || buildNotificationLink(notification),
-          };
-
-          return {
-            notifications: [newNotif, ...state.notifications],
-          };
-        });
-      },
+      // การแจ้งเตือนทั้งหมดต้องมาจากฐานข้อมูล: action ฝั่งหน้าเว็บจะรีเฟรช
+      // รายการจริง แทนการสร้าง notification ปลอมในเครื่อง
+      addNotification: () => get().fetchNotifications(),
 
       markAsRead: (id) => {
         set((state) => ({
@@ -227,7 +206,7 @@ export const useNotificationStore = create()(
 
       getUnreadCount: () => get().notifications.filter((n) => !n.read).length,
     }),
-    { name: 'cm-notifications' }
+    { name: 'cm-notifications', version: 1, migrate: () => ({}), partialize: () => ({}) }
   )
 );
 
