@@ -175,7 +175,7 @@ export default function RegisterView({ goTo }) {
       e.username = "ชื่อผู้ใช้ต้องเป็นตัวอักษรภาษาอังกฤษ ตัวเลข หรือขีดล่าง (_) ความยาว 3-30 ตัวอักษร";
     }
     if (!isValidStudentId(form.studentId)) {
-      e.studentId = "รหัสนักศึกษาต้องเป็นเลข 11 หลัก ตามด้วยขีด (-) และเลขตัวสุดท้าย (เช่น 67172310611-6)";
+      e.studentId = "รหัสนักศึกษาต้องเป็นเลข 11 หลัก ตามด้วยขีด (-) และเลขตัวสุดท้าย (เช่น 67172310600-0)";
     }
     if (!UNIVERSITY_EMAIL_REGEX.test(form.email)) {
       e.email = "กรุณาใช้อีเมลมหาวิทยาลัยที่เป็นโดเมน @rmuti.ac.th";
