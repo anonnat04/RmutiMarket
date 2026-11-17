@@ -1,8 +1,23 @@
 import { Link } from "react-router-dom";
-import { ImageOff, Heart, MapPin, Clock } from "lucide-react";
+import { ImageOff, Heart, Clock } from "lucide-react";
 import { formatCurrency } from "@/utils/formatCurrency";
 import { useWishlistStore } from "@/store/cartWishlistStore";
 import { useFeedStore } from "@/store/feedStore";
+
+function formatTimeAgo(dateStr) {
+  if (!dateStr) return 'เมื่อสักครู่';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return 'เมื่อสักครู่';
+  if (minutes < 60) return `${minutes} นาทีที่แล้ว`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} ชม. ที่แล้ว`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} วันที่แล้ว`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} เดือนที่แล้ว`;
+  return `${Math.floor(months / 12)} ปีที่แล้ว`;
+}
 
 export function ProductCard({ product }) {
   const cover = product.images?.find((i) => i.isCover) ?? product.images?.[0];
@@ -23,8 +38,8 @@ export function ProductCard({ product }) {
     recordView(product);
   };
 
-  const badgeText = product.badgeText || (product.condition === 'new' ? 'ใหม่' : null);
-  const location = product.location || product.seller?.location || "มทร.อีสาน นครราชสีมา";
+  const isNew = product.condition === 'new' || product.condition_id === 1 || String(product.conditionName).includes('หนึ่ง');
+  const badgeText = product.badgeText || (isNew ? 'มือหนึ่ง' : 'มือสอง');
 
   return (
     <Link
@@ -48,9 +63,11 @@ export function ProductCard({ product }) {
           </div>
         )}
 
-        {/* Top-left Badge */}
+        {/* Top-left Condition Badge (มือหนึ่ง / มือสอง) */}
         {badgeText && (
-          <span className="absolute left-2 top-2 rounded-md bg-brand-500 px-2 py-0.5 text-[11px] font-bold text-white shadow-sm">
+          <span className={`absolute left-2 top-2 rounded-md px-2 py-0.5 text-[11px] font-bold text-white shadow-xs ${
+            isNew ? "bg-emerald-600" : "bg-orange-500"
+          }`}>
             {badgeText}
           </span>
         )}
@@ -88,10 +105,10 @@ export function ProductCard({ product }) {
           )}
         </div>
 
-        {/* Location */}
-        <div className="mt-1.5 flex items-center gap-1 text-[11px] text-gray-400">
-          <MapPin size={10} className="shrink-0" />
-          <span className="truncate">{location}</span>
+        {/* Posting Time (เวลาที่ลงขาย แทนที่ มทร.อีสาน นครราชสีมา) */}
+        <div className="mt-1.5 flex items-center gap-1 text-[11px] text-gray-500">
+          <Clock size={11} className="shrink-0 text-gray-400" />
+          <span className="truncate">{formatTimeAgo(product.createdAt || product.created_at)}</span>
         </div>
       </div>
     </Link>

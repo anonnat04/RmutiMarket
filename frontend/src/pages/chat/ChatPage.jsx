@@ -168,11 +168,12 @@ export function ChatPage() {
           return [...backendConvs, ...pendingLocalOnly];
         });
 
-        // ถ้าห้อง active ถูกลบไปแล้ว ให้เปลี่ยนไปห้องแรก
+        // ถ้าห้อง active ถูกลบไปแล้ว ให้เปลี่ยนไปห้องแรก (บนมือถือถ้าไม่มีห้อง active ให้คงหน้าแสดงรายการแชทไว้)
         setActiveId((curr) => {
-          if (!curr) return backendConvs[0]?.id || null;
+          const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+          if (!curr) return isMobile ? null : (backendConvs[0]?.id || null);
           const exists = backendConvs.some((c) => String(c.id) === String(curr));
-          return exists ? curr : (backendConvs[0]?.id || null);
+          return exists ? curr : (isMobile ? null : (backendConvs[0]?.id || null));
         });
 
         // เคลียร์ localMessages ของห้องที่ backend ไม่รู้จักแล้ว (ถูกลบ/ไม่มีสิทธิ์เข้าถึง) ทิ้งไปด้วย
@@ -347,7 +348,9 @@ export function ChatPage() {
             return requested ? String(requested.id) : (convList[0] ? String(convList[0].id) : null);
           }
           if (queryProductId) return currentId;
-          if (convList.some((room) => String(room.id) === String(currentId))) return currentId;
+          if (currentId && convList.some((room) => String(room.id) === String(currentId))) return currentId;
+          const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+          if (isMobile) return null;
           return convList[0] ? String(convList[0].id) : null;
         });
       } catch (err) {
@@ -752,7 +755,7 @@ export function ChatPage() {
     <div className="grid h-[calc(100vh-9.5rem)] grid-cols-1 gap-4 md:h-[calc(100vh-6.5rem)] md:grid-cols-[300px_1fr]">
       {/* ─── Sidebar: Conversation List ───────────────────────────────────── */}
       <div className={`cm-card flex flex-col overflow-y-auto ${activeId ? "hidden md:flex" : "flex"}`}>
-        <div className="border-b border-surface-border px-4 py-3 bg-surface-muted/30 flex items-center justify-between">
+        <div className="border-b border-surface-border px-4 py-3 bg-surface-muted/30 flex items-center justify-between shrink-0">
           <h2 className="font-bold text-ink-900 text-sm">ข้อความทั้งหมด</h2>
           {/* Socket.IO Status Badge */}
           <div
@@ -763,7 +766,7 @@ export function ChatPage() {
             }`}
             title={isConnected ? "เชื่อมต่อสด Realtime ผ่าน Socket.IO" : "กำลังเชื่อมต่อ..."}
           >
-            <Radio size={11} className={isConnected ? "animate-pulse text-emerald-600" : "text-amber-600"} />
+            <Radio size={11} className={isConnected ? "text-emerald-600" : "text-amber-600"} />
             <span>{isConnected ? "เชื่อมต่อแล้ว" : "กำลังเชื่อมต่อ"}</span>
           </div>
         </div>
@@ -806,7 +809,10 @@ export function ChatPage() {
                   {/* ปุ่มย้อนกลับรายการแชทบนจอมือถือ */}
                   <button
                     type="button"
-                    onClick={() => setActiveId(null)}
+                    onClick={() => {
+                      setActiveId(null);
+                      navigate("/chat", { replace: true });
+                    }}
                     className="md:hidden flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 bg-white text-ink-700 hover:bg-gray-100 transition-colors shrink-0"
                     aria-label="กลับไปหน้ารายการแชท"
                   >

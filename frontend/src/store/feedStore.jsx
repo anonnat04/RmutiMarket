@@ -119,7 +119,12 @@ export const useFeedStore = create()(
           }
 
           return { ...p, _feedScore: score };
-        }).sort((a, b) => b._feedScore - a._feedScore);
+        }).sort((a, b) => {
+          if (b._feedScore !== a._feedScore) {
+            return b._feedScore - a._feedScore;
+          }
+          return new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0);
+        });
       },
 
       /** รายการ interests ที่ seeded (อ่านจาก authStore โดยตรง) */

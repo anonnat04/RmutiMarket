@@ -1,7 +1,7 @@
 const { STUDENT_ID_REGEX } = require("../config/constants");
 
 /**
- * Validate RMUTI Student ID format (116410400011-1)
+ * Validate RMUTI Student ID format (67172310611-6)
  */
 function isValidStudentId(studentId) {
   return typeof studentId === "string" && STUDENT_ID_REGEX.test(studentId.trim());

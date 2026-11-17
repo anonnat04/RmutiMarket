@@ -22,7 +22,6 @@ import { ProductCard } from "@/components/product/ProductCard";
 import { EmptyState } from "@/components/common/EmptyState";
 import { fetchProducts } from "@/services/productService";
 import { api } from "@/lib/api";
-import { useWantToBuyStore } from "@/store/wantToBuyStore";
 import { useAuthStore } from "@/store/authStore";
 import { formatCurrency } from "@/utils/formatCurrency";
 
@@ -59,6 +58,9 @@ export function ProductListPage() {
 
   // การเรียงลำดับราคา (สูงสุดไปต่ำสุด / ต่ำสุดไปสูงสุด / ล่าสุด)
   const [sortBy, setSortBy] = useState("newest"); // 'newest' | 'price_desc' | 'price_asc'
+
+  // กรองสภาพสินค้า: 'all' | 'new' | 'used'
+  const [conditionFilter, setConditionFilter] = useState(searchParams.get("condition") || "all");
 
   // ช่วงราคาที่กำหนดเอง
   const [minPriceInput, setMinPriceInput] = useState("");
@@ -97,8 +99,6 @@ export function ProductListPage() {
     return false;
   }, [myId, myUsername]);
 
-  const localRequests = useWantToBuyStore((s) => s.requests || []);
-
   // เมื่อ URL เปลี่ยนประเภท ให้เปลี่ยนแท็บตาม
   useEffect(() => {
     const urlType = searchParams.get("type");
@@ -110,22 +110,21 @@ export function ProductListPage() {
     setLoading(true);
     const category = categories.find((c) => c.slug === activeSlug);
 
-    // 1. ดึงสินค้า (ไม่แสดงสินค้าที่ขายแล้ว และไม่แสดงสินค้าของตัวเอง)
+    // 1. ดึงสินค้า (ไม่แสดงสินค้าที่ขายแล้ว)
     const productPromise = fetchProducts({
       includeSold: false,
-      excludeUserId: myId,
-      excludeUsername: myUsername,
       categoryId: category?.id,
       categorySlug: category && category.slug !== "all" ? category.slug : undefined,
       categoryName: category && category.slug !== "all" ? category.name : undefined,
       q,
+      condition: conditionFilter !== "all" ? conditionFilter : undefined,
       sort: sortBy,
       min_price: appliedMinPrice,
       max_price: appliedMaxPrice,
     });
 
-    // 2. ดึงโพสต์ตามหาสินค้า (ไม่ดึงโพสต์ของตัวเอง)
-    const wtbParams = { exclude_mine: true };
+    // 2. ดึงโพสต์ตามหาสินค้า
+    const wtbParams = {};
     if (q) wtbParams.q = q;
     if (category && category.id !== "all" && category.id !== "cat-1") {
       wtbParams.category = category.slug || category.id;
@@ -137,11 +136,10 @@ export function ProductListPage() {
 
     Promise.all([productPromise, wtbPromise]).then(([prods, wtbRes]) => {
       const fetchedProducts = (prods || [])
-        .filter((p) => p.status !== "sold" && p.statusId !== 3 && p.status_id !== 3)
-        .filter((p) => !isMyProduct(p));
+        .filter((p) => p.status !== "sold" && p.statusId !== 3 && p.status_id !== 3);
       setProducts(fetchedProducts);
 
-      // รวมโพสต์ตามหาจาก backend และ local store (กรองโพสต์ของตัวเองออก)
+      // รวมโพสต์ตามหาจาก backend
       const dbList = (wtbRes?.posts || [])
         .filter((p) => p.wanted_post_status?.code !== "CANCELLED")
         .map((p) => ({
@@ -160,43 +158,7 @@ export function ProductListPage() {
           },
           createdAt: p.created_at,
           status: p.wanted_post_status?.code?.toLowerCase() === "completed" ? "resolved" : "active",
-        }))
-        .filter((p) => !isMyPost(p));
-
-      for (const r of localRequests) {
-        if (r.status === "cancelled" || isMyPost(r)) continue;
-        if (!dbList.some((item) => String(item.id) === String(r.id))) {
-          let match = true;
-          if (q) {
-            const qLower = q.toLowerCase().trim();
-            const numQ = parseFloat(qLower);
-            const titleMatch = (r.title || "").toLowerCase().includes(qLower);
-            const descMatch = (r.description || "").toLowerCase().includes(qLower);
-            const budgetMatch = !isNaN(numQ) && (r.budget === numQ || String(r.budget).includes(qLower));
-            if (!titleMatch && !descMatch && !budgetMatch) match = false;
-          }
-          if (category && category.id !== "all" && category.id !== "cat-1") {
-            if (r.categoryId !== category.slug && r.categoryId !== category.id) match = false;
-          }
-          if (match) {
-            dbList.push({
-              id: r.id,
-              title: r.title,
-              description: r.description,
-              budget: r.budget || 0,
-              categoryId: r.categoryId || "others",
-              categoryName: r.categoryName || "ทั่วไป",
-              author: {
-                id: r.author?.id,
-                name: r.author?.name || "สมาชิก RMUTI",
-                avatarUrl: r.author?.avatarUrl || null,
-              },
-              createdAt: r.createdAt || new Date().toISOString(),
-              status: r.status || "active",
-            });
-          }
-        }
-      }
+        }));
 
       setWantToBuyPosts(dbList);
 
@@ -207,23 +169,41 @@ export function ProductListPage() {
 
       setLoading(false);
     });
-  }, [activeSlug, q, sortBy, appliedMinPrice, appliedMaxPrice, localRequests, searchParams, myId, myUsername, isMyProduct, isMyPost]);
+  }, [activeSlug, q, sortBy, conditionFilter, appliedMinPrice, appliedMaxPrice, searchParams]);
 
-  // รายการสินค้าที่จะแสดง: กรองสินค้าของตัวเอง, สินค้าที่ขายแล้ว, และผู้ขายที่ Trust Score < 50 ออกทั้งหมด
+  // รายการสินค้าที่จะแสดง: กรองสภาพสินค้า (มือหนึ่ง/มือสอง), สินค้าที่ขายแล้ว, ผู้ขายที่ Trust Score < 50 ออก และเรียงตามเวลาที่ลงขายล่าสุด
   const displayedProducts = useMemo(() => {
-    return products.filter((p) => {
-      if (isMyProduct(p)) return false;
+    let list = products.filter((p) => {
       if (p.status === "sold" || p.statusId === 3 || p.status_id === 3) return false;
       const sScore = p.seller?.trustScore ?? p.seller?.trust_score ?? p.users?.trust_score ?? 100;
       if (sScore < 50) return false;
+      if (conditionFilter === "new") {
+        const isNew = p.condition === "new" || p.condition_id === 1 || String(p.conditionName).includes("หนึ่ง");
+        if (!isNew) return false;
+      } else if (conditionFilter === "used") {
+        const isNew = p.condition === "new" || p.condition_id === 1 || String(p.conditionName).includes("หนึ่ง");
+        if (isNew) return false;
+      }
       return true;
     });
-  }, [products, isMyProduct]);
 
-  // กรองและเรียงลำดับโพสต์ตามหาสินค้า: กรองโพสต์ของตัวเอง, โพสต์ที่ยกเลิก, และผู้โพสต์ที่ Trust Score < 50 ออกทั้งหมด
+    if (sortBy === "price_desc") {
+      list.sort((a, b) => b.price - a.price);
+    } else if (sortBy === "price_asc") {
+      list.sort((a, b) => a.price - b.price);
+    } else if (sortBy === "popular") {
+      list.sort((a, b) => (b.viewCount || 0) - (a.viewCount || 0));
+    } else {
+      // ค่าเริ่มต้น: เรียงตามเวลาที่ลงขาย ล่าสุดขึ้นก่อนเสมอ (Newest first)
+      list.sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0));
+    }
+
+    return list;
+  }, [products, conditionFilter, sortBy]);
+
+  // กรองและเรียงลำดับโพสต์ตามหาสินค้า: กรองโพสต์ที่ยกเลิก และผู้โพสต์ที่ Trust Score < 50 ออก
   const sortedWantToBuyPosts = useMemo(() => {
     let list = wantToBuyPosts.filter((p) => {
-      if (isMyPost(p)) return false;
       if (p.status === "cancelled") return false;
       const bScore = p.author?.trustScore ?? p.author?.trust_score ?? 100;
       if (bScore < 50) return false;
@@ -398,6 +378,69 @@ export function ProductListPage() {
             <span>{hasPriceFilter ? "กำลังกรองราคา" : "ช่วงราคา..."}</span>
           </button>
         </div>
+
+        {/* ─── ตัวกรองสภาพสินค้า: ทั้งหมด / มือหนึ่ง / มือสอง ─── */}
+        {activeTab === "products" && (
+          <div className="flex items-center gap-1.5 pt-2 border-t border-gray-100 overflow-x-auto scrollbar-hide">
+            <span className="text-xs font-bold text-gray-500 shrink-0 inline-flex items-center gap-1 mr-1">
+              <Sparkles size={13} className="text-[#f95721]" />
+              สภาพสินค้า:
+            </span>
+
+            <button
+              type="button"
+              onClick={() => {
+                setConditionFilter("all");
+                const next = new URLSearchParams(searchParams);
+                next.delete("condition");
+                setSearchParams(next);
+              }}
+              className={`shrink-0 inline-flex items-center gap-1 rounded-xl px-3 py-1.5 text-xs font-bold transition-all whitespace-nowrap ${
+                conditionFilter === "all"
+                  ? "bg-gray-900 text-white shadow-xs"
+                  : "bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100"
+              }`}
+            >
+              ทั้งหมด
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setConditionFilter("new");
+                const next = new URLSearchParams(searchParams);
+                next.set("condition", "new");
+                setSearchParams(next);
+              }}
+              className={`shrink-0 inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-all whitespace-nowrap ${
+                conditionFilter === "new"
+                  ? "bg-emerald-600 text-white shadow-xs"
+                  : "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-emerald-400"></span>
+              <span>มือหนึ่ง (ของใหม่)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setConditionFilter("used");
+                const next = new URLSearchParams(searchParams);
+                next.set("condition", "used");
+                setSearchParams(next);
+              }}
+              className={`shrink-0 inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-all whitespace-nowrap ${
+                conditionFilter === "used"
+                  ? "bg-orange-500 text-white shadow-xs"
+                  : "bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100"
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-orange-400"></span>
+              <span>มือสอง</span>
+            </button>
+          </div>
+        )}
 
         {/* ─── แผงกำหนดช่วงราคา (Min - Max Price Range) ─── */}
         {showFilters && (

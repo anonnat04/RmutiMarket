@@ -170,8 +170,8 @@ async function getListings(req, res, next) {
       query = query.neq("status_id", 3);
     }
 
-    // ไม่แสดงสินค้าของตัวเองในหน้าค้นหา/ตลาดทั่วไป
-    if (req.user?.id && !req.query.seller_id && req.query.include_mine !== "true") {
+    // กรองสินค้าของตัวเองเฉพาะเมื่อไคลเอนต์ระบุ exclude_mine="true" มาอย่างชัดเจน
+    if (req.query.exclude_mine === "true" && req.user?.id && !req.query.seller_id) {
       query = query.neq("seller_id", req.user.id);
     }
 

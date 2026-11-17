@@ -53,8 +53,26 @@ export default function RegisterView({ goTo }) {
     setErrors((prev) => {
       const nextErrors = { ...prev };
 
-      if (k === "firstName" && val.trim()) delete nextErrors.firstName;
-      if (k === "lastName" && val.trim()) delete nextErrors.lastName;
+      if (k === "firstName") {
+        const clean = val.trim();
+        if (!clean) {
+          delete nextErrors.firstName;
+        } else if (!/^[ก-๙\s]+$/.test(clean)) {
+          nextErrors.firstName = "ชื่อต้องเป็นภาษาไทยเท่านั้น";
+        } else {
+          delete nextErrors.firstName;
+        }
+      }
+      if (k === "lastName") {
+        const clean = val.trim();
+        if (!clean) {
+          delete nextErrors.lastName;
+        } else if (!/^[ก-๙\s]+$/.test(clean)) {
+          nextErrors.lastName = "นามสกุลต้องเป็นภาษาไทยเท่านั้น";
+        } else {
+          delete nextErrors.lastName;
+        }
+      }
       if (k === "username") {
         const clean = val.trim();
         if (/^[a-zA-Z0-9_]{3,30}$/.test(clean)) {
@@ -139,8 +157,17 @@ export default function RegisterView({ goTo }) {
 
   const validate = () => {
     const e = {};
-    if (!form.firstName.trim()) e.firstName = "กรุณากรอกชื่อ";
-    if (!form.lastName.trim()) e.lastName = "กรุณากรอกนามสกุล";
+    if (!form.firstName.trim()) {
+      e.firstName = "กรุณากรอกชื่อ";
+    } else if (!/^[ก-๙\s]+$/.test(form.firstName.trim())) {
+      e.firstName = "ชื่อต้องเป็นภาษาไทยเท่านั้น";
+    }
+
+    if (!form.lastName.trim()) {
+      e.lastName = "กรุณากรอกนามสกุล";
+    } else if (!/^[ก-๙\s]+$/.test(form.lastName.trim())) {
+      e.lastName = "นามสกุลต้องเป็นภาษาไทยเท่านั้น";
+    }
     const cleanUsername = form.username.trim();
     if (!cleanUsername) {
       e.username = "กรุณากรอกชื่อผู้ใช้ (Username)";
@@ -148,7 +175,7 @@ export default function RegisterView({ goTo }) {
       e.username = "ชื่อผู้ใช้ต้องเป็นตัวอักษรภาษาอังกฤษ ตัวเลข หรือขีดล่าง (_) ความยาว 3-30 ตัวอักษร";
     }
     if (!isValidStudentId(form.studentId)) {
-      e.studentId = "รหัสนักศึกษาต้องเป็นเลข 11 หลัก ตามด้วยขีด (-) และเลขตัวสุดท้าย (เช่น 116410400011-1)";
+      e.studentId = "รหัสนักศึกษาต้องเป็นเลข 11 หลัก ตามด้วยขีด (-) และเลขตัวสุดท้าย (เช่น 67172310611-6)";
     }
     if (!UNIVERSITY_EMAIL_REGEX.test(form.email)) {
       e.email = "กรุณาใช้อีเมลมหาวิทยาลัยที่เป็นโดเมน @rmuti.ac.th";
@@ -197,10 +224,10 @@ export default function RegisterView({ goTo }) {
       <form onSubmit={submit}>
         <div className="grid grid-cols-2 gap-3">
           <Field label="ชื่อ" error={errors.firstName}>
-            <TextInput icon={User} value={form.firstName} onChange={set("firstName")} placeholder="ระบุชื่อ" error={!!errors.firstName} />
+            <TextInput icon={User} value={form.firstName} onChange={set("firstName")} placeholder="ระบุชื่อ (ภาษาไทย)" error={!!errors.firstName} />
           </Field>
           <Field label="นามสกุล" error={errors.lastName}>
-            <TextInput icon={User} value={form.lastName} onChange={set("lastName")} placeholder="ระบุนามสกุล" error={!!errors.lastName} />
+            <TextInput icon={User} value={form.lastName} onChange={set("lastName")} placeholder="ระบุนามสกุล (ภาษาไทย)" error={!!errors.lastName} />
           </Field>
         </div>
 
@@ -223,7 +250,7 @@ export default function RegisterView({ goTo }) {
             icon={CreditCard}
             value={form.studentId}
             onChange={handleStudentIdChange}
-            placeholder="เช่น 116410400011-1"
+            placeholder="เช่น 67172310611-6"
             maxLength={13}
             error={!!errors.studentId}
           />

@@ -39,6 +39,21 @@ function localTimeString(d = new Date()) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+function timeAgo(dateStr) {
+  if (!dateStr) return 'เมื่อสักครู่';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return 'เมื่อสักครู่';
+  if (minutes < 60) return `${minutes} นาทีที่แล้ว`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} ชม. ที่แล้ว`;
+  const days = Math.floor(days / 24);
+  if (days < 30) return `${days} วันที่แล้ว`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} เดือนที่แล้ว`;
+  return `${Math.floor(months / 12)} ปีที่แล้ว`;
+}
+
 const conditionLabel = {
   new: 'มือหนึ่ง',
   like_new: 'มือหนึ่ง',
@@ -442,6 +457,12 @@ export function ProductDetailPage() {
               {conditionBadge && (
                 <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold ${conditionBadge.className}`}>
                   สภาพ: {conditionBadge.label}
+                </span>
+              )}
+              {(product.createdAt || product.created_at) && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-600">
+                  <Clock size={12} className="text-gray-400" />
+                  ลงขายเมื่อ {timeAgo(product.createdAt || product.created_at)}
                 </span>
               )}
             </div>

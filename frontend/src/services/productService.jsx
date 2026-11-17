@@ -183,14 +183,23 @@ export async function fetchProducts(params) {
       if (!isNaN(max)) results = results.filter((p) => p.price <= max);
     }
 
+    if (params?.condition && params.condition !== "all") {
+      const isNewTarget = params.condition === "new" || params.condition === "1" || params.condition === "มือหนึ่ง";
+      results = results.filter((p) => {
+        const isNew = p.condition === "new" || p.condition_id === 1 || String(p.conditionName).includes("หนึ่ง");
+        return isNewTarget ? isNew : !isNew;
+      });
+    }
+
     if (params?.sort === "price_desc") {
       results.sort((a, b) => b.price - a.price);
     } else if (params?.sort === "price_asc") {
       results.sort((a, b) => a.price - b.price);
     } else if (params?.sort === "popular") {
       results.sort((a, b) => (b.viewCount || 0) - (a.viewCount || 0));
-    } else if (params?.sort === "newest") {
-      results.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    } else {
+      // ค่าเริ่มต้น: เรียงตามเวลาที่ลงขาย ล่าสุดขึ้นก่อนเสมอ (Newest first)
+      results.sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0));
     }
 
     return results;
@@ -220,14 +229,23 @@ export async function fetchProducts(params) {
       const max = parseFloat(params.max_price);
       if (!isNaN(max)) results = results.filter((p) => p.price <= max);
     }
+    if (params?.condition && params.condition !== "all") {
+      const isNewTarget = params.condition === "new" || params.condition === "1" || params.condition === "มือหนึ่ง";
+      results = results.filter((p) => {
+        const isNew = p.condition === "new" || p.condition_id === 1 || String(p.conditionName).includes("หนึ่ง");
+        return isNewTarget ? isNew : !isNew;
+      });
+    }
+
     if (params?.sort === "price_desc") {
       results.sort((a, b) => b.price - a.price);
     } else if (params?.sort === "price_asc") {
       results.sort((a, b) => a.price - b.price);
     } else if (params?.sort === "popular") {
       results.sort((a, b) => (b.viewCount || 0) - (a.viewCount || 0));
-    } else if (params?.sort === "newest") {
-      results.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    } else {
+      // ค่าเริ่มต้น: เรียงตามเวลาที่ลงขาย ล่าสุดขึ้นก่อนเสมอ (Newest first)
+      results.sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0));
     }
     return results;
   }

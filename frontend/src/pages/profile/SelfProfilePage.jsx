@@ -17,7 +17,6 @@ import {
   Award,
   CircleHelp,
   Store,
-  Phone,
   Pencil,
   Edit2,
   X,
@@ -25,7 +24,6 @@ import {
 import { useReviewStore } from '@/store/reviewStore';
 import { useMeetupStore } from '@/store/meetupStore';
 import { useMyListingsStore } from '@/store/myListingsStore';
-import { useWantToBuyStore } from '@/store/wantToBuyStore';
 import { useNotificationStore } from '@/store/notificationStore';
 import { useWishlistStore } from '@/store/cartWishlistStore';
 import { useAuthStore } from '@/store/authStore';
@@ -133,7 +131,6 @@ function getTrustStyle(score) {
 export function SelfProfilePage({ user, logout, navigate }) {
   const listings = useMyListingsStore((s) => s.listings);
   const setListings = useMyListingsStore((s) => s.setListings);
-  const requests = useWantToBuyStore((s) => s.requests);
   const wishlistIds = useWishlistStore((s) => s.productIds);
   const fetchWishlist = useWishlistStore((s) => s.fetchWishlist);
   const meetups = useMeetupStore((s) => s.meetups);
@@ -204,11 +201,30 @@ export function SelfProfilePage({ user, logout, navigate }) {
     }
   };
 
+  const [dbMyRequestsCount, setDbMyRequestsCount] = useState(0);
+
+  const loadMyRequests = async () => {
+    try {
+      const res = await api.getWantToBuyPosts();
+      if (res?.posts) {
+        const myUid = String(user?.id || 'me');
+        const count = res.posts.filter((p) => String(p.buyer_id) === myUid || String(p.users?.id) === myUid).length;
+        setDbMyRequestsCount(count);
+      } else {
+        setDbMyRequestsCount(0);
+      }
+    } catch (err) {
+      console.warn('Could not load want-to-buy count:', err);
+      setDbMyRequestsCount(0);
+    }
+  };
+
   useEffect(() => {
     loadProfile();
     loadMyListings();
     loadReviews();
     fetchWishlist();
+    loadMyRequests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
@@ -396,7 +412,6 @@ export function SelfProfilePage({ user, logout, navigate }) {
   const myMeetups = meetups.filter(
     (m) => String(m.buyerId) === String(myId) || String(m.sellerId) === String(myId)
   );
-  const myRequests = requests.filter((r) => String(r.author?.id) === String(myId));
 
   const unread = notifications.filter((n) => !n.read).length;
 
@@ -416,7 +431,7 @@ export function SelfProfilePage({ user, logout, navigate }) {
 
   const quickStats = [
     { label: 'สินค้าของฉัน', icon: Store, value: visibleListings.length, path: '/my-products' },
-    { label: 'โพสตามหาสินค้า', icon: Search, value: myRequests.length, path: '/want-to-buy' },
+    { label: 'โพสตามหาสินค้า', icon: Search, value: dbMyRequestsCount, path: '/want-to-buy' },
     { label: 'รายการโปรด', icon: Heart, value: wishlistIds.length, path: '/wishlist' },
     { label: 'การนัดรับสินค้า', icon: CalendarClock, value: myMeetups.length, unit: 'นัดหมาย', path: '/meetups' },
     { label: 'ประวัติการซื้อขาย', icon: Receipt, value: statsData?.transactionCount ?? 0, unit: 'รายการ', path: '/transactions' },
@@ -427,7 +442,7 @@ export function SelfProfilePage({ user, logout, navigate }) {
   return (
     <div className="flex flex-col md:flex-row gap-5">
       {/* ─── Profile Navigation Sidebar ─── */}
-      <aside className="w-full md:w-60 shrink-0 space-y-4">
+      <aside className="w-full md:w-60 shrink-0 space-y-4 order-2 md:order-1">
         <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
           {sidebarLinks.map((item) => {
             const Icon = item.icon;
@@ -453,24 +468,10 @@ export function SelfProfilePage({ user, logout, navigate }) {
             );
           })}
         </div>
-
-        {/* Help Card */}
-        <div className="rounded-2xl border border-orange-200 bg-orange-50/60 p-4 text-center">
-          <div className="mb-2 flex justify-center">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-orange-100 text-[#f95721]">
-              <Phone size={18} />
-            </div>
-          </div>
-          <p className="text-xs font-bold text-ink-900">ต้องการความช่วยเหลือ?</p>
-          <p className="mt-0.5 text-[11px] text-gray-500">ติดต่อทีมงาน RmutiMarket ได้ตลอดเวลา</p>
-          <button className="mt-3 w-full rounded-xl bg-[#f95721] py-2 text-xs font-bold text-white hover:bg-orange-600 transition-colors shadow-xs">
-            ติดต่อเรา
-          </button>
-        </div>
       </aside>
 
       {/* ─── Main Content ─── */}
-      <div className="flex-1 space-y-5 min-w-0">
+      <div className="flex-1 space-y-5 min-w-0 order-1 md:order-2">
         {/* Profile Header Card */}
         <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-5 sm:flex-row sm:items-start justify-between">

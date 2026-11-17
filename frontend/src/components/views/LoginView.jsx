@@ -31,7 +31,7 @@ export default function LoginView({ goTo }) {
     e.preventDefault();
     setErr("");
     if (!isValidLogin(identifier)) {
-      setErr("กรุณากรอกรหัสนักศึกษา (เช่น 116410400011-1) หรืออีเมลมหาวิทยาลัย (@rmuti.ac.th)");
+      setErr("กรุณากรอกรหัสนักศึกษา (เช่น 67172310611-6) หรืออีเมลมหาวิทยาลัย (@rmuti.ac.th)");
       return;
     }
     if (!password) {
@@ -94,7 +94,7 @@ export default function LoginView({ goTo }) {
         <Field label="รหัสนักศึกษา / อีเมลมหาวิทยาลัย" error={err}>
           <TextInput
             icon={User}
-            placeholder="เช่น 116410400011-1 หรือ name@rmuti.ac.th"
+            placeholder="เช่น 67172310611-6 หรือ name@rmuti.ac.th"
             value={identifier}
             onChange={handleIdentifierChange}
             maxLength={50}

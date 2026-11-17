@@ -40,19 +40,10 @@ export function RecommendedProducts({ products = [], loading }) {
       // ไม่แสดงสินค้าของผู้ขายที่ Trust Score < 50
       const sellerScore = product.seller?.trustScore ?? product.seller?.trust_score ?? 100;
       if (sellerScore < 50) return false;
-      // ไม่แสดงสินค้าของตัวเอง
-      if (userId != null) {
-        const sellerId = product.seller?.id ?? product.seller_id ?? product.sellerId;
-        if (sellerId != null && String(sellerId) === String(userId)) return false;
-      }
-      if (username) {
-        const sUser = String(product.seller?.username || '').replace(/^@+/, '').trim().toLowerCase();
-        if (sUser && sUser === username) return false;
-      }
       return true;
     });
     return useFeedStore.getState().getRecommendedFeed(eligibleProducts, wishlistIds);
-  }, [products, wishlistIds, viewCounts, likedCategories, searchKeywords, seededInterests, userId, username]);
+  }, [products, wishlistIds, viewCounts, likedCategories, searchKeywords, seededInterests]);
 
   // ตรวจสอบว่ามีการ personalize แล้วหรือยัง
   const hasInterests = interests && interests.length > 0;

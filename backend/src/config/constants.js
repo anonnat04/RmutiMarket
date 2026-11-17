@@ -16,7 +16,7 @@ module.exports = {
   RESET_TOKEN_TTL_MS: 15 * 60 * 1000, // 15 minutes
 
   // Validation Rules
-  STUDENT_ID_REGEX: /^\d{11}-\d{1}$/, // RMUTI Format: 11 digits, hyphen, 1 check digit (e.g. 116410400011-1)
+  STUDENT_ID_REGEX: /^\d{11}-\d{1}$/, // RMUTI Format: 11 digits, hyphen, 1 check digit (e.g. 67172310611-6)
   
   // Rate Limits
   RATE_LIMITS: {

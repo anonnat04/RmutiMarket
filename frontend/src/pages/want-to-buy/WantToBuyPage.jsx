@@ -104,13 +104,8 @@ export function WantToBuyPage() {
 
   const myId = String(user?.id ?? 'me');
 
-  const allRequests = [...dbPosts];
-  for (const r of requests) {
-    if (r.status === 'cancelled') continue;
-    if (!allRequests.some((p) => String(p.id) === String(r.id))) {
-      allRequests.push(r);
-    }
-  }
+  // ข้อมูลโพสต์ตามหาทั้งหมดอิงจากฐานข้อมูลจริงเป็นหลักเท่านั้น (ถ้าใน DB ไม่มี รายการจะว่างเปล่าตามความจริง)
+  const allRequests = dbPosts;
 
   // helper: ตรวจว่าโพสเป็นของ user ที่ login อยู่ (รองรับทั้ง number และ string id รวมถึง username/display_name)
   const isMinePost = (r) => {
@@ -137,7 +132,7 @@ export function WantToBuyPage() {
   const filtered = allRequests.filter((r) => {
     if (r.status === 'cancelled') return false;
     if (activeTab === 'all') {
-      if (r.status !== 'active' || isMinePost(r)) return false;
+      if (r.status !== 'active') return false;
       const authorScore = r.author?.trustScore ?? r.author?.trust_score ?? 100;
       if (authorScore < 50) return false;
     }

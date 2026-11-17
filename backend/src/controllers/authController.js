@@ -141,6 +141,16 @@ async function register(req, res, next) {
     if (!termsAccepted)
       return res.status(400).json({ error: "กรุณายอมรับข้อตกลงการใช้งานและนโยบายความเป็นส่วนตัว" });
 
+    if (firstName && !/^[ก-๙\s]+$/.test(firstName.trim())) {
+      return res.status(400).json({ error: "ชื่อต้องเป็นภาษาไทยเท่านั้น" });
+    }
+    if (lastName && !/^[ก-๙\s]+$/.test(lastName.trim())) {
+      return res.status(400).json({ error: "นามสกุลต้องเป็นภาษาไทยเท่านั้น" });
+    }
+    if (fullName && !/^[ก-๙\s]+$/.test(fullName.trim())) {
+      return res.status(400).json({ error: "ชื่อและนามสกุลต้องเป็นภาษาไทยเท่านั้น" });
+    }
+
     if (!cleanUsername || !/^[a-zA-Z0-9_]{3,30}$/.test(cleanUsername)) {
       return res.status(400).json({ error: "ชื่อผู้ใช้ (Username) ต้องมีความยาว 3-30 ตัวอักษร และประกอบด้วยตัวอักษรภาษาอังกฤษ ตัวเลข หรือขีดล่าง (_) เท่านั้น" });
     }
@@ -153,7 +163,7 @@ async function register(req, res, next) {
 
     const cleanStudentId = (studentId || "").trim();
     if (!isValidStudentId(cleanStudentId))
-      return res.status(400).json({ error: "รหัสนักศึกษาต้องเป็นตัวเลข 11 หลักตามด้วยขีดและตัวเลข 1 หลัก (เช่น 116410400011-1)" });
+      return res.status(400).json({ error: "รหัสนักศึกษาต้องเป็นตัวเลข 11 หลักตามด้วยขีดและตัวเลข 1 หลัก (เช่น 67172310611-6)" });
 
     // Allowed email domains
     // ⚠️ หมายเหตุ: ตาราง "university_domains" ก็ไม่มีอยู่ใน schema.sql เช่นกัน — ถ้ายังไม่มีตารางนี้จริง
