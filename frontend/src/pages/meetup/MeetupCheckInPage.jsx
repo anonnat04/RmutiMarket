@@ -215,8 +215,8 @@ function mapAppointment(m) {
     sellerCheckedIn,
     buyerCheckedInAt: m.buyerCheckedInAt || m.buyer_checked_in_at || null,
     sellerCheckedInAt: m.sellerCheckedInAt || m.seller_checked_in_at || null,
-    buyerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
-    sellerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
+    buyerConfirmedDelivery: Boolean(txn.buyer_received || txn.buyerConfirmedDelivery || rawStatusCode === 'COMPLETED' || mappedStatus === 'completed'),
+    sellerConfirmedDelivery: Boolean(txn.seller_handed_over || txn.sellerHandedOver || rawStatusCode === 'COMPLETED' || mappedStatus === 'completed'),
     note: m.meetingDetail || m.meeting_detail || '',
     reviews: m.reviews || txn.reviews || [],
     isDb: true,
@@ -1097,7 +1097,7 @@ export function MeetupCheckInPage() {
       useMeetupStore.getState().markDelivered(meetup.id, 'seller');
       setMeetup((prev) => prev ? { ...prev, status: 'completed', statusCode: 'COMPLETED' } : null);
       setShowDeliveryConfirm(false);
-      // เปิดรีวิวได้เมื่อทั้งสองฝ่ายยืนยันและธุรกรรมปิดสำเร็จเท่านั้น
+      // เปิดรีวิวได้เมื่อทั้งสองฝ่ายยืนยันแล้วเท่านั้น; ดีลจะจบเมื่อรีวิวครบทั้งคู่
       setShowReviewModal(true);
     } catch (err) {
       showFeedback('warning', 'ยังยืนยันส่งมอบไม่ได้', err.message || 'เกิดข้อผิดพลาดในการยืนยันรับสินค้า');
@@ -1110,40 +1110,22 @@ export function MeetupCheckInPage() {
   const handleReviewSubmit = async ({ rating, comment, images = [] }) => {
     const isBuyer = role === 'buyer';
     const targetUserId = isBuyer ? meetup.sellerId : meetup.buyerId;
-    const reviewerName = isBuyer ? meetup.buyerName : meetup.sellerName;
+
+    // The server is the source of truth for the 24-hour deadline and the
+    // two-confirmation rule. Do not show a local review if it rejects it.
+    if (meetup.transactionId) {
+      try {
+        await api.createReview({ transactionId: meetup.transactionId, revieweeId: targetUserId, rating, comment, images });
+      } catch (err) {
+        showFeedback('warning', 'ส่งรีวิวไม่สำเร็จ', err.message || 'ไม่สามารถส่งรีวิวได้');
+        return;
+      }
+    }
 
     useMeetupStore.getState().submitReview(meetup.id, role, { rating, comment, images });
 
-    try {
-      const { useReviewStore } = await import('@/store/reviewStore');
-      useReviewStore.getState().addReview({
-        targetUserId,
-        reviewerId: isBuyer ? meetup.buyerId : meetup.sellerId,
-        reviewerName,
-        reviewerRole: isBuyer ? 'ผู้ซื้อ' : 'ผู้ขาย',
-        rating,
-        comment,
-        images,
-        productTitle: meetup.productTitle,
-        meetupId: meetup.id,
-      });
-    } catch (e) {
-      console.warn('Could not update reviewStore:', e);
-    }
-
-    if (meetup.transactionId) {
-      try {
-        await api.createReview({
-          transactionId: meetup.transactionId,
-          revieweeId: targetUserId,
-          rating,
-          comment,
-          images,
-        });
-      } catch (err) {
-        console.error('API createReview error:', err);
-      }
-    }
+    // Do not add a local score here. The API only publishes ratings after both
+    // sides review, so the next server refresh remains authoritative.
 
     setShowReviewModal(false);
     navigate('/meetups', { state: { reviewedMeetupId: meetup.id } });

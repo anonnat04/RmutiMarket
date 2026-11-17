@@ -713,13 +713,12 @@ async function checkAndProcessNoShows() {
   }
 }
 
-// Both users checked in, but delivery was never confirmed by both sides.
-// Give the other participant 24 hours from the second check-in, then close
-// without completing the transaction or changing either trust score.
+// A deal gets 24 hours from the second check-in for BOTH delivery confirmations
+// and BOTH reviews. Until then it remains CONFIRMED and no score is awarded.
 async function closeUnconfirmedDeliveries() {
   const { data: rows, error } = await supabase.from("appointments")
-    .select("id, transaction_id, buyer_checked_in_at, seller_checked_in_at, transactions(id, product_id, buyer_id, seller_id, buyer_received, seller_handed_over, status_id)")
-    .eq("status_id", 2).eq("buyer_checked_in", true).eq("seller_checked_in", true);
+    .select("id, transaction_id, status_id, buyer_checked_in_at, seller_checked_in_at, transactions(id, product_id, buyer_id, seller_id, buyer_received, seller_handed_over, status_id, reviews(reviewer_id))")
+    .in("status_id", [2, 3]).eq("buyer_checked_in", true).eq("seller_checked_in", true);
   if (error || !rows?.length) return;
   const { data: status } = await supabase.from("transaction_status").select("id, name").ilike("name", "%UNCONFIRMED%").maybeSingle();
   const unconfirmedId = status?.id || 6;
@@ -728,13 +727,18 @@ async function closeUnconfirmedDeliveries() {
     const checkedAt = [appt.buyer_checked_in_at, appt.seller_checked_in_at].map((v) => Date.parse(v)).filter(Number.isFinite);
     if (checkedAt.length !== 2 || now - Math.max(...checkedAt) < 24 * 60 * 60 * 1000) continue;
     const txn = appt.transactions;
-    if (!txn || (txn.buyer_received && txn.seller_handed_over)) continue;
-    const { data: claimed } = await supabase.from("appointments").update({ status_id: 4, cancelled_at: new Date().toISOString(), cancellation_reason: "UNCONFIRMED: ทั้งสองฝ่ายเช็คอินแล้ว แต่ไม่มีการยืนยันส่งมอบครบภายใน 24 ชั่วโมง" }).eq("id", appt.id).eq("status_id", 2).select("id");
+    if (!txn || Number(txn.status_id) !== 2) continue;
+    const reviewers = new Set((txn.reviews || []).map((review) => String(review.reviewer_id)));
+    const missingConfirmation = !txn.buyer_received || !txn.seller_handed_over;
+    const missingReview = !reviewers.has(String(txn.buyer_id)) || !reviewers.has(String(txn.seller_id));
+    if (!missingConfirmation && !missingReview) continue;
+    const reason = `UNCONFIRMED: ${missingConfirmation ? "ยืนยันรับ/ส่งสินค้าไม่ครบ" : ""}${missingConfirmation && missingReview ? " และ " : ""}${missingReview ? "รีวิวไม่ครบทั้งสองฝ่าย" : ""} ภายใน 24 ชั่วโมงหลังเช็คอินครบ`;
+    const { data: claimed } = await supabase.from("appointments").update({ status_id: 4, cancelled_at: new Date().toISOString(), cancellation_reason: reason }).eq("id", appt.id).in("status_id", [2, 3]).select("id");
     if (!claimed?.length) continue;
     await supabase.from("transactions").update({ status_id: unconfirmedId, cancelled_at: new Date().toISOString() }).eq("id", txn.id).eq("status_id", 2);
     await supabase.from("products").update({ status_id: 1 }).eq("id", txn.product_id).eq("status_id", 2);
     for (const userId of [txn.buyer_id, txn.seller_id]) if (userId) await persistAndSendNotification(userId, {
-      type: "deal_unconfirmed", title: "ปิดรายการเป็นยังไม่ยืนยัน", message: "ทั้งสองฝ่ายเช็คอินสำเร็จ แต่ไม่มีการยืนยันส่งมอบครบภายใน 24 ชั่วโมง จึงไม่มีการปรับ Trust Score หรือเปิดรีวิว",
+      type: "deal_unconfirmed", title: "ปิดรายการเนื่องจากดำเนินการไม่ครบ", message: `${reason} จึงปิดดีล ไม่สามารถรีวิว และไม่มีการปรับ Trust Score`,
       reference_type: "meetup", reference_id: appt.id,
     });
     emitMeetupUpdate(appt.id, { meetupId: appt.id, status: "unconfirmed", statusCode: "UNCONFIRMED", buyerId: txn.buyer_id, sellerId: txn.seller_id });
@@ -1362,6 +1366,30 @@ async function completeMeetup(req, res, next) {
         buyerReceived: isBuyer, sellerHandedOver: !isBuyer });
     }
 
+    // Both delivery confirmations are now recorded. Keep the transaction in
+    // CONFIRMED until both reciprocal reviews are received, so a timeout cannot
+    // accidentally award a successful-deal count or Trust Score.
+    const { data: reviewReadyAppt, error: reviewReadyErr } = await supabase.from("appointments").update({
+      status_id: 3, // delivery complete; transaction remains pending reviews
+    }).eq("id", id).eq("status_id", 2).select("id");
+    if (reviewReadyErr) throw reviewReadyErr;
+    if (!reviewReadyAppt?.length) throw new Error("ไม่สามารถบันทึกสถานะรอรีวิวได้ กรุณาติดต่อผู้ดูแลระบบ");
+
+    const notifMsg = {
+      type: "deal_review_required",
+      title: "ยืนยันส่งมอบครบแล้ว — รอรีวิวทั้งสองฝ่าย",
+      message: "สามารถให้คะแนนรีวิวคู่ค้าได้แล้ว ดีลจะเสร็จสมบูรณ์และได้คะแนนเมื่อรีวิวครบทั้งสองฝ่ายภายใน 24 ชั่วโมง",
+      reference_type: "transaction",
+      reference_id: txn.id,
+    };
+    for (const userId of [txn.buyer_id, txn.seller_id]) {
+      if (!userId) continue;
+      await supabase.from("notifications").insert({ ...notifMsg, user_id: userId });
+      sendNotificationToUser(userId, notifMsg);
+    }
+    return res.json({ message: "ยืนยันส่งมอบครบแล้ว กรุณารีวิวทั้งสองฝ่ายภายใน 24 ชั่วโมง", transactionId: txn.id, readyForReview: true });
+
+    /* Legacy immediate-completion flow retained below as unreachable reference.
     // Complete transaction
     let completedTxnId = txn.id;
     const { data: completedRows, error: txUpdErr } = await supabase.from("transactions").update({
@@ -1475,7 +1503,7 @@ async function completeMeetup(req, res, next) {
       sendNotificationToUser(txn.seller_id, notifMsg);
     }
 
-    res.json({ message: "ปิดการซื้อขายเรียบร้อยแล้ว", transactionId: completedTxnId });
+    res.json({ message: "ปิดการซื้อขายเรียบร้อยแล้ว", transactionId: completedTxnId }); */
   } catch (err) {
     next(err);
   }

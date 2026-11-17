@@ -136,8 +136,8 @@ function mapAppointmentFromApi(m) {
     sellerCheckedIn,
     buyerCheckedInAt: m.buyerCheckedInAt || m.buyer_checked_in_at || null,
     sellerCheckedInAt: m.sellerCheckedInAt || m.seller_checked_in_at || null,
-    buyerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
-    sellerConfirmedDelivery: rawStatusCode === 'COMPLETED' || mappedStatus === 'completed',
+    buyerConfirmedDelivery: Boolean(txn.buyer_received || txn.buyerConfirmedDelivery || rawStatusCode === 'COMPLETED' || mappedStatus === 'completed'),
+    sellerConfirmedDelivery: Boolean(txn.seller_handed_over || txn.sellerHandedOver || rawStatusCode === 'COMPLETED' || mappedStatus === 'completed'),
     note: m.meetingDetail || m.meeting_detail || '',
     reviews: m.reviews || txn.reviews || [],
     isDb: true,
@@ -974,40 +974,22 @@ export function MeetupListPage() {
           if (!reviewTarget) return;
 
           const { meetup, role } = reviewTarget;
-          submitReview(meetup.id, role, { rating, comment, images });
-
-          // บันทึกลง reviewStore ด้วยเพื่ออัปเดต Trust Score และหน้ารีวิว
           const isBuyer = role === 'buyer';
           const targetUserId = isBuyer ? meetup.sellerId : meetup.buyerId;
-          const reviewerName = isBuyer ? meetup.buyerName : meetup.sellerName;
-
-          import('@/store/reviewStore').then(({ useReviewStore }) => {
-            useReviewStore.getState().addReview({
-              targetUserId,
-              reviewerId: isBuyer ? meetup.buyerId : meetup.sellerId,
-              reviewerName,
-              reviewerRole: isBuyer ? 'ผู้ซื้อ' : 'ผู้ขาย',
-              rating,
-              comment,
-              images,
-              productTitle: meetup.productTitle,
-              meetupId: meetup.id,
-            });
-          });
 
           if (meetup.transactionId) {
             try {
-              await api.createReview({
-                transactionId: meetup.transactionId,
-                revieweeId: targetUserId,
-                rating,
-                comment,
-                images,
-              });
+              await api.createReview({ transactionId: meetup.transactionId, revieweeId: targetUserId, rating, comment, images });
             } catch (err) {
-              console.error("API createReview error:", err);
+              alert(err.message || 'ไม่สามารถส่งรีวิวได้');
+              return;
             }
           }
+
+          submitReview(meetup.id, role, { rating, comment, images });
+
+          // Scores and public reviews are published by the server only when
+          // the reciprocal review has also been submitted.
 
           setReviewTarget(null);
         }}

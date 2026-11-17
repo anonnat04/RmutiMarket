@@ -1,5 +1,6 @@
 const { supabase } = require("../config/db");
 const { formatUser } = require("../utils/statusHelper");
+const { recoverScoreOnDeal } = require("./meetupController");
 
 // ----------------------------------------------------------------
 // GET /api/reviews/user/:userId  — รีวิวของผู้ใช้
@@ -20,7 +21,7 @@ async function getUserReviews(req, res, next) {
           faculty_id, major_id, email_verified_at, faculties(name), majors(name)
         ),
         images:review_images(id, image_url),
-        transactions(
+        transactions!inner(
           id, buyer_id, seller_id,
           products(id, title, price, product_images(image_url, is_primary))
         )
@@ -28,6 +29,7 @@ async function getUserReviews(req, res, next) {
         { count: "exact" }
       )
       .eq("reviewee_id", userId)
+      .eq("transactions.status_id", 3)
       .order("created_at", { ascending: false })
       .range(offset, offset + parseInt(limit) - 1);
 
@@ -90,12 +92,18 @@ async function createReview(req, res, next) {
     // Verify transaction
     const { data: txn } = await supabase
       .from("transactions")
-      .select("id, buyer_id, seller_id, status_id")
+      .select("id, product_id, buyer_id, seller_id, status_id, buyer_received, seller_handed_over, appointments(id, buyer_checked_in_at, seller_checked_in_at)")
       .eq("id", transactionId)
       .single();
 
     if (!txn) return res.status(404).json({ error: "ไม่พบรายการซื้อขาย" });
-    if (txn.status_id !== 3) return res.status(400).json({ error: "รายการยังไม่สำเร็จ ไม่สามารถรีวิวได้" });
+    if (txn.status_id !== 2 || !txn.buyer_received || !txn.seller_handed_over)
+      return res.status(400).json({ error: "ต้องรอให้ทั้งสองฝ่ายยืนยันรับ/ส่งสินค้าก่อน จึงจะรีวิวได้" });
+    const checkedAt = (txn.appointments || []).flatMap((appt) => [appt.buyer_checked_in_at, appt.seller_checked_in_at])
+      .map((value) => Date.parse(value)).filter(Number.isFinite);
+    const deadline = checkedAt.length ? Math.max(...checkedAt) + 24 * 60 * 60 * 1000 : 0;
+    if (!deadline || Date.now() >= deadline)
+      return res.status(400).json({ error: "หมดเวลารีวิว 24 ชั่วโมงแล้ว ดีลนี้ถูกปิดและไม่มีการให้คะแนน" });
     if (txn.buyer_id !== req.user.id && txn.seller_id !== req.user.id)
       return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในรายการนี้" });
 
@@ -133,21 +141,31 @@ async function createReview(req, res, next) {
       }
     }
 
-    // Recalculate reviewee average rating & review count
-    const { data: allRevs } = await supabase
-      .from("reviews")
-      .select("rating")
-      .eq("reviewee_id", revieweeId);
+    // Reviews are private and scoreless until the other participant reviews too.
+    const { data: dealReviews } = await supabase.from("reviews")
+      .select("reviewer_id").eq("transaction_id", transactionId);
+    const reviewers = new Set((dealReviews || []).map((item) => String(item.reviewer_id)));
+    const bothReviewed = reviewers.has(String(txn.buyer_id)) && reviewers.has(String(txn.seller_id));
 
-    if (allRevs && allRevs.length > 0) {
-      const avg = allRevs.reduce((acc, cur) => acc + cur.rating, 0) / allRevs.length;
-      await supabase
-        .from("users")
-        .update({
-          average_rating: parseFloat(avg.toFixed(2)),
-          review_count: allRevs.length,
-        })
-        .eq("id", revieweeId);
+    if (bothReviewed) {
+      const now = new Date().toISOString();
+      const { data: finalized } = await supabase.from("transactions")
+        .update({ status_id: 3, completed_at: now })
+        .eq("id", transactionId).eq("status_id", 2).select("id");
+      if (finalized?.length) {
+        await supabase.from("products").update({ status_id: 3 }).eq("id", txn.product_id);
+        for (const userId of [txn.buyer_id, txn.seller_id]) {
+          const { data: ratings } = await supabase.from("reviews").select("rating").eq("reviewee_id", userId);
+          const count = ratings?.length || 0;
+          if (count) {
+            const average = ratings.reduce((sum, item) => sum + item.rating, 0) / count;
+            await supabase.from("users").update({ average_rating: Number(average.toFixed(2)), review_count: count }).eq("id", userId);
+          }
+        }
+        const { data: buyer } = await supabase.from("users").select("successful_deal_count").eq("id", txn.buyer_id).single();
+        await supabase.from("users").update({ successful_deal_count: (buyer?.successful_deal_count || 0) + 1 }).eq("id", txn.buyer_id);
+        await recoverScoreOnDeal(txn.seller_id, transactionId);
+      }
     }
 
     // Notify reviewee
@@ -160,7 +178,11 @@ async function createReview(req, res, next) {
       reference_id: review.id,
     });
 
-    res.status(201).json({ message: "รีวิวสำเร็จ ขอบคุณที่แบ่งปันประสบการณ์", reviewId: review.id });
+    res.status(201).json({
+      message: bothReviewed ? "รีวิวครบทั้งสองฝ่ายแล้ว ดีลเสร็จสมบูรณ์" : "บันทึกรีวิวแล้ว กำลังรอรีวิวจากอีกฝ่ายภายใน 24 ชั่วโมง",
+      reviewId: review.id,
+      bothReviewed,
+    });
   } catch (err) {
     next(err);
   }
