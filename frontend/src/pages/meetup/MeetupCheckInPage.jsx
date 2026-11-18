@@ -3,7 +3,8 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, MapPin, CalendarClock, Navigation,
   PackageCheck, ShieldCheck, Radio, XCircle, Clock,
-  Maximize2, Minimize2, ZoomIn, ZoomOut, X, CheckCircle2, Star, AlertTriangle, ShoppingBag
+  Maximize2, Minimize2, ZoomIn, ZoomOut, X, CheckCircle2, Star, AlertTriangle, ShoppingBag,
+  MessageCircle
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useMeetupStore, getCheckInWindow, haversineDistanceMeters } from '@/store/meetupStore';
@@ -1574,6 +1575,37 @@ export function MeetupCheckInPage() {
           </button>
         </div>
       )}
+
+      {/* ─── ปุ่มไปแชท + ปุ่มกลับหน้านัดรับ ─── */}
+      <div className="cm-card p-4 mb-4">
+        <p className="text-sm font-bold text-ink-900 mb-3 flex items-center gap-1.5">
+          <MessageCircle size={16} className="text-brand-500" /> ติดต่อคู่ค้า
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2">
+          {/* ปุ่มไปแชทกับอีกฝ่าย */}
+          <button
+            type="button"
+            onClick={() => {
+              const partnerId = role === 'buyer' ? meetup.sellerId : meetup.buyerId;
+              navigate(`/chat?productId=${meetup.productId}&partnerId=${partnerId}`);
+            }}
+            className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-[#f95721] hover:bg-orange-600 active:bg-orange-700 text-white text-sm font-bold px-4 py-2.5 transition-colors shadow-xs"
+          >
+            <MessageCircle size={16} />
+            แชทกับ{role === 'buyer' ? 'ผู้ขาย' : 'ผู้ซื้อ'} ({otherName})
+          </button>
+
+          {/* ปุ่มกลับหน้านัดรับ */}
+          <button
+            type="button"
+            onClick={() => navigate('/meetups')}
+            className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-white hover:bg-gray-50 active:bg-gray-100 text-ink-700 text-sm font-semibold px-4 py-2.5 border border-gray-200 transition-colors"
+          >
+            <ArrowLeft size={16} />
+            กลับหน้านัดรับสินค้า
+          </button>
+        </div>
+      </div>
 
       {/* ─── Confirm Delivery Dialog ─── */}
       <ConfirmDialog
