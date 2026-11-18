@@ -159,15 +159,20 @@ async function getListings(req, res, next) {
       query = query.eq("condition_id", condId);
     }
 
-    // status=available → เฉพาะสินค้าที่ยังว่าง (status_id = 1)
+    // status=available หรือค่าเริ่มต้นทั่วไป → เฉพาะสินค้าที่ยังว่าง (status_id = 1)
     // status=all → คืนทุกสถานะ
-    // ค่าเริ่มต้นทั่วไป → ไม่แสดงสินค้าที่ขายแล้ว (status_id = 3 คือ SOLD)
-    if (status === "available") {
+    // status=reserved → เฉพาะสินค้าที่ติดจอง (status_id = 2)
+    // status=sold → เฉพาะสินค้าที่ขายแล้ว (status_id = 3)
+    if (status === "available" || !status) {
       query = query.eq("status_id", 1);
     } else if (status === "all") {
       // คืนทุกสถานะ
+    } else if (status === "reserved") {
+      query = query.eq("status_id", 2);
+    } else if (status === "sold") {
+      query = query.eq("status_id", 3);
     } else {
-      query = query.neq("status_id", 3);
+      query = query.eq("status_id", 1);
     }
 
     // กรองสินค้าของตัวเองเฉพาะเมื่อไคลเอนต์ระบุ exclude_mine="true" มาอย่างชัดเจน

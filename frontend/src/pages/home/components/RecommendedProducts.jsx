@@ -37,6 +37,8 @@ export function RecommendedProducts({ products = [], loading }) {
     const eligibleProducts = products.filter((product) => {
       // ไม่แสดงสินค้าที่ขายแล้ว
       if (product.status === 'sold' || product.statusId === 3 || product.status_id === 3) return false;
+      // ไม่แสดงสินค้าที่ติดจอง (แสดงเฉพาะสินค้าที่ว่างเท่านั้น)
+      if (product.status === 'reserved' || product.statusId === 2 || product.status_id === 2 || String(product.statusName).includes('จอง')) return false;
       // ไม่แสดงสินค้าของผู้ขายที่ Trust Score < 50
       const sellerScore = product.seller?.trustScore ?? product.seller?.trust_score ?? 100;
       if (sellerScore < 50) return false;

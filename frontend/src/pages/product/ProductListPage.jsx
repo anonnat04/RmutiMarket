@@ -136,7 +136,10 @@ export function ProductListPage() {
 
     Promise.all([productPromise, wtbPromise]).then(([prods, wtbRes]) => {
       const fetchedProducts = (prods || [])
-        .filter((p) => p.status !== "sold" && p.statusId !== 3 && p.status_id !== 3);
+        .filter((p) => (
+          p.status !== "sold" && p.statusId !== 3 && p.status_id !== 3 &&
+          p.status !== "reserved" && p.statusId !== 2 && p.status_id !== 2 && !String(p.statusName).includes("จอง")
+        ));
       setProducts(fetchedProducts);
 
       // รวมโพสต์ตามหาจาก backend

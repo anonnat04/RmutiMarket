@@ -140,6 +140,7 @@ export const api = {
     if (params.min_price) qs.set("min_price", params.min_price);
     if (params.max_price) qs.set("max_price", params.max_price);
     if (params.sort) qs.set("sort", params.sort);
+    if (params.status) qs.set("status", params.status);
     if (params.page) qs.set("page", params.page);
     if (params.limit) qs.set("limit", params.limit);
     const query = qs.toString() ? `?${qs.toString()}` : "";

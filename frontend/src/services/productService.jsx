@@ -122,12 +122,20 @@ export function formatListing(item) {
 
 export async function fetchProducts(params) {
   try {
-    // includeSold = false (ค่าเริ่มต้น): ไม่แสดงสินค้าที่ขายแล้ว (sold)
+    // includeSold = false (ค่าเริ่มต้น): ไม่แสดงสินค้าที่ขายแล้ว (sold) และไม่แสดงสินค้าที่ติดจอง (reserved)
     const { includeSold = false, categorySlug, categoryName, ...apiParams } = params || {};
     const res = await api.getListings(includeSold ? { ...apiParams, status: "all" } : { ...apiParams, status: "available" });
     let results = (res?.listings || [])
       .map(formatListing)
-      .filter((p) => (includeSold ? ["active", "reserved", "sold"].includes(p.status) : p.status !== "sold" && p.statusId !== 3 && p.status_id !== 3));
+      .filter((p) => {
+        if (includeSold) {
+          return ["active", "reserved", "sold"].includes(p.status);
+        }
+        // แสดงเฉพาะสถานะสินค้าที่ว่างเท่านั้น
+        const isSold = p.status === "sold" || p.statusId === 3 || p.status_id === 3;
+        const isReserved = p.status === "reserved" || p.statusId === 2 || p.status_id === 2 || String(p.statusName).includes("จอง");
+        return !isSold && !isReserved;
+      });
 
     // กรองสินค้าของผู้ใช้ที่ระบุออก (เช่น สินค้าของตัวเองในหน้าตลาด)
     if (params?.excludeUserId || params?.excludeUsername) {

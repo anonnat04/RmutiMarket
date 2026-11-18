@@ -954,8 +954,22 @@ export function MeetupListPage() {
                     <p className="text-xs font-semibold text-red-600">
                       {m.status === 'cancelled' ? 'นัดนี้ถูกยกเลิกแล้ว' : 'คำขอนัดนี้ถูกปฏิเสธแล้ว'}
                     </p>
-                    <p className="text-[11px] text-red-400 mt-0.5">หากต้องการนัดใหม่ กรุณาสร้างคำขอนัดรับใหม่จากหน้ารายละเอียดสินค้า</p>
+                    <p className="text-[11px] text-red-400 mt-0.5">หากต้องการนัดใหม่ กรุณาสร้างคำร้องนัดรับใหม่จากหน้ารายละเอียดสินค้า</p>
                   </div>
+                </div>
+              )}
+
+              {/* ── ปุ่มไปยังแชท (แสดงทุกการ์ด) ── */}
+              {m.productId && (
+                <div className="pt-1 border-t border-gray-100 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/chat?productId=${m.productId}&partnerId=${role === 'buyer' ? m.sellerId : m.buyerId}`)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-orange-200 bg-orange-50 hover:bg-orange-100 px-3.5 py-1.5 text-xs font-bold text-orange-700 transition-colors shadow-2xs"
+                    title="ไปยังห้องแชทของสินค้านี้"
+                  >
+                    💬 ไปยังแชท
+                  </button>
                 </div>
               )}
 

@@ -43,9 +43,9 @@ function isRealConversationId(id) {
 }
 
 // ────────────────────────────────────────────────────────────
-// Bubble พิเศษ: สรุปนัดรับสินค้า พร้อมปุ่มยืนยัน/ดูรายละเอียด
+// Bubble พิเศษ: สรุปนัดรับสินค้า พร้อมปุ่มยืนยัน/ปฏิเสธในแชทแบบเรียลไทม์
 // ────────────────────────────────────────────────────────────
-function MeetupSummaryBubble({ data, fromMe, currentUserId }) {
+function MeetupSummaryBubble({ data, fromMe, currentUserId, conversationId, onActionDone }) {
   const navigate = useNavigate();
   const [accepting, setAccepting] = useState(false);
   const [accepted, setAccepted] = useState(data.status === 'confirmed' || data.status === 'CONFIRMED');
@@ -53,16 +53,51 @@ function MeetupSummaryBubble({ data, fromMe, currentUserId }) {
   const [rejected, setRejected] = useState(data.status === 'cancelled' || data.status === 'CANCELLED');
   const [feedback, setFeedback] = useState('');
 
-  // ผู้รับคำขอนัดรับคือ "อีกฝ่าย" (ถ้าฉันเป็นผู้ส่ง → แสดงเฉพาะดูรายละเอียด, ถ้าฉันเป็นผู้รับ → แสดงปุ่มยืนยัน)
-  const iAmTheSeller = String(currentUserId) === String(data.sellerId);
-  const iAmTheBuyer = String(currentUserId) === String(data.buyerId);
   // ผู้ขายเป็นคนยืนยัน (accept) นัดรับที่ผู้ซื้อสร้าง
-  const canAccept = iAmTheSeller && !fromMe && !accepted && !rejected;
+  const iAmTheSeller = String(currentUserId) === String(data.sellerId);
+  const canAccept = iAmTheSeller && !accepted && !rejected;
 
   const formatDate = (d) => {
     if (!d) return '';
     try { return new Date(d).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }); }
     catch { return d; }
+  };
+
+  const formatPrice = (p) => {
+    if (!p && p !== 0) return '';
+    return `฿${Number(p).toLocaleString('th-TH')}`;
+  };
+
+  // ส่งข้อความสรุปลงในแชทหลังยืนยัน/ปฏิเสธ
+  const sendSummaryMessage = async (action) => {
+    if (!conversationId) return;
+    const isConfirmed = action === 'confirm';
+    const summaryText = isConfirmed
+      ? [
+          `✅ ยืนยันนัดรับสินค้าแล้ว!`,
+          `📦 สินค้า: ${data.productTitle || 'สินค้า'}`,
+          `💰 ราคา: ${formatPrice(data.price || data.productPrice)}`,
+          `📆 วัน: ${formatDate(data.date)} เวลา ${data.time} น.`,
+          `📍 จุดนัด: ${data.locationName || 'จุดนัดรับ มทร.อีสาน'}`,
+          data.note ? `📌 หมายเหตุ: ${data.note}` : '',
+          `🛒 ผู้ซื้อ: ${data.buyerName}  🏷️ ผู้ขาย: ${data.sellerName}`,
+        ].filter(Boolean).join('\n')
+      : `❌ ปฏิเสธคำขอนัดรับสินค้า "${data.productTitle || 'สินค้า'}" แล้ว\nกรุณาสร้างนัดรับใหม่หากต้องการนัดในวัน/เวลาอื่น`;
+
+    try {
+      await sendRealtimeMessage({
+        conversationId,
+        text: summaryText,
+        message_type: 'TEXT',
+        sender: { id: currentUserId },
+      });
+    } catch (e) {
+      // fallback: REST API
+      try {
+        await api.sendMessage(conversationId, { content: summaryText, message_type: 'TEXT' });
+      } catch {}
+    }
+    if (onActionDone) onActionDone();
   };
 
   const handleAccept = async () => {
@@ -71,6 +106,7 @@ function MeetupSummaryBubble({ data, fromMe, currentUserId }) {
       await api.acceptMeetup(data.meetupId);
       setAccepted(true);
       setFeedback('✅ ยืนยันนัดรับเรียบร้อยแล้ว');
+      await sendSummaryMessage('confirm');
     } catch (e) {
       setFeedback(`❌ ${e?.message || 'ยืนยันไม่สำเร็จ กรุณาลองใหม่'}`);
     } finally {
@@ -84,6 +120,7 @@ function MeetupSummaryBubble({ data, fromMe, currentUserId }) {
       await api.cancelMeetup(data.meetupId, 'ปฏิเสธคำขอนัดรับ');
       setRejected(true);
       setFeedback('ปฏิเสธคำขอนัดรับแล้ว');
+      await sendSummaryMessage('reject');
     } catch (e) {
       setFeedback(`❌ ${e?.message || 'ดำเนินการไม่สำเร็จ'}`);
     } finally {
@@ -111,6 +148,12 @@ function MeetupSummaryBubble({ data, fromMe, currentUserId }) {
         <div style={{ fontWeight: 700, fontSize: 13, color: '#111', marginBottom: 2 }}>
           🛍️ {data.productTitle || 'สินค้า'}
         </div>
+        {(data.price || data.productPrice) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <span>💰</span>
+            <span style={{ fontWeight: 700, color: '#f97316' }}>{formatPrice(data.price || data.productPrice)}</span>
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
           <span style={{ color: '#f97316' }}>📆</span>
           <span>{formatDate(data.date)} เวลา {data.time} น.</span>
@@ -132,19 +175,22 @@ function MeetupSummaryBubble({ data, fromMe, currentUserId }) {
         </div>
       </div>
 
-      {/* สถานะ */}
+      {/* สถานะหลังดำเนินการ */}
       {(accepted || rejected) && (
         <div style={{
           marginTop: 10,
-          padding: '6px 10px',
+          padding: '8px 12px',
           borderRadius: 10,
           background: accepted ? '#dcfce7' : '#fef2f2',
           color: accepted ? '#166534' : '#991b1b',
           fontSize: 11,
           fontWeight: 700,
           textAlign: 'center',
+          border: `1px solid ${accepted ? '#bbf7d0' : '#fecaca'}`,
         }}>
-          {accepted ? '✅ ยืนยันนัดรับแล้ว' : '❌ ปฏิเสธนัดรับแล้ว'}
+          {accepted
+            ? `✅ ยืนยันนัดรับแล้ว — ${formatDate(data.date)} ${data.time} น.`
+            : '❌ ปฏิเสธนัดรับแล้ว'}
         </div>
       )}
 
@@ -154,17 +200,18 @@ function MeetupSummaryBubble({ data, fromMe, currentUserId }) {
 
       {/* ปุ่มแอ็กชัน */}
       <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {/* ปุ่มยืนยัน/ปฏิเสธ — เฉพาะผู้รับที่เป็นผู้ขาย */}
+        {/* ปุ่มยืนยัน/ปฏิเสธ — เฉพาะผู้ขาย และยังไม่ได้ตอบ */}
         {canAccept && (
           <div style={{ display: 'flex', gap: 6 }}>
             <button
               onClick={handleAccept}
               disabled={accepting || rejecting}
               style={{
-                flex: 1, padding: '7px 0', borderRadius: 10, border: 'none',
+                flex: 1, padding: '8px 0', borderRadius: 10, border: 'none',
                 background: accepting ? '#d1fae5' : '#16a34a', color: '#fff',
                 fontSize: 12, fontWeight: 700, cursor: accepting ? 'default' : 'pointer',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                boxShadow: '0 2px 6px rgba(22,163,74,0.25)',
               }}
             >
               {accepting ? '⏳ กำลังยืนยัน...' : '✅ ยืนยันนัดรับ'}
@@ -173,7 +220,7 @@ function MeetupSummaryBubble({ data, fromMe, currentUserId }) {
               onClick={handleReject}
               disabled={accepting || rejecting}
               style={{
-                flex: 1, padding: '7px 0', borderRadius: 10, border: '1.5px solid #fca5a5',
+                flex: 1, padding: '8px 0', borderRadius: 10, border: '1.5px solid #fca5a5',
                 background: '#fff', color: '#dc2626',
                 fontSize: 12, fontWeight: 700, cursor: rejecting ? 'default' : 'pointer',
               }}
@@ -1143,6 +1190,8 @@ export function ChatPage() {
                               data={parsed}
                               fromMe={m.from === "me"}
                               currentUserId={user?.id}
+                              conversationId={activeId}
+                              onActionDone={() => setReloadMessagesKey((k) => k + 1)}
                             />
                           ) : (
                             <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${m.from === "me" ? "bg-brand-500 text-white" : "bg-white text-ink-900 border border-surface-border"}`}>
