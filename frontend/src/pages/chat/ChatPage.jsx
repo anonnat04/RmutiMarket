@@ -12,6 +12,10 @@ import {
   X,
   Maximize2,
   ArrowLeft,
+  MapPin,
+  CheckCircle2,
+  XCircle,
+  Clock,
 } from "lucide-react";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
@@ -36,6 +40,164 @@ import { compressImage } from "@/utils/compressImage";
 // (เช่น กำลังสร้างห้องใหม่ระหว่างรอ createOrGetConversation ตอบกลับ)
 function isRealConversationId(id) {
   return /^\d+$/.test(String(id));
+}
+
+// ────────────────────────────────────────────────────────────
+// Bubble พิเศษ: สรุปนัดรับสินค้า พร้อมปุ่มยืนยัน/ดูรายละเอียด
+// ────────────────────────────────────────────────────────────
+function MeetupSummaryBubble({ data, fromMe, currentUserId }) {
+  const navigate = useNavigate();
+  const [accepting, setAccepting] = useState(false);
+  const [accepted, setAccepted] = useState(data.status === 'confirmed' || data.status === 'CONFIRMED');
+  const [rejecting, setRejecting] = useState(false);
+  const [rejected, setRejected] = useState(data.status === 'cancelled' || data.status === 'CANCELLED');
+  const [feedback, setFeedback] = useState('');
+
+  // ผู้รับคำขอนัดรับคือ "อีกฝ่าย" (ถ้าฉันเป็นผู้ส่ง → แสดงเฉพาะดูรายละเอียด, ถ้าฉันเป็นผู้รับ → แสดงปุ่มยืนยัน)
+  const iAmTheSeller = String(currentUserId) === String(data.sellerId);
+  const iAmTheBuyer = String(currentUserId) === String(data.buyerId);
+  // ผู้ขายเป็นคนยืนยัน (accept) นัดรับที่ผู้ซื้อสร้าง
+  const canAccept = iAmTheSeller && !fromMe && !accepted && !rejected;
+
+  const formatDate = (d) => {
+    if (!d) return '';
+    try { return new Date(d).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }); }
+    catch { return d; }
+  };
+
+  const handleAccept = async () => {
+    setAccepting(true);
+    try {
+      await api.acceptMeetup(data.meetupId);
+      setAccepted(true);
+      setFeedback('✅ ยืนยันนัดรับเรียบร้อยแล้ว');
+    } catch (e) {
+      setFeedback(`❌ ${e?.message || 'ยืนยันไม่สำเร็จ กรุณาลองใหม่'}`);
+    } finally {
+      setAccepting(false);
+    }
+  };
+
+  const handleReject = async () => {
+    setRejecting(true);
+    try {
+      await api.cancelMeetup(data.meetupId, 'ปฏิเสธคำขอนัดรับ');
+      setRejected(true);
+      setFeedback('ปฏิเสธคำขอนัดรับแล้ว');
+    } catch (e) {
+      setFeedback(`❌ ${e?.message || 'ดำเนินการไม่สำเร็จ'}`);
+    } finally {
+      setRejecting(false);
+    }
+  };
+
+  return (
+    <div style={{
+      background: fromMe ? 'linear-gradient(135deg,#fff7ed,#fff)' : '#fff',
+      border: '1.5px solid #fed7aa',
+      borderRadius: 16,
+      padding: '12px 14px',
+      minWidth: 240,
+      maxWidth: 320,
+    }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
+        <span style={{ fontSize: 18, lineHeight: 1 }}>📅</span>
+        <span style={{ fontSize: 12, fontWeight: 800, color: '#c2410c' }}>คำขอนัดรับสินค้า</span>
+      </div>
+
+      {/* สรุป */}
+      <div style={{ fontSize: 12, color: '#1c1917', display: 'flex', flexDirection: 'column', gap: 5 }}>
+        <div style={{ fontWeight: 700, fontSize: 13, color: '#111', marginBottom: 2 }}>
+          🛍️ {data.productTitle || 'สินค้า'}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ color: '#f97316' }}>📆</span>
+          <span>{formatDate(data.date)} เวลา {data.time} น.</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ color: '#f97316' }}>📍</span>
+          <span>{data.locationName || 'จุดนัดรับ มทร.อีสาน'}</span>
+        </div>
+        {data.note && (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 5 }}>
+            <span>📌</span>
+            <span style={{ color: '#78350f' }}>{data.note}</span>
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
+          <span>🛒</span><span style={{ color: '#6b7280' }}>ผู้ซื้อ: <b>{data.buyerName}</b></span>
+          <span style={{ color: '#d1d5db' }}>·</span>
+          <span>🏷️</span><span style={{ color: '#6b7280' }}>ผู้ขาย: <b>{data.sellerName}</b></span>
+        </div>
+      </div>
+
+      {/* สถานะ */}
+      {(accepted || rejected) && (
+        <div style={{
+          marginTop: 10,
+          padding: '6px 10px',
+          borderRadius: 10,
+          background: accepted ? '#dcfce7' : '#fef2f2',
+          color: accepted ? '#166534' : '#991b1b',
+          fontSize: 11,
+          fontWeight: 700,
+          textAlign: 'center',
+        }}>
+          {accepted ? '✅ ยืนยันนัดรับแล้ว' : '❌ ปฏิเสธนัดรับแล้ว'}
+        </div>
+      )}
+
+      {feedback && !accepted && !rejected && (
+        <div style={{ marginTop: 8, fontSize: 11, color: '#dc2626', textAlign: 'center' }}>{feedback}</div>
+      )}
+
+      {/* ปุ่มแอ็กชัน */}
+      <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {/* ปุ่มยืนยัน/ปฏิเสธ — เฉพาะผู้รับที่เป็นผู้ขาย */}
+        {canAccept && (
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              onClick={handleAccept}
+              disabled={accepting || rejecting}
+              style={{
+                flex: 1, padding: '7px 0', borderRadius: 10, border: 'none',
+                background: accepting ? '#d1fae5' : '#16a34a', color: '#fff',
+                fontSize: 12, fontWeight: 700, cursor: accepting ? 'default' : 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+              }}
+            >
+              {accepting ? '⏳ กำลังยืนยัน...' : '✅ ยืนยันนัดรับ'}
+            </button>
+            <button
+              onClick={handleReject}
+              disabled={accepting || rejecting}
+              style={{
+                flex: 1, padding: '7px 0', borderRadius: 10, border: '1.5px solid #fca5a5',
+                background: '#fff', color: '#dc2626',
+                fontSize: 12, fontWeight: 700, cursor: rejecting ? 'default' : 'pointer',
+              }}
+            >
+              {rejecting ? '...' : '❌ ปฏิเสธ'}
+            </button>
+          </div>
+        )}
+
+        {/* ปุ่มดูรายละเอียด/เช็คอิน */}
+        <button
+          onClick={() => navigate(`/meetups/${data.meetupId}/checkin`)}
+          style={{
+            width: '100%', padding: '7px 0', borderRadius: 10,
+            border: '1.5px solid #fed7aa', background: '#fff7ed',
+            color: '#c2410c', fontSize: 12, fontWeight: 700,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+          }}
+        >
+          📍 ดูรายละเอียด / เช็คอิน
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // ── เลือกชื่อที่จะแสดงของคู่สนทนา ──────────────────────────────────
@@ -969,6 +1131,30 @@ export function ChatPage() {
                     {m.from === "them" && m.senderName && (
                       <span className="px-1 text-[10px] font-semibold text-ink-400">{m.senderName}</span>
                     )}
+
+                    {/* ── MEETUP_SUMMARY bubble ── */}
+                    {m.type === "MEETUP_SUMMARY" ? (() => {
+                      let parsed = null;
+                      try { parsed = JSON.parse(m.text); } catch { parsed = null; }
+                      return (
+                        <div>
+                          {parsed ? (
+                            <MeetupSummaryBubble
+                              data={parsed}
+                              fromMe={m.from === "me"}
+                              currentUserId={user?.id}
+                            />
+                          ) : (
+                            <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${m.from === "me" ? "bg-brand-500 text-white" : "bg-white text-ink-900 border border-surface-border"}`}>
+                              <p className="whitespace-pre-wrap break-words">{m.text}</p>
+                            </div>
+                          )}
+                          <div className={`mt-1 flex text-[10px] ${m.from === "me" ? "justify-end" : "justify-start"} text-ink-400`}>
+                            <span>{m.time}</span>
+                          </div>
+                        </div>
+                      );
+                    })() : (
                     <div
                       className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm shadow-sm leading-relaxed ${
                         m.from === "me"
@@ -1007,6 +1193,7 @@ export function ChatPage() {
                         <span>{m.time}</span>
                       </div>
                     </div>
+                    )}
                   </div>
                 ))
               )}
