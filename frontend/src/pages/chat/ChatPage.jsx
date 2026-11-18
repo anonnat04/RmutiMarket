@@ -43,46 +43,121 @@ function isRealConversationId(id) {
 }
 
 // ────────────────────────────────────────────────────────────
-// Bubble พิเศษ: สรุปนัดรับสินค้า พร้อมปุ่มยืนยัน/ปฏิเสธในแชทแบบเรียลไทม์
+// Format Thai Date: เช่น 18 พฤศจิกายน 2569
+// ────────────────────────────────────────────────────────────
+function formatThaiDate(dateStr) {
+  if (!dateStr) return "";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    const months = [
+      "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+      "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
+    ];
+    const year = d.getFullYear() > 2500 ? d.getFullYear() : d.getFullYear() + 543;
+    return `${d.getDate()} ${months[d.getMonth()]} ${year}`;
+  } catch {
+    return dateStr;
+  }
+}
+
+// ตรวจสอบว่าข้อความเป็นข้อความเกี่ยวกับการนัดรับหรือไม่
+function isMeetupMessage(message) {
+  if (!message) return false;
+  if (message.type === "MEETUP_SUMMARY") return true;
+  const txt = String(message.text || "");
+  if (txt.includes("นัดรับสินค้า") || txt.includes("คำขอนัดรับ") || txt.includes("นัดหมายรับสินค้า") || txt.includes("นัดรับได้รับการยืนยันแล้ว")) {
+    return true;
+  }
+  try {
+    const parsed = JSON.parse(txt);
+    if (parsed && (parsed.meetupId || (parsed.date && parsed.time))) return true;
+  } catch {}
+  return false;
+}
+
+// ดึงข้อมูลนัดรับจากข้อความ (รองรับทั้ง JSON และข้อความ TEXT รูปแบบเดิม)
+function extractMeetupData(message, active, meetupsList, currentUserId) {
+  let parsed = null;
+  const txt = String(message?.text || "");
+  try {
+    parsed = JSON.parse(txt);
+  } catch {}
+
+  // แมทช์นัดหมายจากรายการ meetups ของผู้ใช้
+  const matchedMeetup = (meetupsList || []).find((m) => {
+    if (parsed?.meetupId && String(m.id) === String(parsed.meetupId)) return true;
+    const pid = m.productId || m.product_id || m.transaction?.product_id;
+    return String(pid) === String(active?.productId);
+  }) || (meetupsList && meetupsList[0]);
+
+  // ดึง วันที่, เวลา, สถานที่ จากข้อความ TEXT ในกรณีไม่ใช่ JSON
+  let extractedDate = "";
+  let extractedTime = "";
+  let extractedLoc = "";
+
+  const dateMatch = txt.match(/วันที่\s*([0-9\-\/]+)/);
+  if (dateMatch) extractedDate = dateMatch[1];
+  const timeMatch = txt.match(/เวลา\s*([0-9:]+)/);
+  if (timeMatch) extractedTime = timeMatch[1];
+  const locMatch = txt.match(/ณ\s*([^(]+?)(?:\s*\(|$)/);
+  if (locMatch) extractedLoc = locMatch[1].trim();
+
+  const isConfirmedInText = txt.includes("ยืนยันแล้ว") || txt.includes("✅");
+  const rawStatus = matchedMeetup?.status || matchedMeetup?.statusCode?.toLowerCase() || parsed?.status || (isConfirmedInText ? "confirmed" : "pending");
+
+  return {
+    meetupId: parsed?.meetupId || matchedMeetup?.id || null,
+    status: rawStatus,
+    productTitle: parsed?.productTitle || matchedMeetup?.productTitle || active?.productTitle || "สินค้า",
+    price: parsed?.price || parsed?.productPrice || matchedMeetup?.price || matchedMeetup?.productPrice || active?.productPrice || 0,
+    date: parsed?.date || matchedMeetup?.date || matchedMeetup?.appointment_date || extractedDate || "",
+    time: parsed?.time || matchedMeetup?.time || matchedMeetup?.appointment_time || extractedTime || "",
+    locationName: parsed?.locationName || matchedMeetup?.locationName || matchedMeetup?.location?.name || extractedLoc || "จุดนัดรับ มทร.อีสาน (Safe Point)",
+    note: parsed?.note || matchedMeetup?.note || matchedMeetup?.meetingDetail || "",
+    buyerId: parsed?.buyerId || matchedMeetup?.buyerId || (String(active?.sellerId) === String(currentUserId) ? active?.partnerId : currentUserId),
+    sellerId: parsed?.sellerId || matchedMeetup?.sellerId || active?.sellerId,
+    buyerName: parsed?.buyerName || matchedMeetup?.buyerName || (String(active?.sellerId) === String(currentUserId) ? active?.name : "คุณ (ผู้ซื้อ)"),
+    sellerName: parsed?.sellerName || matchedMeetup?.sellerName || (String(active?.sellerId) === String(currentUserId) ? "คุณ (ผู้ขาย)" : active?.name),
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// Bubble พิเศษ: Appointment Card (ระบบนัดรับที่แสดงเป็นการ์ดในแชท)
 // ────────────────────────────────────────────────────────────
 function MeetupSummaryBubble({ data, fromMe, currentUserId, conversationId, onActionDone }) {
   const navigate = useNavigate();
   const [accepting, setAccepting] = useState(false);
   const [accepted, setAccepted] = useState(data.status === 'confirmed' || data.status === 'CONFIRMED');
   const [rejecting, setRejecting] = useState(false);
-  const [rejected, setRejected] = useState(data.status === 'cancelled' || data.status === 'CANCELLED');
+  const [rejected, setRejected] = useState(data.status === 'cancelled' || data.status === 'CANCELLED' || data.status === 'rejected');
   const [feedback, setFeedback] = useState('');
 
-  // ผู้ขายเป็นคนยืนยัน (accept) นัดรับที่ผู้ซื้อสร้าง
+  // ผู้ขายเป็นคนยืนยัน (accept) หรือปฏิเสธ (reject) นัดรับที่ผู้ซื้อสร้าง
   const iAmTheSeller = String(currentUserId) === String(data.sellerId);
   const canAccept = iAmTheSeller && !accepted && !rejected;
-
-  const formatDate = (d) => {
-    if (!d) return '';
-    try { return new Date(d).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }); }
-    catch { return d; }
-  };
 
   const formatPrice = (p) => {
     if (!p && p !== 0) return '';
     return `฿${Number(p).toLocaleString('th-TH')}`;
   };
 
-  // ส่งข้อความสรุปลงในแชทหลังยืนยัน/ปฏิเสธ
+  // ส่งข้อความสรุปลงในแชทหลังยืนยัน/ปฏิเสธ (Realtime ทาง Socket.IO)
   const sendSummaryMessage = async (action) => {
     if (!conversationId) return;
     const isConfirmed = action === 'confirm';
     const summaryText = isConfirmed
       ? [
-          `✅ ยืนยันนัดรับสินค้าแล้ว!`,
+          `✅ นัดรับได้รับการยืนยันแล้ว!`,
           `📦 สินค้า: ${data.productTitle || 'สินค้า'}`,
-          `💰 ราคา: ${formatPrice(data.price || data.productPrice)}`,
-          `📆 วัน: ${formatDate(data.date)} เวลา ${data.time} น.`,
-          `📍 จุดนัด: ${data.locationName || 'จุดนัดรับ มทร.อีสาน'}`,
+          `💰 ราคา: ${formatPrice(data.price)}`,
+          `📅 วันที่: ${formatThaiDate(data.date)}`,
+          `🕒 เวลา: ${data.time} น.`,
+          `📍 จุดนัดรับ: ${data.locationName || 'Safe Point มหาวิทยาลัย'}`,
           data.note ? `📌 หมายเหตุ: ${data.note}` : '',
-          `🛒 ผู้ซื้อ: ${data.buyerName}  🏷️ ผู้ขาย: ${data.sellerName}`,
+          `ทั้งสองฝ่ายสามารถเข้าดูรายละเอียด Safe Point และเช็คอินได้`,
         ].filter(Boolean).join('\n')
-      : `❌ ปฏิเสธคำขอนัดรับสินค้า "${data.productTitle || 'สินค้า'}" แล้ว\nกรุณาสร้างนัดรับใหม่หากต้องการนัดในวัน/เวลาอื่น`;
+      : `❌ ปฏิเสธคำขอนัดรับสินค้า "${data.productTitle || 'สินค้า'}" แล้ว\nสามารถสร้างคำขอนัดรับใหม่ได้เมื่อตกลงวัน/เวลาอื่น`;
 
     try {
       await sendRealtimeMessage({
@@ -92,7 +167,6 @@ function MeetupSummaryBubble({ data, fromMe, currentUserId, conversationId, onAc
         sender: { id: currentUserId },
       });
     } catch (e) {
-      // fallback: REST API
       try {
         await api.sendMessage(conversationId, { content: summaryText, message_type: 'TEXT' });
       } catch {}
@@ -101,7 +175,12 @@ function MeetupSummaryBubble({ data, fromMe, currentUserId, conversationId, onAc
   };
 
   const handleAccept = async () => {
+    if (!data.meetupId) {
+      alert("ไม่พบรหัสนัดหมาย กรุณาลองใหม่อีกครั้ง");
+      return;
+    }
     setAccepting(true);
+    setFeedback('');
     try {
       await api.acceptMeetup(data.meetupId);
       setAccepted(true);
@@ -115,7 +194,12 @@ function MeetupSummaryBubble({ data, fromMe, currentUserId, conversationId, onAc
   };
 
   const handleReject = async () => {
+    if (!data.meetupId) {
+      alert("ไม่พบรหัสนัดหมาย");
+      return;
+    }
     setRejecting(true);
+    setFeedback('');
     try {
       await api.cancelMeetup(data.meetupId, 'ปฏิเสธคำขอนัดรับ');
       setRejected(true);
@@ -128,120 +212,168 @@ function MeetupSummaryBubble({ data, fromMe, currentUserId, conversationId, onAc
     }
   };
 
+  const isConfirmedState = accepted || data.status === 'confirmed';
+  const isRejectedState = rejected || data.status === 'cancelled' || data.status === 'rejected';
+
   return (
-    <div style={{
-      background: fromMe ? 'linear-gradient(135deg,#fff7ed,#fff)' : '#fff',
-      border: '1.5px solid #fed7aa',
-      borderRadius: 16,
-      padding: '12px 14px',
-      minWidth: 240,
-      maxWidth: 320,
-    }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
-        <span style={{ fontSize: 18, lineHeight: 1 }}>📅</span>
-        <span style={{ fontSize: 12, fontWeight: 800, color: '#c2410c' }}>คำขอนัดรับสินค้า</span>
+    <div className="w-full max-w-[340px] sm:max-w-[380px] rounded-2xl border border-gray-200/90 bg-white p-4 shadow-sm text-gray-800 transition-all">
+      {/* ─── Header: ชื่อการ์ด + ป้ายสถานะ ─── */}
+      <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-3 mb-3">
+        <h4 className="font-extrabold text-sm text-gray-900 flex items-center gap-1.5">
+          {isConfirmedState ? (
+            <span className="text-emerald-700 flex items-center gap-1">
+              <span>✅</span> นัดรับได้รับการยืนยันแล้ว
+            </span>
+          ) : isRejectedState ? (
+            <span className="text-red-600 flex items-center gap-1">
+              <span>❌</span> คำขอนัดรับถูกปฏิเสธ
+            </span>
+          ) : (
+            <span className="text-gray-900 flex items-center gap-1">
+              <span>📅</span> คำขอนัดรับสินค้า
+            </span>
+          )}
+        </h4>
+
+        {/* Badge สถานะ */}
+        {isConfirmedState ? (
+          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+            ยืนยันแล้ว
+          </span>
+        ) : isRejectedState ? (
+          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 shrink-0">
+            ปฏิเสธแล้ว
+          </span>
+        ) : (
+          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-orange-50 text-orange-700 border border-orange-200 shrink-0">
+            รอผู้ขายยืนยัน
+          </span>
+        )}
       </div>
 
-      {/* สรุป */}
-      <div style={{ fontSize: 12, color: '#1c1917', display: 'flex', flexDirection: 'column', gap: 5 }}>
-        <div style={{ fontWeight: 700, fontSize: 13, color: '#111', marginBottom: 2 }}>
-          🛍️ {data.productTitle || 'สินค้า'}
+      {/* ─── Body: ข้อมูลรายละเอียดนัดรับ ─── */}
+      <div className="space-y-2 text-xs text-gray-700">
+        {/* สินค้า & ราคา */}
+        <div className="flex items-center justify-between bg-orange-50/60 p-2 rounded-xl border border-orange-100">
+          <span className="font-bold text-gray-900 truncate max-w-[200px]">
+            🛍️ {data.productTitle || 'สินค้า'}
+          </span>
+          {data.price > 0 && (
+            <span className="font-extrabold text-brand-600 text-sm shrink-0">
+              {formatPrice(data.price)}
+            </span>
+          )}
         </div>
-        {(data.price || data.productPrice) && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-            <span>💰</span>
-            <span style={{ fontWeight: 700, color: '#f97316' }}>{formatPrice(data.price || data.productPrice)}</span>
-          </div>
-        )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ color: '#f97316' }}>📆</span>
-          <span>{formatDate(data.date)} เวลา {data.time} น.</span>
+
+        {/* วันที่ */}
+        <div className="flex items-center gap-2 text-gray-800">
+          <span className="text-sm">📅</span>
+          <span className="font-medium">
+            {formatThaiDate(data.date) || data.date || "ไม่ระบุวัน"}
+          </span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ color: '#f97316' }}>📍</span>
-          <span>{data.locationName || 'จุดนัดรับ มทร.อีสาน'}</span>
+
+        {/* เวลา */}
+        <div className="flex items-center gap-2 text-gray-800">
+          <span className="text-sm">🕒</span>
+          <span className="font-medium">
+            {data.time ? `${data.time} น.` : "ไม่ระบุเวลา"}
+          </span>
         </div>
+
+        {/* สถานที่ (Safe Point) */}
+        <div className="flex items-start gap-2 text-gray-800">
+          <span className="text-sm mt-0.5">📍</span>
+          <span className="font-medium text-gray-800 leading-snug">
+            {data.locationName || "Safe Point มหาวิทยาลัย"}
+          </span>
+        </div>
+
+        {/* หมายเหตุ */}
         {data.note && (
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 5 }}>
-            <span>📌</span>
-            <span style={{ color: '#78350f' }}>{data.note}</span>
+          <div className="flex items-start gap-2 text-amber-800 bg-amber-50/80 p-2 rounded-lg text-[11px]">
+            <span className="mt-0.5">📌</span>
+            <span className="leading-relaxed">หมายเหตุ: {data.note}</span>
           </div>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
-          <span>🛒</span><span style={{ color: '#6b7280' }}>ผู้ซื้อ: <b>{data.buyerName}</b></span>
-          <span style={{ color: '#d1d5db' }}>·</span>
-          <span>🏷️</span><span style={{ color: '#6b7280' }}>ผู้ขาย: <b>{data.sellerName}</b></span>
-        </div>
       </div>
 
-      {/* สถานะหลังดำเนินการ */}
-      {(accepted || rejected) && (
-        <div style={{
-          marginTop: 10,
-          padding: '8px 12px',
-          borderRadius: 10,
-          background: accepted ? '#dcfce7' : '#fef2f2',
-          color: accepted ? '#166534' : '#991b1b',
-          fontSize: 11,
-          fontWeight: 700,
-          textAlign: 'center',
-          border: `1px solid ${accepted ? '#bbf7d0' : '#fecaca'}`,
-        }}>
-          {accepted
-            ? `✅ ยืนยันนัดรับแล้ว — ${formatDate(data.date)} ${data.time} น.`
-            : '❌ ปฏิเสธนัดรับแล้ว'}
+      {feedback && (
+        <div className="mt-2.5 p-2 rounded-lg bg-gray-50 text-[11px] font-semibold text-center text-gray-700 border border-gray-200">
+          {feedback}
         </div>
       )}
 
-      {feedback && !accepted && !rejected && (
-        <div style={{ marginTop: 8, fontSize: 11, color: '#dc2626', textAlign: 'center' }}>{feedback}</div>
-      )}
-
-      {/* ปุ่มแอ็กชัน */}
-      <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {/* ปุ่มยืนยัน/ปฏิเสธ — เฉพาะผู้ขาย และยังไม่ได้ตอบ */}
-        {canAccept && (
-          <div style={{ display: 'flex', gap: 6 }}>
+      {/* ─── Footer: โซนปุ่มดำเนินการ ─── */}
+      <div className="mt-3.5 pt-3 border-t border-gray-100">
+        {/* กรณี: ยืนยันนัดรับแล้ว -> แสดงปุ่มไปหน้าเช็คอิน GPS Safe Point */}
+        {isConfirmedState ? (
+          <div className="space-y-2">
+            <p className="text-[11px] text-gray-500 text-center">
+              ทั้งสองฝ่ายสามารถดูรายละเอียดและไปยังหน้าเช็คอินได้
+            </p>
             <button
-              onClick={handleAccept}
-              disabled={accepting || rejecting}
-              style={{
-                flex: 1, padding: '8px 0', borderRadius: 10, border: 'none',
-                background: accepting ? '#d1fae5' : '#16a34a', color: '#fff',
-                fontSize: 12, fontWeight: 700, cursor: accepting ? 'default' : 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-                boxShadow: '0 2px 6px rgba(22,163,74,0.25)',
+              type="button"
+              onClick={() => {
+                if (data.meetupId) navigate(`/meetups/${data.meetupId}/checkin`);
+                else navigate('/meetups?tab=confirmed');
               }}
+              className="w-full py-2.5 px-4 rounded-xl border border-orange-200 bg-white hover:bg-orange-50 text-orange-600 font-bold text-xs flex items-center justify-center gap-2 shadow-2xs transition-colors cursor-pointer"
             >
-              {accepting ? '⏳ กำลังยืนยัน...' : '✅ ยืนยันนัดรับ'}
-            </button>
-            <button
-              onClick={handleReject}
-              disabled={accepting || rejecting}
-              style={{
-                flex: 1, padding: '8px 0', borderRadius: 10, border: '1.5px solid #fca5a5',
-                background: '#fff', color: '#dc2626',
-                fontSize: 12, fontWeight: 700, cursor: rejecting ? 'default' : 'pointer',
-              }}
-            >
-              {rejecting ? '...' : '❌ ปฏิเสธ'}
+              📍 ดู Safe Point และเช็คอิน
             </button>
           </div>
+        ) : isRejectedState ? (
+          <p className="text-[11px] text-red-500 text-center font-medium">
+            นัดหมายนี้ถูกยกเลิกแล้ว สามารถสร้างคำขอนัดรับใหม่ได้
+          </p>
+        ) : (
+          /* กรณี: รอดำเนินการ (Pending) */
+          <div>
+            {canAccept ? (
+              <div className="space-y-2">
+                <p className="text-[11px] text-gray-500">
+                  ผู้ขายสามารถเลือกดำเนินการได้
+                </p>
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={handleAccept}
+                    disabled={accepting || rejecting}
+                    className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs shadow-sm transition-all disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    {accepting ? "⏳ กำลังยืนยัน..." : "ยืนยันนัดรับ"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleReject}
+                    disabled={accepting || rejecting}
+                    className="py-2.5 px-4 rounded-xl text-gray-700 hover:text-red-600 hover:bg-red-50 font-semibold text-xs transition-all disabled:opacity-50 cursor-pointer"
+                  >
+                    {rejecting ? "..." : "ปฏิเสธ"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* ฝั่งผู้ซื้อ (ผู้ส่งคำขอ) */
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] text-gray-500 font-medium">
+                  ⏳ รอผู้ขายตอบรับคำขอนัดรับ...
+                </p>
+                {data.meetupId && (
+                  <button
+                    type="button"
+                    onClick={handleReject}
+                    disabled={rejecting}
+                    className="text-[11px] text-red-500 hover:underline font-semibold cursor-pointer"
+                  >
+                    ยกเลิกคำขอ
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         )}
-
-        {/* ปุ่มดูรายละเอียด/เช็คอิน */}
-        <button
-          onClick={() => navigate(`/meetups/${data.meetupId}/checkin`)}
-          style={{
-            width: '100%', padding: '7px 0', borderRadius: 10,
-            border: '1.5px solid #fed7aa', background: '#fff7ed',
-            color: '#c2410c', fontSize: 12, fontWeight: 700,
-            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-          }}
-        >
-          📍 ดูรายละเอียด / เช็คอิน
-        </button>
       </div>
     </div>
   );
@@ -307,6 +439,22 @@ export function ChatPage() {
   const [olderMessagesError, setOlderMessagesError] = useState("");
   const [draft, setDraft] = useState("");
   const [localMessages, setLocalMessages] = useState({});
+  const [meetups, setMeetups] = useState([]);
+
+  const fetchMeetups = async () => {
+    try {
+      const res = await api.getMyMeetups();
+      if (res?.meetups) setMeetups(res.meetups);
+    } catch (e) {
+      console.warn("fetchMeetups error:", e);
+    }
+  };
+
+  useEffect(() => {
+    if (user?.id) {
+      fetchMeetups();
+    }
+  }, [user?.id]);
 
   // Realtime Socket.IO states
   const [isConnected, setIsConnected] = useState(false);
@@ -660,7 +808,10 @@ export function ChatPage() {
         refreshConversationsFromBackend();
       }
     };
-    const handleMeetupUpdate = () => refreshConversationsFromBackend();
+    const handleMeetupUpdate = () => {
+      fetchMeetups();
+      refreshConversationsFromBackend();
+    };
     // Authentication and room joining are asynchronous. Fetch once the server
     // confirms the room join so a first load cannot race ahead of Socket auth.
     const handleJoinedRoom = ({ conversationId }) => {
@@ -1179,26 +1330,22 @@ export function ChatPage() {
                       <span className="px-1 text-[10px] font-semibold text-ink-400">{m.senderName}</span>
                     )}
 
-                    {/* ── MEETUP_SUMMARY bubble ── */}
-                    {m.type === "MEETUP_SUMMARY" ? (() => {
-                      let parsed = null;
-                      try { parsed = JSON.parse(m.text); } catch { parsed = null; }
+                    {/* ── การ์ดนัดรับสินค้า (Appointment Card ตามรูปตัวอย่าง) ── */}
+                    {isMeetupMessage(m) ? (() => {
+                      const meetupData = extractMeetupData(m, active, meetups, user?.id);
                       return (
-                        <div>
-                          {parsed ? (
-                            <MeetupSummaryBubble
-                              data={parsed}
-                              fromMe={m.from === "me"}
-                              currentUserId={user?.id}
-                              conversationId={activeId}
-                              onActionDone={() => setReloadMessagesKey((k) => k + 1)}
-                            />
-                          ) : (
-                            <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${m.from === "me" ? "bg-brand-500 text-white" : "bg-white text-ink-900 border border-surface-border"}`}>
-                              <p className="whitespace-pre-wrap break-words">{m.text}</p>
-                            </div>
-                          )}
-                          <div className={`mt-1 flex text-[10px] ${m.from === "me" ? "justify-end" : "justify-start"} text-ink-400`}>
+                        <div className="w-full flex flex-col items-center sm:items-start my-2">
+                          <MeetupSummaryBubble
+                            data={meetupData}
+                            fromMe={m.from === "me"}
+                            currentUserId={user?.id}
+                            conversationId={activeId}
+                            onActionDone={() => {
+                              fetchMeetups();
+                              setReloadMessagesKey((k) => k + 1);
+                            }}
+                          />
+                          <div className={`mt-1 flex text-[10px] ${m.from === "me" ? "justify-end" : "justify-start"} text-ink-400 w-full max-w-[340px] sm:max-w-[380px]`}>
                             <span>{m.time}</span>
                           </div>
                         </div>

@@ -1103,7 +1103,7 @@ async function createMeetup(req, res, next) {
       appointmentTime: finalTime,
     });
 
-    // ส่งข้อความแจ้งในห้องแชทอัตโนมัติ (ถ้ามีห้องแชทของคู่นี้อยู่)
+    // ส่งข้อความแจ้งในห้องแชทอัตโนมัติ เป็น MEETUP_SUMMARY (ถ้ามีห้องแชทของคู่นี้อยู่)
     try {
       const { data: convs } = await supabase
         .from("conversations")
@@ -1117,14 +1117,41 @@ async function createMeetup(req, res, next) {
             .eq("conversation_id", c.id);
           const uids = (mems || []).map((m) => String(m.user_id));
           if (uids.includes(String(txn.buyer_id)) && uids.includes(String(txn.seller_id))) {
-            const locText = locationName || "จุดนัดรับ มทร.อีสาน";
-            const detailText = finalMeetingDetail ? ` — รายละเอียด: ${finalMeetingDetail}` : "";
-            const chatContent = `📅 นัดรับสินค้า: วันที่ ${finalDate} เวลา ${finalTime} น. ณ ${locText}${detailText} (กรุณาไปที่หน้านัดรับเพื่อกดยืนยัน)`;
+            // ดึง username ของผู้ซื้อและผู้ขาย
+            const { data: participants } = await supabase
+              .from("users")
+              .select("id, username, full_name")
+              .in("id", [txn.buyer_id, txn.seller_id]);
+            const buyerUser = (participants || []).find((u) => String(u.id) === String(txn.buyer_id));
+            const sellerUser = (participants || []).find((u) => String(u.id) === String(txn.seller_id));
+
+            // ดึงราคาสินค้า
+            const { data: productData } = await supabase
+              .from("products")
+              .select("title, price")
+              .eq("id", txn.product_id)
+              .maybeSingle();
+
+            const summaryPayload = {
+              meetupId: appointment.id,
+              status: "pending",
+              productTitle: productData?.title || "สินค้า",
+              price: productData?.price || txn.agreed_price || 0,
+              date: finalDate,
+              time: finalTime,
+              locationName: locationName || "จุดนัดรับ มทร.อีสาน",
+              note: finalMeetingDetail || null,
+              buyerId: txn.buyer_id,
+              buyerName: buyerUser?.username || buyerUser?.full_name || "ผู้ซื้อ",
+              sellerId: txn.seller_id,
+              sellerName: sellerUser?.username || sellerUser?.full_name || "ผู้ขาย",
+            };
+
             const { data: insertedMsg } = await supabase.from("messages").insert({
               conversation_id: c.id,
               sender_id: req.user.id,
-              content: chatContent,
-              message_type: "TEXT",
+              content: JSON.stringify(summaryPayload),
+              message_type: "MEETUP_SUMMARY",
             }).select("*").single();
 
             if (insertedMsg) {
