@@ -765,24 +765,44 @@ export function MeetupListPage() {
                 <div className="bg-orange-50 rounded-xl p-3 flex flex-col gap-2">
                   <p className="text-xs font-bold text-orange-700">🔔 ผู้ซื้อขอนัดรับสินค้า — กรุณาตอบรับ</p>
                   <p className="text-[11px] text-orange-600">หากต้องการวัน/เวลาอื่น กรุณาปฏิเสธคำขอนี้ แล้วให้ผู้ซื้อสร้างนัดใหม่ (ระบบไม่มีการเลื่อนนัด)</p>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Button size="sm" onClick={() => handleRespond(m, 'confirm')}>✅ ยืนยันนัดหมาย</Button>
                     <Button size="sm" variant="ghost" onClick={() => handleRespond(m, 'reject')}>❌ ปฏิเสธ</Button>
+                    {m.productId && (
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/chat?productId=${m.productId}&partnerId=${m.buyerId}`)}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-orange-200 bg-white hover:bg-orange-100 px-3 py-1.5 text-xs font-bold text-orange-700 transition-colors shadow-2xs ml-auto"
+                      >
+                        💬 ไปยังแชท
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
 
               {m.status === 'pending' && role === 'buyer' && (
-                <div className="flex items-center gap-3 rounded-lg bg-slate-50 px-3 py-2">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2">
                   <p className="text-xs text-ink-500 flex-1">⏳ รอผู้ขายตอบรับคำขอนัดรับ...</p>
-                  <button
-                    onClick={() => handleCancelClick(m, role)}
-                    disabled={cancelLoading === m.id}
-                    className="flex items-center gap-1 text-xs font-semibold text-red-500 hover:underline disabled:opacity-50"
-                  >
-                    <XCircle size={13} />
-                    {cancelLoading === m.id ? 'กำลังยกเลิก...' : 'ยกเลิกคำขอ'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {m.productId && (
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/chat?productId=${m.productId}&partnerId=${m.sellerId}`)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-orange-200 bg-white hover:bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-700 transition-colors shadow-2xs"
+                      >
+                        💬 ไปยังแชท
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleCancelClick(m, role)}
+                      disabled={cancelLoading === m.id}
+                      className="flex items-center gap-1 text-xs font-semibold text-red-500 hover:underline disabled:opacity-50"
+                    >
+                      <XCircle size={13} />
+                      {cancelLoading === m.id ? 'กำลังยกเลิก...' : 'ยกเลิกคำขอ'}
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -959,8 +979,8 @@ export function MeetupListPage() {
                 </div>
               )}
 
-              {/* ── ปุ่มไปยังแชท (แสดงทุกการ์ด) ── */}
-              {m.productId && (
+              {/* ── ปุ่มไปยังแชท (สำหรับสถานะอื่นๆ ที่ยังไม่มีปุ่มในกล่อง) ── */}
+              {m.productId && m.status !== 'pending' && (
                 <div className="pt-1 border-t border-gray-100 flex justify-end">
                   <button
                     type="button"

@@ -58,7 +58,7 @@ async function getWantToBuyPosts(req, res, next) {
       .neq("status_id", 3); // 3 = ยกเลิกโพสต์ (CANCELLED)
 
     // ถ้าส่ง exclude_mine="true" และผู้ใช้ล็อกอินอยู่ ให้ซ่อนโพสต์ตามหาของตัวเอง
-    if (req.user?.id) {
+    if (req.query.exclude_mine === "true" && req.user?.id) {
       query = query.neq("buyer_id", req.user.id);
     }
 

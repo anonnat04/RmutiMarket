@@ -1,5 +1,6 @@
 const { supabase } = require("../config/db");
 const { sendNotificationToUser, emitMeetupUpdate } = require("../services/chatSocket");
+const { postMeetupChatMessage } = require("../services/meetupChat");
 const { formatUser, formatStatus, getStatusId } = require("../utils/statusHelper");
 
 // ----------------------------------------------------------------
@@ -1103,68 +1104,8 @@ async function createMeetup(req, res, next) {
       appointmentTime: finalTime,
     });
 
-    // ส่งข้อความแจ้งในห้องแชทอัตโนมัติ เป็น MEETUP_SUMMARY (ถ้ามีห้องแชทของคู่นี้อยู่)
-    try {
-      const { data: convs } = await supabase
-        .from("conversations")
-        .select("id")
-        .eq("product_id", txn.product_id);
-      if (convs?.length) {
-        for (const c of convs) {
-          const { data: mems } = await supabase
-            .from("conversation_members")
-            .select("user_id")
-            .eq("conversation_id", c.id);
-          const uids = (mems || []).map((m) => String(m.user_id));
-          if (uids.includes(String(txn.buyer_id)) && uids.includes(String(txn.seller_id))) {
-            // ดึง username ของผู้ซื้อและผู้ขาย
-            const { data: participants } = await supabase
-              .from("users")
-              .select("id, username, full_name")
-              .in("id", [txn.buyer_id, txn.seller_id]);
-            const buyerUser = (participants || []).find((u) => String(u.id) === String(txn.buyer_id));
-            const sellerUser = (participants || []).find((u) => String(u.id) === String(txn.seller_id));
-
-            // ดึงราคาสินค้า
-            const { data: productData } = await supabase
-              .from("products")
-              .select("title, price")
-              .eq("id", txn.product_id)
-              .maybeSingle();
-
-            const summaryPayload = {
-              meetupId: appointment.id,
-              status: "pending",
-              productTitle: productData?.title || "สินค้า",
-              price: productData?.price || txn.agreed_price || 0,
-              date: finalDate,
-              time: finalTime,
-              locationName: locationName || "จุดนัดรับ มทร.อีสาน",
-              note: finalMeetingDetail || null,
-              buyerId: txn.buyer_id,
-              buyerName: buyerUser?.username || buyerUser?.full_name || "ผู้ซื้อ",
-              sellerId: txn.seller_id,
-              sellerName: sellerUser?.username || sellerUser?.full_name || "ผู้ขาย",
-            };
-
-            const { data: insertedMsg } = await supabase.from("messages").insert({
-              conversation_id: c.id,
-              sender_id: req.user.id,
-              content: JSON.stringify(summaryPayload),
-              message_type: "MEETUP_SUMMARY",
-            }).select("*").single();
-
-            if (insertedMsg) {
-              const { emitNewMessage } = require("../services/chatSocket");
-              emitNewMessage(c.id, insertedMsg);
-            }
-            break;
-          }
-        }
-      }
-    } catch (chatMsgErr) {
-      console.warn("[createMeetup] auto post chat message error:", chatMsgErr?.message);
-    }
+    // ส่งการ์ดคำขอนัดรับลงห้องแชทของคู่นี้อัตโนมัติ (มีปุ่มยืนยัน/ปฏิเสธให้อีกฝ่ายกดในแชทได้ทันที)
+    await postMeetupChatMessage({ appointmentId: appointment.id, event: "requested", actorId: req.user.id });
 
     res.status(201).json({
       message: "สร้างนัดรับสินค้าเรียบร้อยแล้ว",
@@ -1258,6 +1199,9 @@ async function acceptMeetup(req, res, next) {
       buyerId: appt.transactions?.buyer_id,
       sellerId: appt.transactions?.seller_id,
     });
+
+    // ส่งสรุปนัดรับ (สินค้า ราคา วัน เวลา จุดนัด) ลงแชทแบบเรียลไทม์ผ่าน Socket.IO
+    await postMeetupChatMessage({ appointmentId: Number(id), event: "confirmed", actorId: req.user.id });
 
     res.json({ message: "ยืนยันการนัดรับเรียบร้อยแล้ว" });
   } catch (err) {
@@ -1555,7 +1499,7 @@ async function cancelMeetup(req, res, next) {
     const { data: appt } = await supabase
       .from("appointments")
       .select(`
-        id, status_id, appointment_date, appointment_time, transaction_id,
+        id, status_id, created_by, appointment_date, appointment_time, transaction_id,
         confirmed_at, buyer_checked_in, seller_checked_in,
         transactions(id, product_id, buyer_id, seller_id)
       `)
@@ -1668,6 +1612,15 @@ async function cancelMeetup(req, res, next) {
       statusCode: "CANCELLED",
       buyerId: appt.transactions.buyer_id,
       sellerId: appt.transactions.seller_id,
+    });
+
+    // ส่งผลลัพธ์ลงแชท: รอยืนยันแล้วอีกฝ่ายกด = ปฏิเสธ, นอกนั้น = ยกเลิก
+    const wasPending = appt.status_id === 1;
+    const iAmCreator = appt.created_by && String(appt.created_by) === String(req.user.id);
+    await postMeetupChatMessage({
+      appointmentId: Number(id),
+      event: wasPending && !iAmCreator ? "rejected" : "cancelled",
+      actorId: req.user.id,
     });
 
     res.json({

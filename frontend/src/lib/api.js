@@ -141,6 +141,8 @@ export const api = {
     if (params.max_price) qs.set("max_price", params.max_price);
     if (params.sort) qs.set("sort", params.sort);
     if (params.status) qs.set("status", params.status);
+    if (params.seller_id || params.sellerId) qs.set("seller_id", params.seller_id || params.sellerId);
+    if (params.exclude_mine) qs.set("exclude_mine", params.exclude_mine);
     if (params.page) qs.set("page", params.page);
     if (params.limit) qs.set("limit", params.limit);
     const query = qs.toString() ? `?${qs.toString()}` : "";

@@ -175,8 +175,13 @@ async function getListings(req, res, next) {
       query = query.eq("status_id", 1);
     }
 
+    // กรองตามผู้ขาย (ถ้ามีระบุ)
+    if (req.query.seller_id) {
+      query = query.eq("seller_id", req.query.seller_id);
+    }
+
     // กรองสินค้าของตัวเองเฉพาะเมื่อไคลเอนต์ระบุ exclude_mine="true" มาอย่างชัดเจน
-    if (req.user?.id && !req.query.seller_id) {
+    if (req.query.exclude_mine === "true" && req.user?.id && !req.query.seller_id) {
       query = query.neq("seller_id", req.user.id);
     }
 

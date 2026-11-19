@@ -34,6 +34,11 @@ import { fetchProductDetail } from "@/services/productService";
 import { useChatStore } from "@/store/chatStore";
 import { useNotificationStore } from "@/store/notificationStore";
 import { compressImage } from "@/utils/compressImage";
+import {
+  MeetupAppointmentCard,
+  isMeetupMessage,
+  extractMeetupData,
+} from "@/components/chat/MeetupAppointmentCard";
 
 // ห้องแชทที่ id เป็นตัวเลขล้วนเท่านั้นคือห้องจริงจากตาราง conversations
 // ห้องที่ id ขึ้นต้นด้วย "conv-" (เช่น "conv-5") คือห้อง "รอ sync" ที่ยังไม่มี conversationId จริงจาก backend
@@ -42,341 +47,21 @@ function isRealConversationId(id) {
   return /^\d+$/.test(String(id));
 }
 
-// ────────────────────────────────────────────────────────────
-// Format Thai Date: เช่น 18 พฤศจิกายน 2569
-// ────────────────────────────────────────────────────────────
-function formatThaiDate(dateStr) {
-  if (!dateStr) return "";
-  try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
-    const months = [
-      "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
-      "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
-    ];
-    const year = d.getFullYear() > 2500 ? d.getFullYear() : d.getFullYear() + 543;
-    return `${d.getDate()} ${months[d.getMonth()]} ${year}`;
-  } catch {
-    return dateStr;
+// ── ข้อความสรุปสั้นๆ สำหรับแสดงในรายการแชทด้านข้าง (ไม่โชว์ JSON ของการ์ดนัดรับ) ──
+function previewText(text, type) {
+  const raw = String(text || "").trim();
+  if (!raw) return "";
+  if (type === "MEETUP_SUMMARY" || /^\[(MEETUP_SUMMARY|SYSTEM)\]$/.test(raw)) return "📅 นัดรับสินค้า";
+  if (raw.startsWith("{") && raw.includes('"kind":"MEETUP"')) {
+    try {
+      const p = JSON.parse(raw);
+      if (p.event === "confirmed") return "✅ นัดรับได้รับการยืนยันแล้ว";
+      if (p.event === "rejected") return "❌ ปฏิเสธคำขอนัดรับ";
+      if (p.event === "cancelled") return "❌ ยกเลิกคำขอนัดรับ";
+      return "📅 คำขอนัดรับสินค้า";
+    } catch { /* fall through */ }
   }
-}
-
-// ตรวจสอบว่าข้อความเป็นข้อความเกี่ยวกับการนัดรับหรือไม่
-function isMeetupMessage(message) {
-  if (!message) return false;
-  if (message.type === "MEETUP_SUMMARY") return true;
-  const txt = String(message.text || "");
-  if (txt.includes("นัดรับสินค้า") || txt.includes("คำขอนัดรับ") || txt.includes("นัดหมายรับสินค้า") || txt.includes("นัดรับได้รับการยืนยันแล้ว")) {
-    return true;
-  }
-  try {
-    const parsed = JSON.parse(txt);
-    if (parsed && (parsed.meetupId || (parsed.date && parsed.time))) return true;
-  } catch {}
-  return false;
-}
-
-// ดึงข้อมูลนัดรับจากข้อความ (รองรับทั้ง JSON และข้อความ TEXT รูปแบบเดิม)
-function extractMeetupData(message, active, meetupsList, currentUserId) {
-  let parsed = null;
-  const txt = String(message?.text || "");
-  try {
-    parsed = JSON.parse(txt);
-  } catch {}
-
-  // แมทช์นัดหมายจากรายการ meetups ของผู้ใช้
-  const matchedMeetup = (meetupsList || []).find((m) => {
-    if (parsed?.meetupId && String(m.id) === String(parsed.meetupId)) return true;
-    const pid = m.productId || m.product_id || m.transaction?.product_id;
-    return String(pid) === String(active?.productId);
-  }) || (meetupsList && meetupsList[0]);
-
-  // ดึง วันที่, เวลา, สถานที่ จากข้อความ TEXT ในกรณีไม่ใช่ JSON
-  let extractedDate = "";
-  let extractedTime = "";
-  let extractedLoc = "";
-
-  const dateMatch = txt.match(/วันที่\s*([0-9\-\/]+)/);
-  if (dateMatch) extractedDate = dateMatch[1];
-  const timeMatch = txt.match(/เวลา\s*([0-9:]+)/);
-  if (timeMatch) extractedTime = timeMatch[1];
-  const locMatch = txt.match(/ณ\s*([^(]+?)(?:\s*\(|$)/);
-  if (locMatch) extractedLoc = locMatch[1].trim();
-
-  const isConfirmedInText = txt.includes("ยืนยันแล้ว") || txt.includes("✅");
-  const rawStatus = matchedMeetup?.status || matchedMeetup?.statusCode?.toLowerCase() || parsed?.status || (isConfirmedInText ? "confirmed" : "pending");
-
-  return {
-    meetupId: parsed?.meetupId || matchedMeetup?.id || null,
-    status: rawStatus,
-    productTitle: parsed?.productTitle || matchedMeetup?.productTitle || active?.productTitle || "สินค้า",
-    price: parsed?.price || parsed?.productPrice || matchedMeetup?.price || matchedMeetup?.productPrice || active?.productPrice || 0,
-    date: parsed?.date || matchedMeetup?.date || matchedMeetup?.appointment_date || extractedDate || "",
-    time: parsed?.time || matchedMeetup?.time || matchedMeetup?.appointment_time || extractedTime || "",
-    locationName: parsed?.locationName || matchedMeetup?.locationName || matchedMeetup?.location?.name || extractedLoc || "จุดนัดรับ มทร.อีสาน (Safe Point)",
-    note: parsed?.note || matchedMeetup?.note || matchedMeetup?.meetingDetail || "",
-    buyerId: parsed?.buyerId || matchedMeetup?.buyerId || (String(active?.sellerId) === String(currentUserId) ? active?.partnerId : currentUserId),
-    sellerId: parsed?.sellerId || matchedMeetup?.sellerId || active?.sellerId,
-    buyerName: parsed?.buyerName || matchedMeetup?.buyerName || (String(active?.sellerId) === String(currentUserId) ? active?.name : "คุณ (ผู้ซื้อ)"),
-    sellerName: parsed?.sellerName || matchedMeetup?.sellerName || (String(active?.sellerId) === String(currentUserId) ? "คุณ (ผู้ขาย)" : active?.name),
-  };
-}
-
-// ────────────────────────────────────────────────────────────
-// Bubble พิเศษ: Appointment Card (ระบบนัดรับที่แสดงเป็นการ์ดในแชท)
-// ────────────────────────────────────────────────────────────
-function MeetupSummaryBubble({ data, fromMe, currentUserId, conversationId, onActionDone }) {
-  const navigate = useNavigate();
-  const [accepting, setAccepting] = useState(false);
-  const [accepted, setAccepted] = useState(data.status === 'confirmed' || data.status === 'CONFIRMED');
-  const [rejecting, setRejecting] = useState(false);
-  const [rejected, setRejected] = useState(data.status === 'cancelled' || data.status === 'CANCELLED' || data.status === 'rejected');
-  const [feedback, setFeedback] = useState('');
-
-  // ผู้ขายเป็นคนยืนยัน (accept) หรือปฏิเสธ (reject) นัดรับที่ผู้ซื้อสร้าง
-  const iAmTheSeller = String(currentUserId) === String(data.sellerId);
-  const canAccept = iAmTheSeller && !accepted && !rejected;
-
-  const formatPrice = (p) => {
-    if (!p && p !== 0) return '';
-    return `฿${Number(p).toLocaleString('th-TH')}`;
-  };
-
-  // ส่งข้อความสรุปลงในแชทหลังยืนยัน/ปฏิเสธ (Realtime ทาง Socket.IO)
-  const sendSummaryMessage = async (action) => {
-    if (!conversationId) return;
-    const isConfirmed = action === 'confirm';
-    const summaryText = isConfirmed
-      ? [
-          `✅ นัดรับได้รับการยืนยันแล้ว!`,
-          `📦 สินค้า: ${data.productTitle || 'สินค้า'}`,
-          `💰 ราคา: ${formatPrice(data.price)}`,
-          `📅 วันที่: ${formatThaiDate(data.date)}`,
-          `🕒 เวลา: ${data.time} น.`,
-          `📍 จุดนัดรับ: ${data.locationName || 'Safe Point มหาวิทยาลัย'}`,
-          data.note ? `📌 หมายเหตุ: ${data.note}` : '',
-          `ทั้งสองฝ่ายสามารถเข้าดูรายละเอียด Safe Point และเช็คอินได้`,
-        ].filter(Boolean).join('\n')
-      : `❌ ปฏิเสธคำขอนัดรับสินค้า "${data.productTitle || 'สินค้า'}" แล้ว\nสามารถสร้างคำขอนัดรับใหม่ได้เมื่อตกลงวัน/เวลาอื่น`;
-
-    try {
-      await sendRealtimeMessage({
-        conversationId,
-        text: summaryText,
-        message_type: 'TEXT',
-        sender: { id: currentUserId },
-      });
-    } catch (e) {
-      try {
-        await api.sendMessage(conversationId, { content: summaryText, message_type: 'TEXT' });
-      } catch {}
-    }
-    if (onActionDone) onActionDone();
-  };
-
-  const handleAccept = async () => {
-    if (!data.meetupId) {
-      alert("ไม่พบรหัสนัดหมาย กรุณาลองใหม่อีกครั้ง");
-      return;
-    }
-    setAccepting(true);
-    setFeedback('');
-    try {
-      await api.acceptMeetup(data.meetupId);
-      setAccepted(true);
-      setFeedback('✅ ยืนยันนัดรับเรียบร้อยแล้ว');
-      await sendSummaryMessage('confirm');
-    } catch (e) {
-      setFeedback(`❌ ${e?.message || 'ยืนยันไม่สำเร็จ กรุณาลองใหม่'}`);
-    } finally {
-      setAccepting(false);
-    }
-  };
-
-  const handleReject = async () => {
-    if (!data.meetupId) {
-      alert("ไม่พบรหัสนัดหมาย");
-      return;
-    }
-    setRejecting(true);
-    setFeedback('');
-    try {
-      await api.cancelMeetup(data.meetupId, 'ปฏิเสธคำขอนัดรับ');
-      setRejected(true);
-      setFeedback('ปฏิเสธคำขอนัดรับแล้ว');
-      await sendSummaryMessage('reject');
-    } catch (e) {
-      setFeedback(`❌ ${e?.message || 'ดำเนินการไม่สำเร็จ'}`);
-    } finally {
-      setRejecting(false);
-    }
-  };
-
-  const isConfirmedState = accepted || data.status === 'confirmed';
-  const isRejectedState = rejected || data.status === 'cancelled' || data.status === 'rejected';
-
-  return (
-    <div className="w-full max-w-[340px] sm:max-w-[380px] rounded-2xl border border-gray-200/90 bg-white p-4 shadow-sm text-gray-800 transition-all">
-      {/* ─── Header: ชื่อการ์ด + ป้ายสถานะ ─── */}
-      <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-3 mb-3">
-        <h4 className="font-extrabold text-sm text-gray-900 flex items-center gap-1.5">
-          {isConfirmedState ? (
-            <span className="text-emerald-700 flex items-center gap-1">
-              <span>✅</span> นัดรับได้รับการยืนยันแล้ว
-            </span>
-          ) : isRejectedState ? (
-            <span className="text-red-600 flex items-center gap-1">
-              <span>❌</span> คำขอนัดรับถูกปฏิเสธ
-            </span>
-          ) : (
-            <span className="text-gray-900 flex items-center gap-1">
-              <span>📅</span> คำขอนัดรับสินค้า
-            </span>
-          )}
-        </h4>
-
-        {/* Badge สถานะ */}
-        {isConfirmedState ? (
-          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
-            ยืนยันแล้ว
-          </span>
-        ) : isRejectedState ? (
-          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 shrink-0">
-            ปฏิเสธแล้ว
-          </span>
-        ) : (
-          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-orange-50 text-orange-700 border border-orange-200 shrink-0">
-            รอผู้ขายยืนยัน
-          </span>
-        )}
-      </div>
-
-      {/* ─── Body: ข้อมูลรายละเอียดนัดรับ ─── */}
-      <div className="space-y-2 text-xs text-gray-700">
-        {/* สินค้า & ราคา */}
-        <div className="flex items-center justify-between bg-orange-50/60 p-2 rounded-xl border border-orange-100">
-          <span className="font-bold text-gray-900 truncate max-w-[200px]">
-            🛍️ {data.productTitle || 'สินค้า'}
-          </span>
-          {data.price > 0 && (
-            <span className="font-extrabold text-brand-600 text-sm shrink-0">
-              {formatPrice(data.price)}
-            </span>
-          )}
-        </div>
-
-        {/* วันที่ */}
-        <div className="flex items-center gap-2 text-gray-800">
-          <span className="text-sm">📅</span>
-          <span className="font-medium">
-            {formatThaiDate(data.date) || data.date || "ไม่ระบุวัน"}
-          </span>
-        </div>
-
-        {/* เวลา */}
-        <div className="flex items-center gap-2 text-gray-800">
-          <span className="text-sm">🕒</span>
-          <span className="font-medium">
-            {data.time ? `${data.time} น.` : "ไม่ระบุเวลา"}
-          </span>
-        </div>
-
-        {/* สถานที่ (Safe Point) */}
-        <div className="flex items-start gap-2 text-gray-800">
-          <span className="text-sm mt-0.5">📍</span>
-          <span className="font-medium text-gray-800 leading-snug">
-            {data.locationName || "Safe Point มหาวิทยาลัย"}
-          </span>
-        </div>
-
-        {/* หมายเหตุ */}
-        {data.note && (
-          <div className="flex items-start gap-2 text-amber-800 bg-amber-50/80 p-2 rounded-lg text-[11px]">
-            <span className="mt-0.5">📌</span>
-            <span className="leading-relaxed">หมายเหตุ: {data.note}</span>
-          </div>
-        )}
-      </div>
-
-      {feedback && (
-        <div className="mt-2.5 p-2 rounded-lg bg-gray-50 text-[11px] font-semibold text-center text-gray-700 border border-gray-200">
-          {feedback}
-        </div>
-      )}
-
-      {/* ─── Footer: โซนปุ่มดำเนินการ ─── */}
-      <div className="mt-3.5 pt-3 border-t border-gray-100">
-        {/* กรณี: ยืนยันนัดรับแล้ว -> แสดงปุ่มไปหน้าเช็คอิน GPS Safe Point */}
-        {isConfirmedState ? (
-          <div className="space-y-2">
-            <p className="text-[11px] text-gray-500 text-center">
-              ทั้งสองฝ่ายสามารถดูรายละเอียดและไปยังหน้าเช็คอินได้
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                if (data.meetupId) navigate(`/meetups/${data.meetupId}/checkin`);
-                else navigate('/meetups?tab=confirmed');
-              }}
-              className="w-full py-2.5 px-4 rounded-xl border border-orange-200 bg-white hover:bg-orange-50 text-orange-600 font-bold text-xs flex items-center justify-center gap-2 shadow-2xs transition-colors cursor-pointer"
-            >
-              📍 ดู Safe Point และเช็คอิน
-            </button>
-          </div>
-        ) : isRejectedState ? (
-          <p className="text-[11px] text-red-500 text-center font-medium">
-            นัดหมายนี้ถูกยกเลิกแล้ว สามารถสร้างคำขอนัดรับใหม่ได้
-          </p>
-        ) : (
-          /* กรณี: รอดำเนินการ (Pending) */
-          <div>
-            {canAccept ? (
-              <div className="space-y-2">
-                <p className="text-[11px] text-gray-500">
-                  ผู้ขายสามารถเลือกดำเนินการได้
-                </p>
-                <div className="flex items-center gap-2.5">
-                  <button
-                    type="button"
-                    onClick={handleAccept}
-                    disabled={accepting || rejecting}
-                    className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs shadow-sm transition-all disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    {accepting ? "⏳ กำลังยืนยัน..." : "ยืนยันนัดรับ"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleReject}
-                    disabled={accepting || rejecting}
-                    className="py-2.5 px-4 rounded-xl text-gray-700 hover:text-red-600 hover:bg-red-50 font-semibold text-xs transition-all disabled:opacity-50 cursor-pointer"
-                  >
-                    {rejecting ? "..." : "ปฏิเสธ"}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              /* ฝั่งผู้ซื้อ (ผู้ส่งคำขอ) */
-              <div className="flex items-center justify-between">
-                <p className="text-[11px] text-gray-500 font-medium">
-                  ⏳ รอผู้ขายตอบรับคำขอนัดรับ...
-                </p>
-                {data.meetupId && (
-                  <button
-                    type="button"
-                    onClick={handleReject}
-                    disabled={rejecting}
-                    className="text-[11px] text-red-500 hover:underline font-semibold cursor-pointer"
-                  >
-                    ยกเลิกคำขอ
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  return raw;
 }
 
 // ── เลือกชื่อที่จะแสดงของคู่สนทนา ──────────────────────────────────
@@ -446,7 +131,7 @@ export function ChatPage() {
       const res = await api.getMyMeetups();
       if (res?.meetups) setMeetups(res.meetups);
     } catch (e) {
-      console.warn("fetchMeetups error:", e);
+      console.warn("fetchMeetups in chat error:", e);
     }
   };
 
@@ -491,7 +176,7 @@ export function ChatPage() {
       productImage: coverImage,
       sellerId: product?.sellerId ?? product?.seller_id,
       statusId: product?.statusId ?? product?.status_id,
-      lastMessage: c.lastMessage?.content || "เริ่มการสนทนา",
+      lastMessage: previewText(c.lastMessage?.content) || "เริ่มการสนทนา",
       unread: (c.unreadCount || 0) > 0,
       messages: [],
       // ข้อมูลสถานะ deal สำหรับซ่อน/แสดงปุ่มนัดหมาย
@@ -742,13 +427,18 @@ export function ChatPage() {
     };
 
     const handleNewMessage = (msg) => {
-      if (!msg.conversationId) return;
+      // รองรับทั้ง payload จาก socket (conversationId/sender) และแถวดิบจากฐานข้อมูล (conversation_id/sender_id)
+      const convIdRaw = msg.conversationId ?? msg.conversation_id;
+      const senderIdRaw = msg.sender?.id ?? msg.sender_id;
+      if (!convIdRaw) return;
 
       // ข้ามข้อความที่ตัวเองส่งเอง (server broadcast กลับมาหาทุกคนในห้อง รวมถึงคนส่งเองด้วย)
       // เพราะเราแสดง optimistic bubble ไปแล้วตอนกดส่ง ถ้าไม่ข้ามจะเห็นข้อความตัวเองขึ้นซ้ำ 2 ครั้ง (บั๊ก "ส่งเบิ้ล")
-      if (String(msg.sender?.id) === String(user?.id)) return;
+      // ยกเว้นการ์ดนัดรับที่เซิร์ฟเวอร์สร้างให้ (isSystem / MEETUP_SUMMARY) ซึ่งไม่มี optimistic bubble
+      const isServerMeetupCard = msg.isSystem === true || (msg.message_type || msg.type) === "MEETUP_SUMMARY";
+      if (!isServerMeetupCard && String(senderIdRaw) === String(user?.id)) return;
 
-      const cId = String(msg.conversationId);
+      const cId = String(convIdRaw);
       if (String(activeId) === cId && !(localMessages[cId] || []).some((item) => String(item.id) === String(msg.id))) {
         setMessageTotal((count) => count + 1);
       }
@@ -761,7 +451,7 @@ export function ChatPage() {
 
         const formattedMsg = {
           id: msg.id,
-          from: "them",
+          from: String(senderIdRaw) === String(user?.id) ? "me" : "them",
           senderName: msg.sender?.name || null,
           text: msg.text || msg.content,
           type: msg.message_type || msg.type || "TEXT",
@@ -781,7 +471,7 @@ export function ChatPage() {
         if (exists) {
           return prev.map((c) =>
             String(c.id) === cId
-              ? { ...c, lastMessage: msg.text || msg.content || "ส่งรูปภาพ", unread: String(activeId) !== cId }
+              ? { ...c, lastMessage: previewText(msg.text || msg.content, msg.message_type || msg.type) || "ส่งรูปภาพ", unread: String(activeId) !== cId }
               : c
           );
         }
@@ -929,6 +619,43 @@ export function ChatPage() {
 
   const active = conversations.find((c) => String(c.id) === String(activeId));
   const activeMessages = active ? (localMessages[active.id] ?? active.messages ?? []) : [];
+
+  // นัดรับที่ยัง "รอยืนยัน/ยืนยันแล้ว" ของสินค้า+คู่สนทนานี้ แต่ไม่มีข้อความการ์ดอยู่ในห้อง
+  // (เช่น นัดที่สร้างก่อนมีระบบการ์ด หรือห้องถูกสร้างหลังนัด) → สร้างการ์ดจำลองจากข้อมูลนัดจริง
+  const displayMessages = (() => {
+    if (!active || !user?.id) return activeMessages;
+    const referenced = new Set();
+    activeMessages.forEach((m) => {
+      try {
+        const parsed = JSON.parse(m.text || "");
+        if (parsed?.meetupId) referenced.add(String(parsed.meetupId));
+      } catch { /* ไม่ใช่ JSON */ }
+    });
+    const synthetic = (meetups || [])
+      .filter((mt) => {
+        const pid = mt.productId ?? mt.product_id;
+        const st = String(mt.status || "").toLowerCase();
+        const mine = [mt.buyerId, mt.sellerId].some((x) => String(x) === String(user.id));
+        const withPartner = active.partnerId == null
+          || [mt.buyerId, mt.sellerId].some((x) => String(x) === String(active.partnerId));
+        return mine && withPartner
+          && String(pid) === String(active.productId)
+          && ["pending", "confirmed"].includes(st)
+          && !referenced.has(String(mt.id));
+      })
+      .map((mt) => ({
+        id: `meetup-${mt.id}`,
+        from: String(mt.createdBy ?? mt.created_by) === String(user.id) ? "me" : "them",
+        senderName: null,
+        text: JSON.stringify({ meetupId: mt.id, event: "requested" }),
+        type: "MEETUP_SUMMARY",
+        image: null,
+        time: mt.created_at
+          ? new Date(mt.created_at).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })
+          : "",
+      }));
+    return synthetic.length ? [...activeMessages, ...synthetic] : activeMessages;
+  })();
 
   const loadOlderMessages = async () => {
     if (!activeId || loadingOlderMessages || activeMessages.length >= messageTotal) return;
@@ -1312,7 +1039,7 @@ export function ChatPage() {
                     ลองโหลดข้อความอีกครั้ง
                   </button>
                 </div>
-              ) : activeMessages.length === 0 ? (
+              ) : displayMessages.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center text-center p-6 text-ink-400 space-y-2">
                   <div className="p-3 bg-brand-50 rounded-full text-brand-500">
                     <MessageCircle size={28} />
@@ -1323,29 +1050,27 @@ export function ChatPage() {
                   </p>
                 </div>
               ) : (
-                activeMessages.map((m) => (
+                displayMessages.map((m) => (
                   <div key={m.id} className={`flex flex-col gap-1 ${m.from === "me" ? "items-end" : "items-start"}`}>
                     {/* แสดง username ของผู้ส่งเหนือบับเบิลของอีกฝ่าย ตามข้อมูลจริงในฐานข้อมูล */}
                     {m.from === "them" && m.senderName && (
                       <span className="px-1 text-[10px] font-semibold text-ink-400">{m.senderName}</span>
                     )}
 
-                    {/* ── การ์ดนัดรับสินค้า (Appointment Card ตามรูปตัวอย่าง) ── */}
+                    {/* ── การ์ดนัดรับสินค้า (Chat-based Appointment Card) ── */}
                     {isMeetupMessage(m) ? (() => {
                       const meetupData = extractMeetupData(m, active, meetups, user?.id);
                       return (
-                        <div className="w-full flex flex-col items-center sm:items-start my-2">
-                          <MeetupSummaryBubble
+                        <div className="w-full flex flex-col items-center sm:items-start my-1.5">
+                          <MeetupAppointmentCard
                             data={meetupData}
-                            fromMe={m.from === "me"}
                             currentUserId={user?.id}
-                            conversationId={activeId}
                             onActionDone={() => {
                               fetchMeetups();
                               setReloadMessagesKey((k) => k + 1);
                             }}
                           />
-                          <div className={`mt-1 flex text-[10px] ${m.from === "me" ? "justify-end" : "justify-start"} text-ink-400 w-full max-w-[340px] sm:max-w-[380px]`}>
+                          <div className={`mt-1 flex text-[10px] ${m.from === "me" ? "justify-end" : "justify-start"} text-ink-400 w-full max-w-[340px] sm:max-w-[400px]`}>
                             <span>{m.time}</span>
                           </div>
                         </div>

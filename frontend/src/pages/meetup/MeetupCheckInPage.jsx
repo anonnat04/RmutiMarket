@@ -1587,44 +1587,8 @@ export function MeetupCheckInPage() {
             type="button"
             onClick={async () => {
               const partnerId = role === 'buyer' ? meetup.sellerId : meetup.buyerId;
-              // สร้างข้อความ MEETUP_SUMMARY สำหรับส่งในแชท
-              const summaryPayload = JSON.stringify({
-                meetupId: meetup.id,
-                productId: meetup.productId,
-                productTitle: meetup.productTitle,
-                date: meetup.date,
-                time: meetup.time,
-                locationName: meetup.locationName,
-                note: meetup.note || '',
-                status: meetup.status,
-                buyerName: meetup.buyerName,
-                sellerName: meetup.sellerName,
-                buyerId: meetup.buyerId,
-                sellerId: meetup.sellerId,
-                senderRole: role,
-              });
-              // ส่ง message MEETUP_SUMMARY ไปในแชทก่อนเปลี่ยนหน้า
-              try {
-                const { api: chatApi } = await import('@/lib/api');
-                const { sendRealtimeMessage, joinConversation } = await import('@/services/socket');
-                // หา conversation id จาก backend
-                const convRes = await chatApi.getConversations();
-                const conv = (convRes?.conversations || []).find(
-                  (c) => String(c.product?.id || c.productId) === String(meetup.productId)
-                );
-                if (conv) {
-                  const sender = { id: user?.id, name: user?.username || 'ผู้ใช้' };
-                  joinConversation(String(conv.id));
-                  await sendRealtimeMessage({
-                    conversationId: String(conv.id),
-                    text: summaryPayload,
-                    message_type: 'MEETUP_SUMMARY',
-                    sender,
-                  });
-                }
-              } catch (e) {
-                console.warn('ส่งสรุปนัดรับไปแชทไม่สำเร็จ:', e);
-              }
+              // การ์ดนัดรับในแชทถูกส่งจากเซิร์ฟเวอร์ตอนสร้าง/ยืนยัน/ยกเลิกนัดอยู่แล้ว
+              // จึงไม่ส่งซ้ำจากปุ่มนี้ (กันการ์ดซ้ำในห้องแชท)
               navigate(`/chat?productId=${meetup.productId}&partnerId=${partnerId}`);
             }}
             className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-[#f95721] hover:bg-orange-600 active:bg-orange-700 text-white text-sm font-bold px-4 py-2.5 transition-colors shadow-xs"
