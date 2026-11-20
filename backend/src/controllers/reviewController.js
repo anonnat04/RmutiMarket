@@ -97,15 +97,16 @@ async function createReview(req, res, next) {
       .single();
 
     if (!txn) return res.status(404).json({ error: "ไม่พบรายการซื้อขาย" });
-    if (txn.status_id !== 2 || !txn.buyer_received || !txn.seller_handed_over)
-      return res.status(400).json({ error: "ต้องรอให้ทั้งสองฝ่ายยืนยันรับ/ส่งสินค้าก่อน จึงจะรีวิวได้" });
-    const checkedAt = (txn.appointments || []).flatMap((appt) => [appt.buyer_checked_in_at, appt.seller_checked_in_at])
-      .map((value) => Date.parse(value)).filter(Number.isFinite);
-    const deadline = checkedAt.length ? Math.max(...checkedAt) + 24 * 60 * 60 * 1000 : 0;
-    if (!deadline || Date.now() >= deadline)
-      return res.status(400).json({ error: "หมดเวลารีวิว 24 ชั่วโมงแล้ว ดีลนี้ถูกปิดและไม่มีการให้คะแนน" });
-    if (txn.buyer_id !== req.user.id && txn.seller_id !== req.user.id)
+
+    const isBuyer = String(txn.buyer_id) === String(req.user.id);
+    const isSeller = String(txn.seller_id) === String(req.user.id);
+    if (!isBuyer && !isSeller)
       return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในรายการนี้" });
+
+    // รีวิวสามารถรีวิวได้ก็ต่อเมื่อกดปุ่มยืนยันได้รับสินค้า/ส่งมอบสินค้าแล้วเท่านั้น
+    const myConfirmed = isBuyer ? txn.buyer_received : txn.seller_handed_over;
+    if (!myConfirmed)
+      return res.status(400).json({ error: "คุณต้องกดยืนยันรับ/ส่งมอบสินค้าก่อน จึงจะสามารถรีวิวได้" });
 
     if (parseInt(revieweeId) !== txn.buyer_id && parseInt(revieweeId) !== txn.seller_id)
       return res.status(400).json({ error: "ผู้ถูกรีวิวไม่ได้อยู่ในรายการนี้" });
@@ -141,31 +142,33 @@ async function createReview(req, res, next) {
       }
     }
 
-    // Reviews are private and scoreless until the other participant reviews too.
-    const { data: dealReviews } = await supabase.from("reviews")
-      .select("reviewer_id").eq("transaction_id", transactionId);
-    const reviewers = new Set((dealReviews || []).map((item) => String(item.reviewer_id)));
-    const bothReviewed = reviewers.has(String(txn.buyer_id)) && reviewers.has(String(txn.seller_id));
+    // ใครรีวิวจะได้คะแนนว่าสำเร็จ:
+    // เพิ่ม successful_deal_count ให้กับผู้ส่งรีวิวทันที + คืนคะแนนความน่าเชื่อถือ Trust Score
+    const { data: revUser } = await supabase
+      .from("users")
+      .select("successful_deal_count")
+      .eq("id", req.user.id)
+      .single();
 
-    if (bothReviewed) {
-      const now = new Date().toISOString();
-      const { data: finalized } = await supabase.from("transactions")
-        .update({ status_id: 3, completed_at: now })
-        .eq("id", transactionId).eq("status_id", 2).select("id");
-      if (finalized?.length) {
-        await supabase.from("products").update({ status_id: 3 }).eq("id", txn.product_id);
-        for (const userId of [txn.buyer_id, txn.seller_id]) {
-          const { data: ratings } = await supabase.from("reviews").select("rating").eq("reviewee_id", userId);
-          const count = ratings?.length || 0;
-          if (count) {
-            const average = ratings.reduce((sum, item) => sum + item.rating, 0) / count;
-            await supabase.from("users").update({ average_rating: Number(average.toFixed(2)), review_count: count }).eq("id", userId);
-          }
-        }
-        const { data: buyer } = await supabase.from("users").select("successful_deal_count").eq("id", txn.buyer_id).single();
-        await supabase.from("users").update({ successful_deal_count: (buyer?.successful_deal_count || 0) + 1 }).eq("id", txn.buyer_id);
-        await recoverScoreOnDeal(txn.seller_id, transactionId);
-      }
+    await supabase
+      .from("users")
+      .update({ successful_deal_count: (revUser?.successful_deal_count || 0) + 1 })
+      .eq("id", req.user.id);
+
+    await recoverScoreOnDeal(req.user.id, transactionId);
+
+    // อัปเดต average_rating และ review_count ให้แก่ reviewee ทันที
+    const { data: ratings } = await supabase
+      .from("reviews")
+      .select("rating")
+      .eq("reviewee_id", parseInt(revieweeId));
+    const count = ratings?.length || 0;
+    if (count > 0) {
+      const average = ratings.reduce((sum, item) => sum + item.rating, 0) / count;
+      await supabase
+        .from("users")
+        .update({ average_rating: Number(average.toFixed(2)), review_count: count })
+        .eq("id", parseInt(revieweeId));
     }
 
     // Notify reviewee
@@ -179,9 +182,9 @@ async function createReview(req, res, next) {
     });
 
     res.status(201).json({
-      message: bothReviewed ? "รีวิวครบทั้งสองฝ่ายแล้ว ดีลเสร็จสมบูรณ์" : "บันทึกรีวิวแล้ว กำลังรอรีวิวจากอีกฝ่ายภายใน 24 ชั่วโมง",
+      message: "ส่งรีวิวสำเร็จและได้รับคะแนนความสำเร็จเรียบร้อยแล้ว",
       reviewId: review.id,
-      bothReviewed,
+      successAwarded: true,
     });
   } catch (err) {
     next(err);

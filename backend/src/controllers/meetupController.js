@@ -191,11 +191,11 @@ async function recoverScoreOnDeal(sellerId, transactionId) {
         return;
       }
 
-      // ส่ง Notification แจ้งเตือนผู้ขาย
+      // ส่ง Notification แจ้งเตือน
       await persistAndSendNotification(sellerId, {
         type: "score_recovery",
         title: "🎉 ได้รับ Trust Score คืน +20 คะแนน!",
-        message: `คุณขายสินค้าสำเร็จ ระบบคืนคะแนนความน่าเชื่อถือให้ +${pointsAdded} คะแนน (คะแนนปัจจุบัน: ${newScore}/100)`,
+        message: `คุณทำรายการสำเร็จ ระบบคืนคะแนนความน่าเชื่อถือให้ +${pointsAdded} คะแนน (คะแนนปัจจุบัน: ${newScore}/100)`,
         reference_type: "transaction",
         reference_id: transactionId,
       });
@@ -714,35 +714,116 @@ async function checkAndProcessNoShows() {
   }
 }
 
-// A deal gets 24 hours from the second check-in for BOTH delivery confirmations
-// and BOTH reviews. Until then it remains CONFIRMED and no score is awarded.
+// ให้เวลา 24 ชั่วโมงหลังเช็คอินครบ สำหรับการกดยืนยันรับ/ส่งมอบสินค้า
+// ทั้งสองฝ่ายไม่ต้องรออีกฝ่าย สามารถกดยืนยันได้รับสินค้าได้เลยจะถือว่าจบงาน
+// แต่ถ้าฝ่ายไหนไม่กดยืนยัน จะถือว่าไม่มาตามนัดและโดนตัดคะแนน (NO_SHOW)
 async function closeUnconfirmedDeliveries() {
   const { data: rows, error } = await supabase.from("appointments")
-    .select("id, transaction_id, status_id, buyer_checked_in_at, seller_checked_in_at, transactions(id, product_id, buyer_id, seller_id, buyer_received, seller_handed_over, status_id, reviews(reviewer_id))")
+    .select("id, transaction_id, status_id, buyer_checked_in_at, seller_checked_in_at, transactions(id, product_id, buyer_id, seller_id, buyer_received, seller_handed_over, status_id)")
     .in("status_id", [2, 3]).eq("buyer_checked_in", true).eq("seller_checked_in", true);
   if (error || !rows?.length) return;
-  const { data: status } = await supabase.from("transaction_status").select("id, name").ilike("name", "%UNCONFIRMED%").maybeSingle();
-  const unconfirmedId = status?.id || 6;
+
   const now = Date.now();
   for (const appt of rows) {
     const checkedAt = [appt.buyer_checked_in_at, appt.seller_checked_in_at].map((v) => Date.parse(v)).filter(Number.isFinite);
     if (checkedAt.length !== 2 || now - Math.max(...checkedAt) < 24 * 60 * 60 * 1000) continue;
     const txn = appt.transactions;
-    if (!txn || Number(txn.status_id) !== 2) continue;
-    const reviewers = new Set((txn.reviews || []).map((review) => String(review.reviewer_id)));
-    const missingConfirmation = !txn.buyer_received || !txn.seller_handed_over;
-    const missingReview = !reviewers.has(String(txn.buyer_id)) || !reviewers.has(String(txn.seller_id));
-    if (!missingConfirmation && !missingReview) continue;
-    const reason = `UNCONFIRMED: ${missingConfirmation ? "ยืนยันรับ/ส่งสินค้าไม่ครบ" : ""}${missingConfirmation && missingReview ? " และ " : ""}${missingReview ? "รีวิวไม่ครบทั้งสองฝ่าย" : ""} ภายใน 24 ชั่วโมงหลังเช็คอินครบ`;
-    const { data: claimed } = await supabase.from("appointments").update({ status_id: 4, cancelled_at: new Date().toISOString(), cancellation_reason: reason }).eq("id", appt.id).in("status_id", [2, 3]).select("id");
+    if (!txn || Number(txn.status_id) === 4 || Number(txn.status_id) === 5) continue;
+
+    const buyerConfirmed = Boolean(txn.buyer_received);
+    const sellerConfirmed = Boolean(txn.seller_handed_over);
+
+    // ถ้าทั้งสองฝ่ายกดยืนยันส่งมอบ/รับสินค้าครบแล้ว ดีลสมบูรณ์ (การรีวิวเป็น optional)
+    if (buyerConfirmed && sellerConfirmed) {
+      if (Number(txn.status_id) !== 3) {
+        await supabase.from("transactions").update({ status_id: 3, completed_at: new Date().toISOString() }).eq("id", txn.id);
+        await supabase.from("appointments").update({ status_id: 3 }).eq("id", appt.id);
+      }
+      continue;
+    }
+
+    // หากฝ่ายไหนไม่กดยืนยัน ถือว่าไม่มาตามนัดและโดนตัดคะแนน NO_SHOW
+    const reason = `ไม่กดยืนยันรับ/ส่งมอบสินค้าภายใน 24 ชั่วโมงหลังเช็คอินครบ (ถือว่าไม่มาตามนัด)`;
+    const { data: claimed } = await supabase.from("appointments")
+      .update({ status_id: 5, cancelled_at: new Date().toISOString(), cancellation_reason: reason })
+      .eq("id", appt.id)
+      .in("status_id", [2, 3])
+      .select("id");
     if (!claimed?.length) continue;
-    await supabase.from("transactions").update({ status_id: unconfirmedId, cancelled_at: new Date().toISOString() }).eq("id", txn.id).eq("status_id", 2);
-    await supabase.from("products").update({ status_id: 1 }).eq("id", txn.product_id).eq("status_id", 2);
-    for (const userId of [txn.buyer_id, txn.seller_id]) if (userId) await persistAndSendNotification(userId, {
-      type: "deal_unconfirmed", title: "ปิดรายการเนื่องจากดำเนินการไม่ครบ", message: `${reason} จึงปิดดีล ไม่สามารถรีวิว และไม่มีการปรับ Trust Score`,
-      reference_type: "meetup", reference_id: appt.id,
+
+    // ตัดคะแนนฝ่ายที่ไม่กดยืนยัน
+    if (!buyerConfirmed && txn.buyer_id) {
+      const penalty = await recordPenalty(
+        txn.buyer_id,
+        "NO_SHOW",
+        `ผู้ซื้อไม่กดยืนยันรับสินค้าภายใน 24 ชั่วโมง (ถือว่าไม่มาตามนัด) - นัดหมาย #${appt.id}`,
+        appt.id
+      );
+      await persistAndSendNotification(txn.buyer_id, {
+        type: penalty.penalized ? "penalty" : "meetup_cancelled",
+        title: "⚠️ คุณถูกตัดคะแนนเนื่องจากไม่กดยืนยันรับสินค้า",
+        message: penalty.penalized
+          ? `ระบบหัก ${penalty.pointsDeducted} คะแนนความน่าเชื่อถือ เนื่องจากคุณไม่กดยืนยันรับสินค้าตามกำหนด (ถือว่าไม่มาตามนัด)`
+          : `คุณไม่กดยืนยันรับสินค้าตามกำหนด`,
+        reference_type: "meetup",
+        reference_id: appt.id,
+      });
+    }
+
+    if (!sellerConfirmed && txn.seller_id) {
+      const penalty = await recordPenalty(
+        txn.seller_id,
+        "NO_SHOW",
+        `ผู้ขายไม่กดยืนยันส่งมอบสินค้าภายใน 24 ชั่วโมง (ถือว่าไม่มาตามนัด) - นัดหมาย #${appt.id}`,
+        appt.id
+      );
+      await persistAndSendNotification(txn.seller_id, {
+        type: penalty.penalized ? "penalty" : "meetup_cancelled",
+        title: "⚠️ คุณถูกตัดคะแนนเนื่องจากไม่กดยืนยันส่งมอบสินค้า",
+        message: penalty.penalized
+          ? `ระบบหัก ${penalty.pointsDeducted} คะแนนความน่าเชื่อถือ เนื่องจากคุณไม่กดยืนยันส่งมอบสินค้าตามกำหนด (ถือว่าไม่มาตามนัด)`
+          : `คุณไม่กดยืนยันส่งมอบสินค้าตามกำหนด`,
+        reference_type: "meetup",
+        reference_id: appt.id,
+      });
+    }
+
+    // แจ้งเตือนฝ่ายที่ยืนยันถูกต้องแล้ว
+    if (buyerConfirmed && !sellerConfirmed && txn.buyer_id) {
+      await persistAndSendNotification(txn.buyer_id, {
+        type: "meetup_cancelled",
+        title: "นัดหมายถูกตัดจบ (ผู้ขายไม่กดยืนยันส่งมอบ)",
+        message: "คุณกดยืนยันรับสินค้าแล้ว แต่ผู้ขายไม่กดยืนยันส่งมอบตามกำหนด ระบบจึงตัดจบนัดหมายและตัดคะแนนผู้ขาย",
+        reference_type: "meetup",
+        reference_id: appt.id,
+      });
+    } else if (sellerConfirmed && !buyerConfirmed && txn.seller_id) {
+      await persistAndSendNotification(txn.seller_id, {
+        type: "meetup_cancelled",
+        title: "นัดหมายถูกตัดจบ (ผู้ซื้อไม่กดยืนยันรับสินค้า)",
+        message: "คุณกดยืนยันส่งมอบสินค้าแล้ว แต่ผู้ซื้อไม่กดยืนยันรับสินค้าตามกำหนด ระบบจึงตัดจบนัดหมายและตัดคะแนนผู้ซื้อ",
+        reference_type: "meetup",
+        reference_id: appt.id,
+      });
+    }
+
+    // อัปเดตสถานะธุรกรรม
+    const { data: status } = await supabase.from("transaction_status").select("id, name").ilike("name", "%UNCONFIRMED%").maybeSingle();
+    const unconfirmedId = status?.id || 6;
+    await supabase.from("transactions").update({ status_id: unconfirmedId, cancelled_at: new Date().toISOString() }).eq("id", txn.id);
+
+    // ถ้าไม่มีฝ่ายใดยืนยันเลย ให้คืนสินค้ากลับสู่สถานะ AVAILABLE (1)
+    if (!buyerConfirmed && !sellerConfirmed) {
+      await supabase.from("products").update({ status_id: 1 }).eq("id", txn.product_id);
+    }
+
+    emitMeetupUpdate(appt.id, {
+      meetupId: appt.id,
+      status: "no_show",
+      statusCode: "NO_SHOW",
+      buyerId: txn.buyer_id,
+      sellerId: txn.seller_id,
     });
-    emitMeetupUpdate(appt.id, { meetupId: appt.id, status: "unconfirmed", statusCode: "UNCONFIRMED", buyerId: txn.buyer_id, sellerId: txn.seller_id });
   }
 }
 
@@ -1298,7 +1379,7 @@ async function checkInMeetup(req, res, next) {
 }
 
 // ----------------------------------------------------------------
-// POST /api/meetups/:id/complete  — จบการนัดรับ & ปิดดีลสำเร็จ
+// POST /api/meetups/:id/complete  — จบการนัดรับ & ยืนยันรับ/ส่งมอบสินค้า
 // ----------------------------------------------------------------
 async function completeMeetup(req, res, next) {
   try {
@@ -1314,167 +1395,102 @@ async function completeMeetup(req, res, next) {
       return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในนัดรับนี้" });
     }
 
-    // ต้องเช็คอินครบทั้งสองฝ่ายและนัดต้องอยู่ในสถานะ CONFIRMED ก่อนจึงจะปิดดีลได้
-    if (Number(appt.status_id) !== 2 || !appt.buyer_checked_in || !appt.seller_checked_in || Number(appt.transactions?.status_id) !== 2) {
-      return res.status(400).json({ error: "ต้องเช็คอินที่จุดนัดรับให้ครบทั้งสองฝ่ายก่อน จึงจะยืนยันส่งมอบสินค้าได้" });
+    // เช็คอินทั้ง 2 ฝ่ายเสร็จ ปุ่มถึงจะเปิดให้กดยืนยันได้รับสินค้า
+    if (!appt.buyer_checked_in || !appt.seller_checked_in) {
+      return res.status(400).json({ error: "ต้องเช็คอินที่จุดนัดรับให้ครบทั้งสองฝ่ายก่อน จึงจะยืนยันส่งมอบ/รับสินค้าได้" });
     }
 
     const txn = appt.transactions;
+    if (!txn) return res.status(404).json({ error: "ไม่พบข้อมูลธุรกรรม" });
+
+    if (Number(appt.status_id) === 4 || Number(appt.status_id) === 5 || Number(txn.status_id) === 4 || Number(txn.status_id) === 5) {
+      return res.status(400).json({ error: "นัดหมายนี้ถูกยกเลิกหรือตัดจบไปแล้ว ไม่สามารถยืนยันได้" });
+    }
+
     const isBuyer = String(txn.buyer_id) === String(req.user.id);
-    const ownConfirmation = isBuyer ? txn.buyer_received : txn.seller_handed_over;
-    if (ownConfirmation) return res.status(409).json({ error: "คุณยืนยันส่งมอบรายการนี้ไปแล้ว กำลังรออีกฝ่ายยืนยัน" });
+    const ownColumn = isBuyer ? "buyer_received" : "seller_handed_over";
+    const otherColumn = isBuyer ? "seller_handed_over" : "buyer_received";
+    const ownConfirmation = Boolean(txn[ownColumn]);
+
+    if (ownConfirmation) {
+      return res.json({
+        message: isBuyer ? "คุณได้ยืนยันรับสินค้าไปแล้ว" : "คุณได้ยืนยันส่งมอบสินค้าไปแล้ว",
+        transactionId: txn.id,
+        readyForReview: true,
+        isConfirmed: true,
+        buyerReceived: isBuyer ? true : Boolean(txn.buyer_received),
+        sellerHandedOver: !isBuyer ? true : Boolean(txn.seller_handed_over),
+      });
+    }
+
     const now = new Date().toISOString();
 
-    // Each participant records their own confirmation. The deal only completes
-    // after both sides confirm; this makes repeated taps harmless.
-    const ownColumn = isBuyer ? "buyer_received" : "seller_handed_over";
-    const { data: confirmationRows, error: confirmErr } = await supabase.from("transactions")
-      .update({ [ownColumn]: true }).eq("id", txn.id).eq("status_id", 2).eq(ownColumn, false).select("id");
+    // บันทึกการยืนยันของตนเองทันที (ทั้ง 2 ไม่ต้องรออีกฝ่าย สามารถกดได้เลยจะถือว่าจบงานของตนเอง)
+    const { error: confirmErr } = await supabase
+      .from("transactions")
+      .update({ [ownColumn]: true })
+      .eq("id", txn.id);
+
     if (confirmErr) throw confirmErr;
-    if (!confirmationRows?.length) return res.status(409).json({ error: "ยืนยันรายการนี้ไปแล้ว กรุณารีเฟรชสถานะ" });
-    if (!txn[isBuyer ? "seller_handed_over" : "buyer_received"]) {
-      return res.json({ message: "บันทึกการยืนยันแล้ว กำลังรออีกฝ่ายยืนยัน", pendingOtherParty: true,
-        buyerReceived: isBuyer, sellerHandedOver: !isBuyer });
-    }
 
-    // Both delivery confirmations are now recorded. Keep the transaction in
-    // CONFIRMED until both reciprocal reviews are received, so a timeout cannot
-    // accidentally award a successful-deal count or Trust Score.
-    const { data: reviewReadyAppt, error: reviewReadyErr } = await supabase.from("appointments").update({
-      status_id: 3, // delivery complete; transaction remains pending reviews
-    }).eq("id", id).eq("status_id", 2).select("id");
-    if (reviewReadyErr) throw reviewReadyErr;
-    if (!reviewReadyAppt?.length) throw new Error("ไม่สามารถบันทึกสถานะรอรีวิวได้ กรุณาติดต่อผู้ดูแลระบบ");
+    // มาร์คสินค้าเป็นขายแล้ว (SOLD: status_id = 3)
+    await supabase.from("products").update({ status_id: 3 }).eq("id", txn.product_id);
 
-    const notifMsg = {
-      type: "deal_review_required",
-      title: "ยืนยันส่งมอบครบแล้ว — รอรีวิวทั้งสองฝ่าย",
-      message: "สามารถให้คะแนนรีวิวคู่ค้าได้แล้ว ดีลจะเสร็จสมบูรณ์และได้คะแนนเมื่อรีวิวครบทั้งสองฝ่ายภายใน 24 ชั่วโมง",
-      reference_type: "transaction",
-      reference_id: txn.id,
-    };
-    for (const userId of [txn.buyer_id, txn.seller_id]) {
-      if (!userId) continue;
-      await supabase.from("notifications").insert({ ...notifMsg, user_id: userId });
-      sendNotificationToUser(userId, notifMsg);
-    }
-    return res.json({ message: "ยืนยันส่งมอบครบแล้ว กรุณารีวิวทั้งสองฝ่ายภายใน 24 ชั่วโมง", transactionId: txn.id, readyForReview: true });
+    // ตรวจสอบว่าอีกฝ่ายยืนยันไปแล้วหรือไม่
+    const otherSideConfirmed = Boolean(txn[otherColumn]);
+    const bothConfirmed = otherSideConfirmed;
 
-    /* Legacy immediate-completion flow retained below as unreachable reference.
-    // Complete transaction
-    let completedTxnId = txn.id;
-    const { data: completedRows, error: txUpdErr } = await supabase.from("transactions").update({
-      status_id: 3, // 3 = ซื้อขายเสร็จ (COMPLETED)
-      buyer_received: true,
-      seller_handed_over: true,
-      completed_at: now,
-    }).eq("id", txn.id).eq("status_id", 2).eq("buyer_received", true).eq("seller_handed_over", true).select("id");
-
-    if (txUpdErr && (txUpdErr.message?.includes("code") || txUpdErr.code === "42703")) {
-      // Fallback if database trigger recover_score_on_deal failed due to missing 'code' column in transaction_status
-      const { data: replacementTxn, error: replacementErr } = await supabase.from("transactions").insert({
-        product_id: txn.product_id,
-        buyer_id: txn.buyer_id,
-        seller_id: txn.seller_id,
+    if (bothConfirmed) {
+      // ทั้งสองฝ่ายกดยืนยันครบแล้ว -> ปิดดีลสมบูรณ์
+      await supabase.from("transactions").update({
         status_id: 3,
-        buyer_received: true,
-        seller_handed_over: true,
         completed_at: now,
-      }).select().single();
+      }).eq("id", txn.id);
 
-      if (replacementTxn) {
-        completedTxnId = replacementTxn.id;
-        const { data: closedAppt } = await supabase.from("appointments").update({ transaction_id: replacementTxn.id, status_id: 3 }).eq("id", id).eq("status_id", 2).select("id");
-        if (!closedAppt?.length) throw new Error("ไม่สามารถปิดสถานะนัดรับได้ กรุณารีเฟรชแล้วลองใหม่");
-        await supabase.from("transactions").delete().eq("id", txn.id);
-      } else {
-        throw replacementErr || new Error("ปิดรายการซื้อขายไม่สำเร็จ");
-      }
+      await supabase.from("appointments").update({
+        status_id: 3,
+      }).eq("id", id);
     } else {
-      if (txUpdErr) throw txUpdErr;
-      if (!completedRows?.length) return res.status(409).json({ error: "รายการนี้ถูกปิดการขายไปแล้ว" });
-      // Complete appointment
-      const { data: closedAppt, error: closeApptErr } = await supabase.from("appointments").update({
-        status_id: 3, // 3 = นัดรับเสร็จ (COMPLETED)
-      }).eq("id", id).eq("status_id", 2).select("id");
-      if (closeApptErr) throw closeApptErr;
-      if (!closedAppt?.length) throw new Error("ปิดสถานะนัดรับไม่สำเร็จ กรุณาติดต่อผู้ดูแลระบบ");
+      await supabase.from("appointments").update({
+        status_id: 3,
+      }).eq("id", id).eq("status_id", 2);
     }
 
-    // Complete product (mark SOLD)
-    await supabase.from("products").update({
-      status_id: 3, // 3 = ขายแล้ว (SOLD)
-    }).eq("id", txn.product_id);
-
-    // ปิด/ยกเลิกนัดหมายและธุรกรรมอื่นๆ ของสินค้านี้ที่ยังค้างอยู่ เนื่องจากมีผู้ซื้อคนนี้ซื้อสำเร็จไปแล้ว
-    try {
-      const { data: otherTxns } = await supabase
-        .from("transactions")
-        .select("id, buyer_id")
-        .eq("product_id", txn.product_id)
-        .neq("id", completedTxnId)
-        .in("status_id", [1, 2]);
-
-      if (otherTxns?.length) {
-        const otherTxnIds = otherTxns.map((t) => t.id);
-        await supabase.from("transactions").update({
-          status_id: 4,
-          cancelled_at: now,
-        }).in("id", otherTxnIds);
-
-        await supabase.from("appointments").update({
-          status_id: 4,
-          cancelled_at: now,
-          cancellation_reason: "สินค้ารายการนี้ถูกปิดการขายให้ผู้ซื้อรายอื่นแล้ว",
-        }).in("transaction_id", otherTxnIds).in("status_id", [1, 2]);
-
-        for (const ot of otherTxns) {
-          if (ot.buyer_id) {
-            const soldOtherNotif = {
-              user_id: ot.buyer_id,
-              type: "meetup_cancelled",
-              title: "สินค้าถูกปิดการขายแล้ว 📦",
-              message: "สินค้ารายการนี้ถูกส่งมอบสำเร็จให้กับผู้ซื้อรายอื่นแล้ว คำขอนัดรับของคุณจึงถูกยกเลิก",
-              reference_type: "product",
-              reference_id: txn.product_id,
-            };
-            await supabase.from("notifications").insert(soldOtherNotif);
-            sendNotificationToUser(ot.buyer_id, soldOtherNotif);
-          }
-        }
-      }
-    } catch (cancelOtherErr) {
-      console.warn("[completeMeetup] auto cancel other deals warning:", cancelOtherErr?.message);
+    // แจ้งเตือนอีกฝ่าย
+    const otherUserId = isBuyer ? txn.seller_id : txn.buyer_id;
+    if (otherUserId) {
+      const confirmNotif = {
+        type: "delivery_confirmed",
+        title: isBuyer ? "📦 ผู้ซื้อยืนยันรับสินค้าแล้ว" : "📦 ผู้ขายยืนยันส่งมอบสินค้าแล้ว",
+        message: isBuyer
+          ? "ผู้ซื้อกดยืนยันรับสินค้าเรียบร้อยแล้ว หากส่งมอบแล้วกรุณากดยืนยันส่งมอบสินค้าเพื่อจบงานของคุณ"
+          : "ผู้ขายกดยืนยันส่งมอบสินค้าเรียบร้อยแล้ว หากตรวจสอบสินค้าแล้วกรุณากดยืนยันรับสินค้าเพื่อจบงานของคุณ",
+        reference_type: "meetup",
+        reference_id: appt.id,
+      };
+      await persistAndSendNotification(otherUserId, confirmNotif);
     }
 
-    // Increment successful_deal_count on buyer & seller and recover seller trust score
-    if (txn.buyer_id) {
-      const { data: bUser } = await supabase.from("users").select("successful_deal_count").eq("id", txn.buyer_id).single();
-      await supabase.from("users").update({ successful_deal_count: (bUser?.successful_deal_count || 0) + 1 }).eq("id", txn.buyer_id);
-    }
-    if (txn.seller_id) {
-      // successful_deal_count ฝั่งผู้ขายนับโดย DB trigger ตอน transaction เปลี่ยนเป็น COMPLETED
-      await recoverScoreOnDeal(txn.seller_id, completedTxnId);
-    }
+    // Socket Realtime update
+    emitMeetupUpdate(appt.id, {
+      meetupId: appt.id,
+      status: bothConfirmed ? "completed" : "confirmed",
+      statusCode: bothConfirmed ? "COMPLETED" : "CONFIRMED",
+      buyerReceived: isBuyer ? true : txn.buyer_received,
+      sellerHandedOver: !isBuyer ? true : txn.seller_handed_over,
+      buyerId: txn.buyer_id,
+      sellerId: txn.seller_id,
+    });
 
-    // Send notifications to both
-    const notifMsg = {
-      type: "deal_completed",
-      title: "การซื้อขายเสร็จสมบูรณ์แล้ว! 🌟",
-      message: "สินค้าส่งมอบเรียบร้อยแล้ว อย่าลืมให้คะแนนรีวิวเพื่อเพิ่มคะแนนความน่าเชื่อถือ",
-      reference_type: "transaction",
-      reference_id: completedTxnId,
-    };
-    if (txn.buyer_id) {
-      await supabase.from("notifications").insert({ ...notifMsg, user_id: txn.buyer_id });
-      sendNotificationToUser(txn.buyer_id, notifMsg);
-    }
-    if (txn.seller_id) {
-      await supabase.from("notifications").insert({ ...notifMsg, user_id: txn.seller_id });
-      sendNotificationToUser(txn.seller_id, notifMsg);
-    }
-
-    res.json({ message: "ปิดการซื้อขายเรียบร้อยแล้ว", transactionId: completedTxnId }); */
+    return res.json({
+      message: isBuyer ? "ยืนยันรับสินค้าเรียบร้อยแล้ว (จบงานของคุณแล้ว)" : "ยืนยันส่งมอบสินค้าเรียบร้อยแล้ว (จบงานของคุณแล้ว)",
+      transactionId: txn.id,
+      readyForReview: true,
+      isConfirmed: true,
+      bothConfirmed,
+      buyerReceived: isBuyer ? true : txn.buyer_received,
+      sellerHandedOver: !isBuyer ? true : txn.seller_handed_over,
+    });
   } catch (err) {
     next(err);
   }

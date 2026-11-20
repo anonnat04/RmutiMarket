@@ -686,6 +686,7 @@ export function MeetupListPage() {
             const checkInWindow = m.status === 'confirmed' ? getCheckInWindow(m) : null;
             const bothCheckedIn = m.buyerCheckedIn && m.sellerCheckedIn;
             const bothDelivered = m.buyerConfirmedDelivery && m.sellerConfirmedDelivery;
+            const myConfirmedDelivery = role === 'buyer' ? m.buyerConfirmedDelivery : m.sellerConfirmedDelivery;
             const myCheckedIn = role === 'buyer' ? m.buyerCheckedIn : m.sellerCheckedIn;
             const myCheckedInAt = role === 'buyer' ? m.buyerCheckedInAt : m.sellerCheckedInAt;
             const canCancel = ['pending', 'confirmed'].includes(m.status) && !bothDelivered;
@@ -895,7 +896,7 @@ export function MeetupListPage() {
               )}
 
               {/* ─── Completed: Review Logic ─────────────────── */}
-              {m.status === 'completed' && (
+              {(m.status === 'completed' || myConfirmedDelivery) && !m.isNoShow && m.status !== 'cancelled' && (
                 <div className="flex flex-col gap-2 pt-1 border-t border-gray-100">
                   <div className="flex flex-wrap items-center gap-2">
                     {myReview ? (
@@ -1014,6 +1015,9 @@ export function MeetupListPage() {
           if (meetup.transactionId) {
             try {
               await api.createReview({ transactionId: meetup.transactionId, revieweeId: targetUserId, rating, comment, images });
+              try {
+                await useAuthStore.getState().verifyToken();
+              } catch (_) {}
             } catch (err) {
               alert(err.message || 'ไม่สามารถส่งรีวิวได้');
               return;

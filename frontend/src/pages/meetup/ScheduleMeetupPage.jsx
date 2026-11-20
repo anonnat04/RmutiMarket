@@ -89,7 +89,6 @@ export function ScheduleMeetupPage() {
 
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [existingMeetups, setExistingMeetups] = useState([]);
   const [date, setDate] = useState(() => localDateString());
   const [time, setTime] = useState(() => {
     // ถ้าตอนนี้อยู่นอกช่วง 08:00–20:00 ให้เริ่มที่ 09:00 แทน
@@ -113,30 +112,7 @@ export function ScheduleMeetupPage() {
       setProduct(p ?? null);
       setLoading(false);
     });
-    api.getMyMeetups().then((res) => {
-      setExistingMeetups(res?.meetups || []);
-    }).catch(() => {});
   }, [id]);
-
-  const toMinutes = (t) => {
-    if (!t) return 0;
-    const [h, m] = String(t).slice(0, 5).split(':').map(Number);
-    return (h || 0) * 60 + (m || 0);
-  };
-
-  const getConflictingMeetup = (checkDate, checkTime) => {
-    if (!checkDate || !checkTime) return null;
-    const targetMin = toMinutes(checkTime);
-    return (existingMeetups || []).find((m) => {
-      const st = String(m.statusCode || m.status || '').toLowerCase();
-      if (!['pending', 'confirmed'].includes(st)) return false;
-      const mDate = m.date || m.appointment_date;
-      if (mDate !== checkDate) return false;
-      const mTime = m.time || m.startTime || m.appointment_time;
-      const mMin = toMinutes(mTime);
-      return Math.abs(mMin - targetMin) < 30;
-    });
-  };
 
   if (loading) {
     return (
@@ -435,7 +411,7 @@ export function ScheduleMeetupPage() {
               />
               {errors.time && <p className="mt-1 text-xs font-medium text-red-500">{errors.time}</p>}
               <p className="mt-1 text-[10px] text-gray-400">
-                {MEETUP_HOURS_TEXT} · ต้องไม่ซ้อนทับกับนัดรับอื่น
+                {MEETUP_HOURS_TEXT}
               </p>
             </div>
           </div>
@@ -447,26 +423,18 @@ export function ScheduleMeetupPage() {
               <p className="mb-2 mt-0.5 text-[11px] text-gray-400">{MEETUP_HOURS_TEXT}</p>
               <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
                 {TIME_SLOTS.map((t) => {
-                  const isBusy = !!getConflictingMeetup(date, t);
                   const selected = time === t;
                   return (
                     <button
                       key={t}
                       type="button"
                       onClick={() => {
-                        if (isBusy) {
-                          setErrors((prev) => ({ ...prev, time: `เวลานัด ${t} น. ซ้อนทับกับนัดรับอื่นที่มีอยู่แล้ว` }));
-                        } else {
-                          setTime(t);
-                          setErrors((prev) => ({ ...prev, time: null }));
-                        }
+                        setTime(t);
+                        setErrors((prev) => ({ ...prev, time: null }));
                       }}
-                      disabled={isBusy}
-                      title={isBusy ? `เวลา ${t} น. ติดนัดรับอื่นแล้ว` : `เลือกเวลา ${t} น.`}
+                      title={`เลือกเวลา ${t} น.`}
                       className={`h-9 rounded-full border text-xs font-bold transition-colors ${
-                        isBusy
-                          ? 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400 line-through opacity-60'
-                          : selected
+                        selected
                           ? 'border-[#f97316] bg-[#f97316] text-white'
                           : 'border-gray-200 bg-white text-gray-700 hover:border-orange-300 hover:text-[#f97316]'
                       }`}
@@ -476,7 +444,6 @@ export function ScheduleMeetupPage() {
                   );
                 })}
               </div>
-              <p className="mt-2 text-[10px] text-gray-400">ช่องที่ขีดฆ่า = ติดนัดรับอื่นของคุณแล้ว</p>
             </div>
           )}
         </div>

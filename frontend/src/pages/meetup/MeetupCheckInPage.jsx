@@ -987,6 +987,18 @@ export function MeetupCheckInPage() {
   const otherCheckedInAt = role === 'buyer' ? meetup.sellerCheckedInAt : meetup.buyerCheckedInAt;
   const bothCheckedIn = !!meetup.buyerCheckedIn && !!meetup.sellerCheckedIn;
 
+  const myConfirmedDelivery = role === 'buyer'
+    ? Boolean(meetup.buyerConfirmedDelivery || meetup.buyerReceived)
+    : Boolean(meetup.sellerConfirmedDelivery || meetup.sellerHandedOver);
+
+  const userReviewFromDb = Array.isArray(meetup.reviews)
+    ? meetup.reviews.find((r) => String(r.reviewer_id) === String(myId))
+    : null;
+  const myReview =
+    (role === 'buyer' ? meetup.buyerReview : meetup.sellerReview) ||
+    meetup.myReview ||
+    userReviewFromDb;
+
   const meetupAccepted = isMeetupAccepted(meetup);
 
   // คะแนนที่จะถูกหักถ้ายกเลิกตอนนี้ (null = ยกเลิกได้โดยไม่เสียคะแนน)
@@ -1088,17 +1100,29 @@ export function MeetupCheckInPage() {
     setCompleting(true);
     try {
       const result = await api.completeMeetup(meetup.id);
-      if (result?.pendingOtherParty) {
-        setMeetup((prev) => prev ? { ...prev, buyerReceived: result.buyerReceived, sellerHandedOver: result.sellerHandedOver } : null);
-        setShowDeliveryConfirm(false);
-        showFeedback('success', 'บันทึกการยืนยันแล้ว', 'รออีกฝ่ายยืนยันภายใน 24 ชั่วโมง');
-        return;
+      const isBuyer = role === 'buyer';
+      if (isBuyer) {
+        useMeetupStore.getState().markDelivered(meetup.id, 'buyer');
+      } else {
+        useMeetupStore.getState().markDelivered(meetup.id, 'seller');
       }
-      useMeetupStore.getState().markDelivered(meetup.id, 'buyer');
-      useMeetupStore.getState().markDelivered(meetup.id, 'seller');
-      setMeetup((prev) => prev ? { ...prev, status: 'completed', statusCode: 'COMPLETED' } : null);
+
+      setMeetup((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          buyerReceived: isBuyer ? true : prev.buyerReceived,
+          sellerHandedOver: !isBuyer ? true : prev.sellerHandedOver,
+          buyerConfirmedDelivery: isBuyer ? true : prev.buyerConfirmedDelivery,
+          sellerConfirmedDelivery: !isBuyer ? true : prev.sellerConfirmedDelivery,
+          status: result?.bothConfirmed ? 'completed' : prev.status,
+          statusCode: result?.bothConfirmed ? 'COMPLETED' : prev.statusCode,
+        };
+      });
+
       setShowDeliveryConfirm(false);
-      // เปิดรีวิวได้เมื่อทั้งสองฝ่ายยืนยันแล้วเท่านั้น; ดีลจะจบเมื่อรีวิวครบทั้งคู่
+      showFeedback('success', 'ยืนยันสำเร็จแล้ว!', 'จบงานของคุณแล้ว คุณสามารถให้คะแนนรีวิวเพื่อรับคะแนนความสำเร็จได้ทันที (หรือข้ามได้)');
+      // ถ้ากดได้รับสินค้าจะเด้งไปให้รีวิวทันที
       setShowReviewModal(true);
     } catch (err) {
       showFeedback('warning', 'ยังยืนยันส่งมอบไม่ได้', err.message || 'เกิดข้อผิดพลาดในการยืนยันรับสินค้า');
@@ -1112,11 +1136,12 @@ export function MeetupCheckInPage() {
     const isBuyer = role === 'buyer';
     const targetUserId = isBuyer ? meetup.sellerId : meetup.buyerId;
 
-    // The server is the source of truth for the 24-hour deadline and the
-    // two-confirmation rule. Do not show a local review if it rejects it.
     if (meetup.transactionId) {
       try {
         await api.createReview({ transactionId: meetup.transactionId, revieweeId: targetUserId, rating, comment, images });
+        try {
+          await useAuthStore.getState().verifyToken();
+        } catch (_) {}
       } catch (err) {
         showFeedback('warning', 'ส่งรีวิวไม่สำเร็จ', err.message || 'ไม่สามารถส่งรีวิวได้');
         return;
@@ -1124,12 +1149,19 @@ export function MeetupCheckInPage() {
     }
 
     useMeetupStore.getState().submitReview(meetup.id, role, { rating, comment, images });
-
-    // Do not add a local score here. The API only publishes ratings after both
-    // sides review, so the next server refresh remains authoritative.
+    setMeetup((prev) => {
+      if (!prev) return null;
+      const newRev = { reviewer_id: myId, reviewee_id: targetUserId, rating, comment, images };
+      return {
+        ...prev,
+        reviews: [...(prev.reviews || []), newRev],
+        buyerReview: isBuyer ? newRev : prev.buyerReview,
+        sellerReview: !isBuyer ? newRev : prev.sellerReview,
+      };
+    });
 
     setShowReviewModal(false);
-    navigate('/meetups', { state: { reviewedMeetupId: meetup.id } });
+    showFeedback('success', 'ส่งรีวิวสำเร็จ! 🎉', 'คุณได้รับคะแนนความสำเร็จและคะแนนความน่าเชื่อถือเรียบร้อยแล้ว');
   };
 
   // ── เปิด/ปิด dialog ยกเลิกนัด ──
@@ -1528,15 +1560,55 @@ export function MeetupCheckInPage() {
           <p className="text-sm font-bold text-ink-900 flex items-center gap-1.5">
             <ShieldCheck size={16} className="text-brand-500" /> ยืนยันการส่งมอบสินค้า
           </p>
-          <p className="text-xs text-ink-500">
-            กดปุ่มนี้เมื่อได้รับ/ส่งมอบสินค้าเรียบร้อยแล้วเท่านั้น — เมื่อกดแล้วจะถือว่าดีลนี้เสร็จสมบูรณ์ทันที ไม่สามารถย้อนกลับได้
-          </p>
-          <Button onClick={() => setShowDeliveryConfirm(true)} disabled={completing || !bothCheckedIn}>
-            <span className="flex items-center gap-1.5">
-              <PackageCheck size={16} />
-              {completing ? 'กำลังยืนยัน...' : !bothCheckedIn ? 'รอทั้งสองฝ่ายเช็คอินก่อน' : role === 'buyer' ? 'ยืนยันรับสินค้าแล้ว' : 'ยืนยันส่งมอบสินค้าแล้ว'}
-            </span>
-          </Button>
+
+          {myConfirmedDelivery ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-semibold">
+                <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                <span>คุณได้ยืนยัน{role === 'buyer' ? 'รับสินค้า' : 'ส่งมอบสินค้า'}เรียบร้อยแล้ว (จบงานของคุณแล้ว)</span>
+              </div>
+
+              {myReview ? (
+                <div className="flex items-center gap-2 text-xs text-ink-600 bg-surface-alt p-3 rounded-xl border border-surface-border">
+                  <Star size={15} className="fill-amber-400 text-amber-500 shrink-0" />
+                  <span>คุณได้ส่งรีวิวและได้รับคะแนนความสำเร็จเรียบร้อยแล้ว ({'★'.repeat(myReview.rating || 5)})</span>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2 pt-1">
+                  <p className="text-xs text-ink-500">
+                    💡 รีวิวสามารถรีวิวหรือไม่ก็ได้ แต่ผู้ที่ส่งรีวิวจะได้รับคะแนนว่าสำเร็จและคืน Trust Score
+                  </p>
+                  <Button
+                    onClick={() => setShowReviewModal(true)}
+                    className="bg-[#f95721] hover:bg-orange-600 text-white font-bold text-xs shadow-xs"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Star size={15} />
+                      ⭐ ให้คะแนนและรีวิวคู่ค้า
+                    </span>
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              <p className="text-xs text-ink-500">
+                กดปุ่มนี้เมื่อได้รับ/ส่งมอบสินค้าเรียบร้อยแล้วเท่านั้น — เมื่อกดแล้วจะถือว่าจบงานของฝ่ายคุณทันที และไม่ต้องรออีกฝ่าย
+              </p>
+              <Button onClick={() => setShowDeliveryConfirm(true)} disabled={completing || !bothCheckedIn}>
+                <span className="flex items-center gap-1.5">
+                  <PackageCheck size={16} />
+                  {completing
+                    ? 'กำลังยืนยัน...'
+                    : !bothCheckedIn
+                    ? 'รอทั้งสองฝ่ายเช็คอินก่อน'
+                    : role === 'buyer'
+                    ? 'ยืนยันรับสินค้าแล้ว'
+                    : 'ยืนยันส่งมอบสินค้าแล้ว'}
+                </span>
+              </Button>
+            </>
+          )}
         </div>
       )}
 
@@ -1606,7 +1678,7 @@ export function MeetupCheckInPage() {
         onClose={() => setShowDeliveryConfirm(false)}
         onConfirm={executeConfirmDelivery}
         title={role === 'buyer' ? 'ยืนยันว่าได้รับสินค้าเรียบร้อยแล้ว?' : 'ยืนยันว่าส่งมอบสินค้าเรียบร้อยแล้ว?'}
-        description="เมื่อยืนยันแล้ว รายการนี้จะปิดสมบูรณ์ทันทีทั้งสองฝ่าย และจะเปิดหน้าต่างให้คะแนนรีวิวคู่ค้าของคุณ"
+        description="เมื่อยืนยันแล้ว จะถือว่าจบงานของฝ่ายคุณทันทีโดยไม่ต้องรออีกฝ่าย และจะเปิดหน้าต่างให้คะแนนรีวิวคู่ค้า (สามารถเลือกที่จะรีวิวหรือไม่ก็ได้)"
         confirmLabel="ยืนยันสำเร็จดีล"
         cancelLabel="ย้อนกลับ"
         variant="info"
@@ -1618,7 +1690,6 @@ export function MeetupCheckInPage() {
         open={showReviewModal}
         onClose={() => {
           setShowReviewModal(false);
-          navigate('/meetups');
         }}
         revieweeName={role === 'buyer' ? meetup.sellerName : meetup.buyerName}
         onSubmit={handleReviewSubmit}
