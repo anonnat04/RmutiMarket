@@ -180,9 +180,10 @@ async function getListings(req, res, next) {
       query = query.eq("seller_id", req.query.seller_id);
     }
 
-    // กรองสินค้าของตัวเองเฉพาะเมื่อไคลเอนต์ระบุ exclude_mine="true" มาอย่างชัดเจน
-    if (req.query.exclude_mine === "true" && req.user?.id && !req.query.seller_id) {
-      query = query.neq("seller_id", req.user.id);
+    // กรองสินค้าของตัวเอง (เมื่อไคลเอนต์ระบุ exclude_mine="true" หรือ exclude_user_id)
+    const excludeId = req.query.exclude_user_id || (req.query.exclude_mine === "true" ? req.user?.id : null);
+    if (excludeId && !req.query.seller_id) {
+      query = query.neq("seller_id", excludeId);
     }
 
     if (min_price) query = query.gte("price", parseFloat(min_price));

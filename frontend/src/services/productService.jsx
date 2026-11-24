@@ -124,7 +124,12 @@ export async function fetchProducts(params) {
   try {
     // includeSold = false (ค่าเริ่มต้น): ไม่แสดงสินค้าที่ขายแล้ว (sold) และไม่แสดงสินค้าที่ติดจอง (reserved)
     const { includeSold = false, categorySlug, categoryName, ...apiParams } = params || {};
-    const res = await api.getListings(includeSold ? { ...apiParams, status: "all" } : { ...apiParams, status: "available" });
+    const queryParams = includeSold ? { ...apiParams, status: "all" } : { ...apiParams, status: "available" };
+    if (params?.excludeUserId) {
+      queryParams.exclude_mine = "true";
+      queryParams.exclude_user_id = params.excludeUserId;
+    }
+    const res = await api.getListings(queryParams);
     let results = (res?.listings || [])
       .map(formatListing)
       .filter((p) => {
@@ -142,9 +147,9 @@ export async function fetchProducts(params) {
       const exId = params.excludeUserId ? String(params.excludeUserId) : null;
       const exUser = params.excludeUsername ? String(params.excludeUsername).replace(/^@+/, "").trim().toLowerCase() : null;
       results = results.filter((p) => {
-        const sId = String(p.seller?.id || p.seller_id || p.sellerId || "");
+        const sId = String(p.seller?.id || p.seller_id || p.sellerId || p.users?.id || "");
         if (exId && sId && sId === exId) return false;
-        const sUser = String(p.seller?.username || "").replace(/^@+/, "").trim().toLowerCase();
+        const sUser = String(p.seller?.username || p.seller?.displayName || p.users?.username || "").replace(/^@+/, "").trim().toLowerCase();
         if (exUser && sUser && sUser === exUser) return false;
         return true;
       });

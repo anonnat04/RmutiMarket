@@ -82,9 +82,9 @@ export function ProductListPage() {
   // ตรวจสอบว่าเป็นสินค้าของตัวเองหรือไม่
   const isMyProduct = useCallback((p) => {
     if (!myId && !myUsername) return false;
-    const sId = String(p.seller?.id || p.seller_id || p.sellerId || "");
+    const sId = String(p.seller?.id || p.seller_id || p.sellerId || p.users?.id || "");
     if (myId && sId && sId === myId) return true;
-    const sUsername = String(p.seller?.username || p.seller?.displayName || "").replace(/^@+/, "").trim().toLowerCase();
+    const sUsername = String(p.seller?.username || p.seller?.displayName || p.users?.username || "").replace(/^@+/, "").trim().toLowerCase();
     if (myUsername && sUsername && sUsername === myUsername) return true;
     return false;
   }, [myId, myUsername]);
@@ -110,7 +110,7 @@ export function ProductListPage() {
     setLoading(true);
     const category = categories.find((c) => c.slug === activeSlug);
 
-    // 1. ดึงสินค้า (ไม่แสดงสินค้าที่ขายแล้ว)
+    // 1. ดึงสินค้า (ไม่แสดงสินค้าที่ขายแล้ว และไม่แสดงสินค้าของตัวเอง)
     const productPromise = fetchProducts({
       includeSold: false,
       categoryId: category?.id,
@@ -121,6 +121,8 @@ export function ProductListPage() {
       sort: sortBy,
       min_price: appliedMinPrice,
       max_price: appliedMaxPrice,
+      excludeUserId: myId,
+      excludeUsername: myUsername,
     });
 
     // 2. ดึงโพสต์ตามหาสินค้า
@@ -172,11 +174,13 @@ export function ProductListPage() {
 
       setLoading(false);
     });
-  }, [activeSlug, q, sortBy, conditionFilter, appliedMinPrice, appliedMaxPrice, searchParams]);
+  }, [activeSlug, q, sortBy, conditionFilter, appliedMinPrice, appliedMaxPrice, searchParams, myId, myUsername]);
 
-  // รายการสินค้าที่จะแสดง: กรองสภาพสินค้า (มือหนึ่ง/มือสอง), สินค้าที่ขายแล้ว, ผู้ขายที่ Trust Score < 50 ออก และเรียงตามเวลาที่ลงขายล่าสุด
+  // รายการสินค้าที่จะแสดง: กรองสินค้าของตัวเอง, สภาพสินค้า (มือหนึ่ง/มือสอง), สินค้าที่ขายแล้ว, ผู้ขายที่ Trust Score < 50 ออก และเรียงตามเวลาที่ลงขายล่าสุด
   const displayedProducts = useMemo(() => {
     let list = products.filter((p) => {
+      // ไม่แสดงสินค้าของตัวเองในหน้าเลือกซื้อสินค้า
+      if (isMyProduct(p)) return false;
       if (p.status === "sold" || p.statusId === 3 || p.status_id === 3) return false;
       const sScore = p.seller?.trustScore ?? p.seller?.trust_score ?? p.users?.trust_score ?? 100;
       if (sScore < 50) return false;
@@ -202,7 +206,7 @@ export function ProductListPage() {
     }
 
     return list;
-  }, [products, conditionFilter, sortBy]);
+  }, [products, conditionFilter, sortBy, isMyProduct]);
 
   // กรองและเรียงลำดับโพสต์ตามหาสินค้า: กรองโพสต์ที่ยกเลิก และผู้โพสต์ที่ Trust Score < 50 ออก
   const sortedWantToBuyPosts = useMemo(() => {

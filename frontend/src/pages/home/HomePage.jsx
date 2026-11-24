@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchProducts } from '@/services/productService';
+import { useAuthStore } from '@/store/authStore';
 import { CategoryBar } from './components/CategoryMenu';
 import { HeroBanner } from './components/HeroBanner';
 import { WantToBuyMarquee } from './components/WantToBuyMarquee';
@@ -8,13 +9,18 @@ import { RecommendedProducts } from './components/RecommendedProducts';
 export function HomePage() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const user = useAuthStore((s) => s.user);
 
   useEffect(() => {
-    fetchProducts().then((data) => {
+    setLoading(true);
+    fetchProducts({
+      excludeUserId: user?.id,
+      excludeUsername: user?.username,
+    }).then((data) => {
       setProducts(data);
       setLoading(false);
     });
-  }, []);
+  }, [user?.id, user?.username]);
 
   return (
     <div className="space-y-5">

@@ -35,6 +35,13 @@ export function RecommendedProducts({ products = [], loading }) {
   const smartProducts = useMemo(() => {
     if (!products || products.length === 0) return [];
     const eligibleProducts = products.filter((product) => {
+      // ไม่แสดงสินค้าของตัวเองในสินค้าแนะนำ
+      if (userId || username) {
+        const sId = String(product.seller?.id || product.seller_id || product.sellerId || product.users?.id || '');
+        if (userId && sId && sId === String(userId)) return false;
+        const sUser = String(product.seller?.username || product.seller?.displayName || product.users?.username || '').replace(/^@+/, '').trim().toLowerCase();
+        if (username && sUser && sUser === username) return false;
+      }
       // ไม่แสดงสินค้าที่ขายแล้ว
       if (product.status === 'sold' || product.statusId === 3 || product.status_id === 3) return false;
       // ไม่แสดงสินค้าที่ติดจอง (แสดงเฉพาะสินค้าที่ว่างเท่านั้น)
@@ -45,7 +52,7 @@ export function RecommendedProducts({ products = [], loading }) {
       return true;
     });
     return useFeedStore.getState().getRecommendedFeed(eligibleProducts, wishlistIds);
-  }, [products, wishlistIds, viewCounts, likedCategories, searchKeywords, seededInterests]);
+  }, [products, wishlistIds, viewCounts, likedCategories, searchKeywords, seededInterests, userId, username]);
 
   // ตรวจสอบว่ามีการ personalize แล้วหรือยัง
   const hasInterests = interests && interests.length > 0;
@@ -136,6 +143,10 @@ export function RecommendedProducts({ products = [], loading }) {
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="aspect-[3/4] animate-pulse rounded-2xl bg-gray-100" />
           ))}
+        </div>
+      ) : smartProducts.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-8 text-center text-sm text-ink-400">
+          ยังไม่มีสินค้าแนะนำจากผู้ขายท่านอื่นในขณะนี้
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
