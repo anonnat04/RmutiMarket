@@ -44,7 +44,7 @@ async function getUserReviews(req, res, next) {
 
       const reviewer_role =
         r.reviewer_id && txn.buyer_id
-          ? r.reviewer_id === txn.buyer_id
+          ? Number(r.reviewer_id) === Number(txn.buyer_id)
             ? "ผู้ซื้อ"
             : "ผู้ขาย"
           : null;
@@ -80,46 +80,53 @@ async function getUserReviews(req, res, next) {
 // ----------------------------------------------------------------
 async function createReview(req, res, next) {
   try {
-    const { transactionId, revieweeId, rating, comment, images = [] } = req.body;
+    const { transactionId, rating, comment, images = [] } = req.body;
 
-    if (!transactionId || !revieweeId || !rating)
-      return res.status(400).json({ error: "กรุณาระบุ transaction ผู้ถูกรีวิว และคะแนน" });
+    if (!transactionId || !rating)
+      return res.status(400).json({ error: "กรุณาระบุ transaction และคะแนน" });
 
     const numRating = parseInt(rating, 10);
     if (isNaN(numRating) || numRating < 1 || numRating > 5)
       return res.status(400).json({ error: "คะแนนต้องอยู่ระหว่าง 1-5" });
 
-    // Verify transaction
     const { data: txn } = await supabase
       .from("transactions")
-      .select("id, product_id, buyer_id, seller_id, status_id, buyer_received, seller_handed_over, appointments(id, buyer_checked_in_at, seller_checked_in_at)")
+      .select("id, product_id, buyer_id, seller_id, status_id, buyer_received, seller_handed_over")
       .eq("id", transactionId)
       .single();
 
     if (!txn) return res.status(404).json({ error: "ไม่พบรายการซื้อขาย" });
 
-    const isBuyer = String(txn.buyer_id) === String(req.user.id);
-    const isSeller = String(txn.seller_id) === String(req.user.id);
+    // แปลงเป็น Number ทุกตัว กันเทียบ bigint/string ผิดชนิด
+    const uid = Number(req.user.id);
+    const buyerId = Number(txn.buyer_id);
+    const sellerId = Number(txn.seller_id);
+
+    const isBuyer = buyerId === uid;
+    const isSeller = sellerId === uid;
     if (!isBuyer && !isSeller)
       return res.status(403).json({ error: "คุณไม่ได้มีส่วนร่วมในรายการนี้" });
 
-    // รีวิวสามารถรีวิวได้ก็ต่อเมื่อกดปุ่มยืนยันได้รับสินค้า/ส่งมอบสินค้าแล้วเท่านั้น
+    // รีวิวได้เมื่อ "ฝั่งตัวเอง" กดยืนยันรับ/ส่งมอบแล้วเท่านั้น
     const myConfirmed = isBuyer ? txn.buyer_received : txn.seller_handed_over;
-    if (!myConfirmed)
+    if (!myConfirmed) {
+      console.log("[review] not confirmed", {
+        uid, isBuyer, isSeller,
+        buyer_received: txn.buyer_received,
+        seller_handed_over: txn.seller_handed_over,
+      });
       return res.status(400).json({ error: "คุณต้องกดยืนยันรับ/ส่งมอบสินค้าก่อน จึงจะสามารถรีวิวได้" });
+    }
 
-    if (parseInt(revieweeId) !== txn.buyer_id && parseInt(revieweeId) !== txn.seller_id)
-      return res.status(400).json({ error: "ผู้ถูกรีวิวไม่ได้อยู่ในรายการนี้" });
-    if (parseInt(revieweeId) === req.user.id)
-      return res.status(400).json({ error: "ไม่สามารถรีวิวตัวเองได้" });
+    // ผู้ถูกรีวิวคือ "อีกฝ่าย" เสมอ ไม่เชื่อค่าจาก client
+    const revieweeId = isBuyer ? sellerId : buyerId;
 
-    // Insert Review
     const { data: review, error } = await supabase
       .from("reviews")
       .insert({
-        transaction_id: transactionId,
-        reviewer_id: req.user.id,
-        reviewee_id: parseInt(revieweeId),
+        transaction_id: txn.id,
+        reviewer_id: uid,
+        reviewee_id: revieweeId,
         rating: numRating,
         comment: comment ? String(comment).trim() : null,
       })
@@ -131,7 +138,6 @@ async function createReview(req, res, next) {
       throw error;
     }
 
-    // Insert Review Images
     if (images && Array.isArray(images) && images.length > 0) {
       const imgRows = images.filter(Boolean).map((url) => ({
         review_id: review.id,
@@ -142,41 +148,40 @@ async function createReview(req, res, next) {
       }
     }
 
-    // ใครรีวิวจะได้คะแนนว่าสำเร็จ:
-    // เพิ่ม successful_deal_count ให้กับผู้ส่งรีวิวทันที + คืนคะแนนความน่าเชื่อถือ Trust Score
     const { data: revUser } = await supabase
       .from("users")
       .select("successful_deal_count")
-      .eq("id", req.user.id)
+      .eq("id", uid)
       .single();
 
     await supabase
       .from("users")
       .update({ successful_deal_count: (revUser?.successful_deal_count || 0) + 1 })
-      .eq("id", req.user.id);
+      .eq("id", uid);
 
-    await recoverScoreOnDeal(req.user.id, transactionId);
+    await recoverScoreOnDeal(uid, txn.id);
 
-    // อัปเดต average_rating และ review_count ให้แก่ reviewee ทันที
     const { data: ratings } = await supabase
       .from("reviews")
       .select("rating")
-      .eq("reviewee_id", parseInt(revieweeId));
+      .eq("reviewee_id", revieweeId);
     const count = ratings?.length || 0;
     if (count > 0) {
       const average = ratings.reduce((sum, item) => sum + item.rating, 0) / count;
       await supabase
         .from("users")
         .update({ average_rating: Number(average.toFixed(2)), review_count: count })
-        .eq("id", parseInt(revieweeId));
+        .eq("id", revieweeId);
     }
 
-    // Notify reviewee
+    const safeComment = comment ? String(comment) : "";
     await supabase.from("notifications").insert({
-      user_id: parseInt(revieweeId),
+      user_id: revieweeId,
       type: "review_received",
       title: `ได้รับรีวิวใหม่ ${"⭐".repeat(numRating)}`,
-      message: comment ? `"${comment.substring(0, 60)}${comment.length > 60 ? "..." : ""}"` : `ได้รับ ${numRating} ดาว`,
+      message: safeComment
+        ? `"${safeComment.substring(0, 60)}${safeComment.length > 60 ? "..." : ""}"`
+        : `ได้รับ ${numRating} ดาว`,
       reference_type: "review",
       reference_id: review.id,
     });

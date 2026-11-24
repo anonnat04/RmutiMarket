@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, MapPin, CalendarClock, Navigation,
   PackageCheck, ShieldCheck, Radio, XCircle, Clock,
-  Maximize2, Minimize2, ZoomIn, ZoomOut, X, CheckCircle2, Star, AlertTriangle, ShoppingBag,
+  Maximize2, X, CheckCircle2, Star, AlertTriangle, ShoppingBag,
   MessageCircle
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
@@ -14,6 +14,12 @@ import { ReviewModal } from '@/components/meetup/ReviewModal';
 import { CAMPUS_CENTER, meetupPoints } from '@/constants/meetupPoints';
 import { api } from '@/lib/api';
 import { getSocket, joinMeetupTracking, leaveMeetupTracking, emitLiveLocation } from '@/services/socket';
+
+// ────────────────────────────────
+// ค่าคงที่เช็คอิน (ต้องตรงกับ backend)
+// ────────────────────────────────
+const CHECKIN_RADIUS_M = 50;        // รัศมีวงสีเขียว/พื้นที่เช็คอิน
+const CHECKIN_MAX_ACCURACY_M = 35;  // ความคลาดเคลื่อน GPS สูงสุดที่ยอมให้เช็คอิน
 
 // ────────────────────────────────
 // ฟังก์ชัน Helper
@@ -36,6 +42,37 @@ function formatTime(isoStr) {
   }
 }
 
+// อ่านตำแหน่ง GPS "ที่แม่นที่สุด" ภายในเวลาที่กำหนด (ไม่ใช้ค่าแคช)
+function getBestPosition({ maxWaitMs = 12000, goodAccuracy = 20 } = {}) {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('อุปกรณ์นี้ไม่รองรับ GPS กรุณาเปิดตำแหน่งที่ตั้งบนอุปกรณ์แล้วลองอีกครั้ง'));
+      return;
+    }
+    let best = null;
+    let done = false;
+    let watchId = null;
+    let timer = null;
+    const finish = (err) => {
+      if (done) return;
+      done = true;
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      clearTimeout(timer);
+      if (best) resolve(best);
+      else reject(err || { code: 3 });
+    };
+    watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        if (!best || pos.coords.accuracy < best.coords.accuracy) best = pos;
+        if (pos.coords.accuracy <= goodAccuracy) finish();
+      },
+      (err) => { if (!best) finish(err); },
+      { enableHighAccuracy: true, timeout: maxWaitMs, maximumAge: 0 }
+    );
+    timer = setTimeout(() => finish(), maxWaitMs);
+  });
+}
+
 // สถานะที่ backend อาจส่งมาแทน "นัดที่ยอมรับแล้ว" (CONFIRMED / SCHEDULED / ACCEPTED)
 const ACCEPTED_STATUS_CODES = ['CONFIRMED', 'SCHEDULED', 'ACCEPTED'];
 
@@ -55,7 +92,7 @@ function isMeetupOverdue(date, time, buyerCheckedIn, sellerCheckedIn) {
   if (!date || !time) return false;
   try {
     const timeClean = String(time).slice(0, 5);
-    const apptDate = new Date(`${String(date).slice(0, 10)}T${timeClean}:00`);
+    const apptDate = new Date(`${String(date).slice(0, 10)}T${timeClean}:00+07:00`);
     if (isNaN(apptDate.getTime())) return false;
     const deadline = new Date(apptDate.getTime() + 45 * 60 * 1000);
     return new Date() > deadline && (!buyerCheckedIn || !sellerCheckedIn);
@@ -72,15 +109,11 @@ function resolveUserName(u) {
 
 // ────────────────────────────────
 // กฎยกเลิกนัดกระชั้นชิด (LATE_CANCEL)
-// ค่าด้านล่างตรงกับตาราง penalty_rules (120 นาที / หัก 10 / ผ่อนผัน 15 นาที)
-// ตัวตัดสินจริงคือ backend: ถ้าเงื่อนไขไม่ตรงกับที่นี่ backend จะตอบ 409 พร้อมค่าจริง
-// แล้วหน้านี้จะแสดงคำเตือนด้วยค่าจริงนั้นแทน
 // ────────────────────────────────
 const LATE_CANCEL_THRESHOLD_MINUTES = 120;
 const LATE_CANCEL_POINTS = 10;
 const LATE_CANCEL_GRACE_MINUTES = 15;
 
-// นัดนี้ถูก "ยอมรับแล้ว" หรือยัง (รองรับหลายรูปแบบสถานะจาก backend)
 function isMeetupAccepted(meetup) {
   if (!meetup) return false;
   if (meetup.status === 'confirmed') return true;
@@ -88,11 +121,8 @@ function isMeetupAccepted(meetup) {
   return ACCEPTED_STATUS_CODES.includes(String(meetup.statusCode || '').toUpperCase());
 }
 
-// จำนวนนาทีที่เหลือก่อนถึงเวลานัด (เวลาไทย UTC+7) — null ถ้าคำนวณไม่ได้
 function getMinutesUntilMeetup(meetup) {
   if (!meetup || !meetup.date || !meetup.time) return null;
-  // ตัดเอาเฉพาะ YYYY-MM-DD กัน backend ส่ง date มาเป็น ISO เต็ม (เช่น 2026-11-15T00:00:00.000Z)
-  // ซึ่งถ้าต่อสตริงตรงๆ จะกลายเป็น Invalid Date แล้วคำเตือนไม่ขึ้นทั้งที่ backend ตัดคะแนนจริง
   const dateOnly = String(meetup.date).slice(0, 10);
   const apptTime = new Date(`${dateOnly}T${String(meetup.time).slice(0, 5)}:00+07:00`);
   if (isNaN(apptTime.getTime())) return null;
@@ -100,8 +130,8 @@ function getMinutesUntilMeetup(meetup) {
 }
 
 function getLateCancelPenalty(meetup, myCheckedIn) {
-  if (!isMeetupAccepted(meetup)) return null; // เฉพาะนัดที่ยอมรับแล้ว
-  if (myCheckedIn) return null;               // เช็คอินแล้ว = มาตามนัดแล้ว ไม่ตัด
+  if (!isMeetupAccepted(meetup)) return null;
+  if (myCheckedIn) return null;
 
   const minutesLeft = getMinutesUntilMeetup(meetup);
   if (minutesLeft === null) return null;
@@ -110,7 +140,7 @@ function getLateCancelPenalty(meetup, myCheckedIn) {
     ? (Date.now() - new Date(meetup.confirmedAt).getTime()) / 60000
     : Infinity;
 
-  if (sinceConfirm <= LATE_CANCEL_GRACE_MINUTES) return null; // เพิ่งกดยืนยัน ยกเลิกฟรี (เผื่อกดผิด)
+  if (sinceConfirm <= LATE_CANCEL_GRACE_MINUTES) return null;
   if (minutesLeft >= LATE_CANCEL_THRESHOLD_MINUTES) return null;
 
   return {
@@ -120,7 +150,6 @@ function getLateCancelPenalty(meetup, myCheckedIn) {
   };
 }
 
-// แปลงค่าที่ backend ตอบกลับมา (409 requiresConfirm) ให้อยู่ในรูปเดียวกับ getLateCancelPenalty
 function normalizeServerPenalty(data, meetup) {
   if (!data) return null;
   const computedLeft = getMinutesUntilMeetup(meetup);
@@ -132,7 +161,6 @@ function normalizeServerPenalty(data, meetup) {
   };
 }
 
-// แสดงชั่วโมงให้อ่านง่าย (120 -> "2", 90 -> "1.5")
 function formatThresholdHours(minutes) {
   const h = minutes / 60;
   return Number.isInteger(h) ? String(h) : h.toFixed(1);
@@ -170,7 +198,6 @@ function mapAppointment(m) {
     (typeof product.images === 'string' ? product.images : '') ||
     '';
 
-  // date อาจมาเป็น "YYYY-MM-DD" หรือ ISO เต็ม → เก็บเฉพาะส่วนวันที่
   const rawDate = m.appointment_date || m.date || (m.scheduledAt ? m.scheduledAt.split('T')[0] : '');
   const date = rawDate ? String(rawDate).slice(0, 10) : '';
   const rawTime = m.appointment_time || m.time || m.startTime || (m.scheduledAt ? m.scheduledAt.split('T')[1]?.slice(0, 5) : '12:00');
@@ -179,17 +206,28 @@ function mapAppointment(m) {
   const buyerCheckedIn = Boolean(m.buyerCheckedIn || m.buyer_checked_in);
   const sellerCheckedIn = Boolean(m.sellerCheckedIn || m.seller_checked_in);
 
-  const confirmedAt = m.confirmedAt || m.confirmed_at || null; // เวลาที่กดยืนยันนัด ใช้คำนวณช่วงยกเลิกฟรี
+  const confirmedAt = m.confirmedAt || m.confirmed_at || null;
 
-  // ถ้ามีเวลายืนยันนัดแต่สถานะยังถูกแปลงเป็น pending (backend ใช้ชื่อสถานะที่ไม่รู้จัก) ให้ถือว่ายอมรับแล้ว
   if (mappedStatus === 'pending' && confirmedAt) {
     mappedStatus = 'confirmed';
   }
 
-  // ตรวจจับ Overdue 45 นาที หากเลยเวลาแล้วไม่เช็คอิน ให้แสดงเป็น no_show ทันที
   if (mappedStatus === 'confirmed' && isMeetupOverdue(date, time, buyerCheckedIn, sellerCheckedIn)) {
     mappedStatus = 'no_show';
   }
+
+  // พิกัดจุดนัด: ใช้พิกัดจากฐานข้อมูล (locations) เป็นหลัก เพื่อให้ตรงกับที่ backend ใช้ตรวจระยะ
+  // ค่าคงที่ใน meetupPoints ใช้เป็น fallback เท่านั้น
+  const locName = location.name || m.locationName;
+  const fallbackPoint = meetupPoints.find((p) => p.name === locName);
+  const locationLat =
+    m.locationLat != null ? parseFloat(m.locationLat)
+      : location.latitude != null ? parseFloat(location.latitude)
+        : (fallbackPoint?.lat ?? null);
+  const locationLng =
+    m.locationLng != null ? parseFloat(m.locationLng)
+      : location.longitude != null ? parseFloat(location.longitude)
+        : (fallbackPoint?.lng ?? null);
 
   return {
     id: m.id,
@@ -209,15 +247,16 @@ function mapAppointment(m) {
     startTime: time,
     confirmedAt,
     locationId: m.locationId ?? m.location_id ?? location.id,
-    locationName: location.name || m.locationName || 'จุดนัดรับ มทร.อีสาน',
-    locationLat: m.locationLat != null ? parseFloat(m.locationLat) : (meetupPoints.find((p) => p.name === (location.name || m.locationName))?.lat ?? (location.latitude != null ? parseFloat(location.latitude) : null)),
-    locationLng: m.locationLng != null ? parseFloat(m.locationLng) : (meetupPoints.find((p) => p.name === (location.name || m.locationName))?.lng ?? (location.longitude != null ? parseFloat(location.longitude) : null)),
+    locationName: locName || 'จุดนัดรับ มทร.อีสาน',
+    locationLat,
+    locationLng,
     buyerCheckedIn,
     sellerCheckedIn,
     buyerCheckedInAt: m.buyerCheckedInAt || m.buyer_checked_in_at || null,
     sellerCheckedInAt: m.sellerCheckedInAt || m.seller_checked_in_at || null,
-    buyerConfirmedDelivery: Boolean(txn.buyer_received || txn.buyerConfirmedDelivery || rawStatusCode === 'COMPLETED' || mappedStatus === 'completed'),
-    sellerConfirmedDelivery: Boolean(txn.seller_handed_over || txn.sellerHandedOver || rawStatusCode === 'COMPLETED' || mappedStatus === 'completed'),
+    // FIX: ดูจากธุรกรรมเท่านั้น ห้ามเดาจากสถานะนัด (เดิมทำให้ฝั่งที่ยังไม่กดขึ้นว่ายืนยันแล้ว)
+    buyerConfirmedDelivery: Boolean(txn.buyer_received || txn.buyerReceived),
+    sellerConfirmedDelivery: Boolean(txn.seller_handed_over || txn.sellerHandedOver),
     note: m.meetingDetail || m.meeting_detail || '',
     reviews: m.reviews || txn.reviews || [],
     isDb: true,
@@ -244,8 +283,7 @@ function CheckInWindowBadge({ status }) {
 }
 
 // ────────────────────────────────
-// ────────────────────────────────
-// แผนที่พร้อมแสดงจุดนัดรับ + จุดผู้ซื้อ + จุดผู้ขาย แบบเรียลไทม์ และปุ่มขยายดูเต็มจอ
+// แผนที่: จุดนัดรับ + วงเช็คอิน 50 ม. + ผู้ซื้อ/ผู้ขายแบบเรียลไทม์ + วงความแม่นยำ GPS
 // ────────────────────────────────
 function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
   const mapRef = useRef(null);
@@ -253,6 +291,7 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
   const miniMarkersRef = useRef({});
   const leafletRef = useRef(null);
   const [mapReady, setMapReady] = useState(0);
+  const firstFitRef = useRef(false);
 
   const fullMapRef = useRef(null);
   const fullMapInstanceRef = useRef(null);
@@ -262,21 +301,23 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
 
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // คำนวณพิกัดจุดนัดรับ
+  // พิกัดจุดนัดรับ: ใช้พิกัดจาก DB ก่อน
   let targetLat = CAMPUS_CENTER.lat;
   let targetLng = CAMPUS_CENTER.lng;
-  const found = meetupPoints.find((p) => p.id === meetup?.locationId);
-  if (found) { targetLat = found.lat; targetLng = found.lng; }
-  else if (meetup?.locationLat) { targetLat = meetup.locationLat; targetLng = meetup.locationLng; }
+  if (meetup?.locationLat != null && meetup?.locationLng != null) {
+    targetLat = meetup.locationLat;
+    targetLng = meetup.locationLng;
+  } else {
+    const found = meetupPoints.find((p) => p.id === meetup?.locationId);
+    if (found) { targetLat = found.lat; targetLng = found.lng; }
+  }
 
-  // ระบุพิกัดและชื่อของผู้ซื้อและผู้ขาย
   const isMeBuyer = role === 'buyer';
   const buyerCoords = isMeBuyer ? myCoords : peerCoords;
   const sellerCoords = isMeBuyer ? peerCoords : myCoords;
   const buyerLabel = isMeBuyer ? `คุณ (ผู้ซื้อ: ${myName})` : `ผู้ซื้อ: ${otherName}`;
   const sellerLabel = isMeBuyer ? `ผู้ขาย: ${otherName}` : `คุณ (ผู้ขาย: ${myName})`;
 
-  // ฟังก์ชันสร้าง Custom HTML Marker สำหรับ Leaflet
   const createMarkerIcon = (L, color, labelText, yOffset = -100) => {
     return L.divIcon({
       html: `
@@ -293,23 +334,91 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
     });
   };
 
-  // Helper สำหรับ Fit bounds ให้ครอบคลุมทุกจุดบนแผนที่
+  const hasPoint = (c) => Number.isFinite(c?.lat) && Number.isFinite(c?.lng);
+
   const fitAll = (map, L) => {
     if (!map || !L) return;
     const pts = [[targetLat, targetLng]];
-    if (buyerCoords?.lat && buyerCoords?.lng) pts.push([buyerCoords.lat, buyerCoords.lng]);
-    if (sellerCoords?.lat && sellerCoords?.lng) pts.push([sellerCoords.lat, sellerCoords.lng]);
+    if (hasPoint(buyerCoords)) pts.push([buyerCoords.lat, buyerCoords.lng]);
+    if (hasPoint(sellerCoords)) pts.push([sellerCoords.lat, sellerCoords.lng]);
     if (pts.length > 1) {
       try {
-        const bounds = L.latLngBounds(pts);
-        map.fitBounds(bounds, { padding: [45, 45], maxZoom: 16 });
+        map.fitBounds(L.latLngBounds(pts), { padding: [45, 45], maxZoom: 18 });
       } catch (_) {}
     } else {
-      map.setView([targetLat, targetLng], 16);
+      map.setView([targetLat, targetLng], 17);
     }
   };
 
-  // 1. Initial Mini Map
+  // ซิงก์ marker/วงทั้งหมดให้ตรงกับพิกัดล่าสุด (ใช้ทั้งแผนที่เล็กและเต็มจอ)
+  const syncLayers = (map, L, store) => {
+    if (!map || !L) return;
+
+    store.target?.setLatLng([targetLat, targetLng]);
+    store.circle?.setLatLng([targetLat, targetLng]);
+
+    const people = [
+      { key: 'buyer', coords: buyerCoords, color: '#2563eb', label: `🛒 ${buyerLabel}`, offset: -135 },
+      { key: 'seller', coords: sellerCoords, color: '#16a34a', label: `🏷️ ${sellerLabel}`, offset: -100 },
+    ];
+    for (const p of people) {
+      if (hasPoint(p.coords)) {
+        const ll = [p.coords.lat, p.coords.lng];
+        if (!store[p.key]) {
+          const mk = L.marker(ll, { icon: createMarkerIcon(L, p.color, p.label, p.offset), zIndexOffset: 1000 }).addTo(map);
+          mk._label = p.label;
+          store[p.key] = mk;
+        } else {
+          store[p.key].setLatLng(ll);
+          if (store[p.key]._label !== p.label) {
+            store[p.key].setIcon(createMarkerIcon(L, p.color, p.label, p.offset));
+            store[p.key]._label = p.label;
+          }
+        }
+      } else if (store[p.key]) {
+        map.removeLayer(store[p.key]);
+        delete store[p.key];
+      }
+    }
+
+    // วงความแม่นยำของ GPS ตัวเอง (สีน้ำเงินจาง)
+    if (hasPoint(myCoords) && Number.isFinite(myCoords.accuracy)) {
+      const ll = [myCoords.lat, myCoords.lng];
+      const r = Math.min(myCoords.accuracy, 300);
+      if (!store.acc) {
+        store.acc = L.circle(ll, { radius: r, color: '#2563eb', weight: 1, fillColor: '#3b82f6', fillOpacity: 0.1, interactive: false }).addTo(map);
+      } else {
+        store.acc.setLatLng(ll);
+        store.acc.setRadius(r);
+      }
+    } else if (store.acc) {
+      map.removeLayer(store.acc);
+      delete store.acc;
+    }
+  };
+
+  const addBaseLayers = (map, L, store) => {
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+    // 🟢 วงสีเขียว รัศมี 50 เมตร รอบจุดนัดรับ (พื้นที่เช็คอิน)
+    const circle = L.circle([targetLat, targetLng], {
+      radius: CHECKIN_RADIUS_M,
+      color: '#16a34a',
+      fillColor: '#22c55e',
+      fillOpacity: 0.18,
+      weight: 2,
+      dashArray: '6, 6',
+    }).addTo(map);
+    circle.bindPopup(`🟢 พื้นที่เช็คอิน (รัศมี ${CHECKIN_RADIUS_M} เมตร รอบจุดนัดรับ)`);
+
+    const targetIcon = createMarkerIcon(L, '#f97316', `📍 ${meetup.locationName || 'จุดนัดรับ'}`);
+    const targetMarker = L.marker([targetLat, targetLng], { icon: targetIcon }).addTo(map);
+
+    store.target = targetMarker;
+    store.circle = circle;
+  };
+
+  // 1. สร้างแผนที่เล็ก
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current || !meetup) return;
 
@@ -322,13 +431,13 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
     }
 
     import('leaflet').then((mod) => {
-      if (mapInstanceRef.current) return;
+      if (mapInstanceRef.current || !mapRef.current) return;
       const L = mod.default ?? mod;
       leafletRef.current = L;
 
       const map = L.map(mapRef.current, {
         center: [targetLat, targetLng],
-        zoom: 16,
+        zoom: 17,
         zoomControl: false,
         dragging: true,
         scrollWheelZoom: true,
@@ -336,41 +445,12 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
         attributionControl: false,
       });
 
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-
-      // 🟢 วงกลมสีเขียว รัศมี 200 เมตร รอบจุดนัดรับ (ขอบเขตพื้นที่เช็คอิน)
-      const circle = L.circle([targetLat, targetLng], {
-        radius: 200,
-        color: '#16a34a',
-        fillColor: '#22c55e',
-        fillOpacity: 0.18,
-        weight: 2,
-        dashArray: '6, 6',
-      }).addTo(map);
-      circle.bindPopup('🟢 พื้นที่เช็คอิน (รัศมี 200 เมตร รอบจุดนัดรับ)');
-
-      // Marker จุดนัดรับ (สีส้ม)
-      const targetIcon = createMarkerIcon(L, '#f97316', `📍 ${meetup.locationName || 'จุดนัดรับ'}`);
-      const targetMarker = L.marker([targetLat, targetLng], { icon: targetIcon }).addTo(map);
-
-      miniMarkersRef.current = { target: targetMarker, circle };
-
-      // ใส่ Marker ผู้ซื้อทันทีถ้ามีพิกัด
-      if (buyerCoords?.lat && buyerCoords?.lng) {
-        const bIcon = createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`, -135);
-        miniMarkersRef.current.buyer = L.marker([buyerCoords.lat, buyerCoords.lng], { icon: bIcon }).addTo(map);
-      }
-
-      // ใส่ Marker ผู้ขายทันทีถ้ามีพิกัด
-      if (sellerCoords?.lat && sellerCoords?.lng) {
-        const sIcon = createMarkerIcon(L, '#16a34a', `🏷️ ${sellerLabel}`);
-        miniMarkersRef.current.seller = L.marker([sellerCoords.lat, sellerCoords.lng], { icon: sIcon }).addTo(map);
-      }
+      miniMarkersRef.current = {};
+      addBaseLayers(map, L, miniMarkersRef.current);
+      syncLayers(map, L, miniMarkersRef.current);
 
       mapInstanceRef.current = map;
       setMapReady((v) => v + 1);
-
-      // ปรับมุมมองอัตโนมัติให้เห็นทั้งผู้ซื้อ ผู้ขาย และจุดนัดรับ
       fitAll(map, L);
 
       setTimeout(() => map?.invalidateSize(), 200);
@@ -386,61 +466,31 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
     };
   }, [meetup?.locationId, meetup?.locationLat, meetup?.locationLng, targetLat, targetLng]);
 
-  // Update Markers และ Circle ใน Mini Map เมื่อพิกัดเปลี่ยน
+  // อัปเดตตำแหน่งแบบเรียลไทม์ทุกครั้งที่พิกัดเปลี่ยน
   useEffect(() => {
     const map = mapInstanceRef.current;
     const L = leafletRef.current;
     if (!map || !L) return;
-
-    // อัปเดต Marker จุดนัดรับ และ วงกลม 200 เมตร
-    if (miniMarkersRef.current.target) {
-      miniMarkersRef.current.target.setLatLng([targetLat, targetLng]);
+    syncLayers(map, L, miniMarkersRef.current);
+    // ครั้งแรกที่ได้ตำแหน่งตัวเอง ให้ปรับมุมมองครอบคลุมทุกจุดหนึ่งครั้ง
+    if (!firstFitRef.current && hasPoint(myCoords)) {
+      firstFitRef.current = true;
+      fitAll(map, L);
     }
-    if (miniMarkersRef.current.circle) {
-      miniMarkersRef.current.circle.setLatLng([targetLat, targetLng]);
-    }
+  }, [mapReady, myCoords?.lat, myCoords?.lng, myCoords?.accuracy, peerCoords?.lat, peerCoords?.lng, buyerLabel, sellerLabel, targetLat, targetLng]);
 
-    // ผู้ซื้อ (สีน้ำเงิน)
-    if (buyerCoords?.lat && buyerCoords?.lng) {
-      if (!miniMarkersRef.current.buyer) {
-        const icon = createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`, -135);
-        miniMarkersRef.current.buyer = L.marker([buyerCoords.lat, buyerCoords.lng], { icon }).addTo(map);
-      } else {
-        miniMarkersRef.current.buyer.setLatLng([buyerCoords.lat, buyerCoords.lng]);
-        miniMarkersRef.current.buyer.setIcon(createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`, -135));
-      }
-    } else if (miniMarkersRef.current.buyer) {
-      map.removeLayer(miniMarkersRef.current.buyer);
-      delete miniMarkersRef.current.buyer;
-    }
-
-    // ผู้ขาย (สีเขียว)
-    if (sellerCoords?.lat && sellerCoords?.lng) {
-      if (!miniMarkersRef.current.seller) {
-        const icon = createMarkerIcon(L, '#16a34a', `🏷️ ${sellerLabel}`);
-        miniMarkersRef.current.seller = L.marker([sellerCoords.lat, sellerCoords.lng], { icon }).addTo(map);
-      } else {
-        miniMarkersRef.current.seller.setLatLng([sellerCoords.lat, sellerCoords.lng]);
-        miniMarkersRef.current.seller.setIcon(createMarkerIcon(L, '#16a34a', `🏷️ ${sellerLabel}`));
-      }
-    } else if (miniMarkersRef.current.seller) {
-      map.removeLayer(miniMarkersRef.current.seller);
-      delete miniMarkersRef.current.seller;
-    }
-  }, [mapReady, buyerCoords?.lat, buyerCoords?.lng, sellerCoords?.lat, sellerCoords?.lng, buyerLabel, sellerLabel, targetLat, targetLng]);
-
-  // 2. Fullscreen Map Instance
+  // 2. แผนที่เต็มจอ
   useEffect(() => {
     if (!isFullscreen || !fullMapRef.current || fullMapInstanceRef.current) return;
 
     import('leaflet').then((mod) => {
-      if (fullMapInstanceRef.current) return;
+      if (fullMapInstanceRef.current || !fullMapRef.current) return;
       const L = mod.default ?? mod;
       fullLeafletRef.current = L;
 
       const map = L.map(fullMapRef.current, {
         center: [targetLat, targetLng],
-        zoom: 16,
+        zoom: 17,
         zoomControl: true,
         dragging: true,
         scrollWheelZoom: true,
@@ -448,45 +498,15 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
         attributionControl: false,
       });
 
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-
-      // 🟢 วงกลมสีเขียว รัศมี 200 เมตร ในโหมดเต็มจอ
-      const circle = L.circle([targetLat, targetLng], {
-        radius: 200,
-        color: '#16a34a',
-        fillColor: '#22c55e',
-        fillOpacity: 0.18,
-        weight: 2,
-        dashArray: '6, 6',
-      }).addTo(map);
-      circle.bindPopup('🟢 พื้นที่เช็คอิน (รัศมี 200 เมตร รอบจุดนัดรับ)');
-
-      // Marker จุดนัดรับ
-      const targetIcon = createMarkerIcon(L, '#f97316', `📍 ${meetup.locationName || 'จุดนัดรับ'}`);
-      const targetMarker = L.marker([targetLat, targetLng], { icon: targetIcon }).addTo(map);
-
-      fullMarkersRef.current = { target: targetMarker, circle };
-
-      // Marker ผู้ซื้อ
-      if (buyerCoords?.lat && buyerCoords?.lng) {
-        const bIcon = createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`, -135);
-        fullMarkersRef.current.buyer = L.marker([buyerCoords.lat, buyerCoords.lng], { icon: bIcon }).addTo(map);
-      }
-
-      // Marker ผู้ขาย
-      if (sellerCoords?.lat && sellerCoords?.lng) {
-        const sIcon = createMarkerIcon(L, '#16a34a', `🏷️ ${sellerLabel}`);
-        fullMarkersRef.current.seller = L.marker([sellerCoords.lat, sellerCoords.lng], { icon: sIcon }).addTo(map);
-      }
+      fullMarkersRef.current = {};
+      addBaseLayers(map, L, fullMarkersRef.current);
+      syncLayers(map, L, fullMarkersRef.current);
 
       fullMapInstanceRef.current = map;
       setFullMapReady((v) => v + 1);
-
       fitAll(map, L);
 
-      setTimeout(() => {
-        map.invalidateSize();
-      }, 200);
+      setTimeout(() => map.invalidateSize(), 200);
     });
 
     return () => {
@@ -498,67 +518,32 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
     };
   }, [isFullscreen, targetLat, targetLng, meetup?.locationName]);
 
-  // Update Markers ใน Fullscreen Map
   useEffect(() => {
     const map = fullMapInstanceRef.current;
     const L = fullLeafletRef.current;
     if (!map || !L) return;
-
-    if (fullMarkersRef.current.target) {
-      fullMarkersRef.current.target.setLatLng([targetLat, targetLng]);
-    }
-    if (fullMarkersRef.current.circle) {
-      fullMarkersRef.current.circle.setLatLng([targetLat, targetLng]);
-    }
-
-    if (buyerCoords?.lat && buyerCoords?.lng) {
-      if (!fullMarkersRef.current.buyer) {
-        const icon = createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`, -135);
-        fullMarkersRef.current.buyer = L.marker([buyerCoords.lat, buyerCoords.lng], { icon }).addTo(map);
-      } else {
-        fullMarkersRef.current.buyer.setLatLng([buyerCoords.lat, buyerCoords.lng]);
-        fullMarkersRef.current.buyer.setIcon(createMarkerIcon(L, '#2563eb', `🛒 ${buyerLabel}`, -135));
-      }
-    } else if (fullMarkersRef.current.buyer) {
-      map.removeLayer(fullMarkersRef.current.buyer);
-      delete fullMarkersRef.current.buyer;
-    }
-
-    if (sellerCoords?.lat && sellerCoords?.lng) {
-      if (!fullMarkersRef.current.seller) {
-        const icon = createMarkerIcon(L, '#16a34a', `🏷️ ${sellerLabel}`);
-        fullMarkersRef.current.seller = L.marker([sellerCoords.lat, sellerCoords.lng], { icon }).addTo(map);
-      } else {
-        fullMarkersRef.current.seller.setLatLng([sellerCoords.lat, sellerCoords.lng]);
-        fullMarkersRef.current.seller.setIcon(createMarkerIcon(L, '#16a34a', `🏷️ ${sellerLabel}`));
-      }
-    } else if (fullMarkersRef.current.seller) {
-      map.removeLayer(fullMarkersRef.current.seller);
-      delete fullMarkersRef.current.seller;
-    }
-  }, [fullMapReady, buyerCoords?.lat, buyerCoords?.lng, sellerCoords?.lat, sellerCoords?.lng, buyerLabel, sellerLabel, targetLat, targetLng]);
+    syncLayers(map, L, fullMarkersRef.current);
+  }, [fullMapReady, myCoords?.lat, myCoords?.lng, myCoords?.accuracy, peerCoords?.lat, peerCoords?.lng, buyerLabel, sellerLabel, targetLat, targetLng]);
 
   return (
     <>
-      {/* Container แผนที่ปกติ */}
       <div className="relative group rounded-2xl overflow-hidden border border-gray-200 shadow-2xs z-0 isolate">
         <div ref={mapRef} style={{ height: 'clamp(210px, 58vw, 250px)', width: '100%', maxWidth: '100%', cursor: 'grab' }} />
 
-        {/* ปุ่มควบคุมลอยบนแผนที่ MiniMap */}
         <div className="absolute top-2.5 left-2.5 z-10 flex items-center gap-1.5">
           <button
             type="button"
             onClick={() => {
               if (mapInstanceRef.current) {
-                mapInstanceRef.current.setView([targetLat, targetLng], 16);
+                mapInstanceRef.current.setView([targetLat, targetLng], 17);
               }
             }}
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white/95 text-ink-800 shadow-md backdrop-blur-xs hover:bg-orange-50 hover:text-[#f95721] text-xs font-bold transition-all border border-gray-100"
-            title="ซูมไปยังจุดนัดรับและวงกลม 200 เมตร"
+            title={`ซูมไปยังจุดนัดรับและวงกลม ${CHECKIN_RADIUS_M} เมตร`}
           >
-            🎯 จุดนัดรับ (200ม.)
+            🎯 จุดนัดรับ ({CHECKIN_RADIUS_M}ม.)
           </button>
-          {(buyerCoords?.lat || sellerCoords?.lat) && (
+          {(hasPoint(buyerCoords) || hasPoint(sellerCoords)) && (
             <button
               type="button"
               onClick={() => fitAll(mapInstanceRef.current, leafletRef.current)}
@@ -582,11 +567,10 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
           </button>
         </div>
 
-        {/* แถบคำอธิบายจุดสีบนแผนที่ (Legend) */}
         <div className="absolute bottom-2 left-2 right-2 z-10 flex flex-wrap items-center justify-between gap-1.5 bg-white/90 backdrop-blur-xs px-2.5 py-1.5 rounded-xl border border-gray-100 text-[10px] font-semibold text-ink-700 shadow-xs pointer-events-none">
           <div className="flex flex-wrap items-center gap-2.5">
             <span className="flex items-center gap-1">
-              <span className="w-2.5 h-2.5 rounded-full border border-green-600 bg-green-400/40 inline-block" /> วงกลมเขียว 200ม. (จุดเช็คอิน)
+              <span className="w-2.5 h-2.5 rounded-full border border-green-600 bg-green-400/40 inline-block" /> วงกลมเขียว {CHECKIN_RADIUS_M}ม. (จุดเช็คอิน)
             </span>
             <span className="flex items-center gap-1">
               <span className="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block" /> จุดนัดรับ
@@ -602,10 +586,8 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
         </div>
       </div>
 
-      {/* Modal แผนที่ขนาดเต็มจอ (Fullscreen Modal) */}
       {isFullscreen && (
         <div className="fixed inset-0 z-[9999] flex flex-col bg-white animate-in fade-in duration-200">
-          {/* Header แผนที่เต็มจอ */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white/95 backdrop-blur-md shadow-xs z-10">
             <div className="flex items-center gap-2.5 min-w-0">
               <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-orange-100 text-[#f95721] shrink-0">
@@ -617,7 +599,7 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
                 </h3>
                 <div className="flex flex-wrap items-center gap-3 text-[11px] text-gray-500 mt-0.5">
                   <span className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full border border-green-600 bg-green-400/40 inline-block" /> วงกลม 200 ม. (พื้นที่เช็คอิน)
+                    <span className="w-2 h-2 rounded-full border border-green-600 bg-green-400/40 inline-block" /> วงกลม {CHECKIN_RADIUS_M} ม. (พื้นที่เช็คอิน)
                   </span>
                   <span className="flex items-center gap-1">
                     <span className="w-2 h-2 rounded-full bg-orange-500 inline-block" /> จุดนัดรับ
@@ -637,14 +619,14 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
                 type="button"
                 onClick={() => {
                   if (fullMapInstanceRef.current) {
-                    fullMapInstanceRef.current.setView([targetLat, targetLng], 16);
+                    fullMapInstanceRef.current.setView([targetLat, targetLng], 17);
                   }
                 }}
                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-gray-200 text-xs font-bold text-ink-700 hover:bg-gray-50 transition-colors"
               >
-                🎯 จุดนัดรับ (200ม.)
+                🎯 จุดนัดรับ ({CHECKIN_RADIUS_M}ม.)
               </button>
-              {(buyerCoords?.lat || sellerCoords?.lat) && (
+              {(hasPoint(buyerCoords) || hasPoint(sellerCoords)) && (
                 <button
                   type="button"
                   onClick={() => fitAll(fullMapInstanceRef.current, fullLeafletRef.current)}
@@ -664,11 +646,9 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
             </div>
           </div>
 
-          {/* พื้นที่แผนที่เต็มจอ */}
           <div className="relative flex-1 w-full h-full bg-gray-100">
             <div ref={fullMapRef} className="w-full h-full" style={{ cursor: 'grab' }} />
 
-            {/* Quick Action ด้านล่างของโหมดเต็มจอ */}
             <div className="absolute bottom-5 inset-x-4 z-[400] flex justify-center pointer-events-none">
               <div className="bg-white/95 backdrop-blur-md border border-gray-200 px-4 py-2.5 rounded-2xl shadow-xl flex items-center gap-3 pointer-events-auto">
                 <div className="flex items-center gap-2">
@@ -694,17 +674,17 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
 // ────────────────────────────────
 // Card แสดงระยะห่างเรียลไทม์
 // ────────────────────────────────
-function DistanceCard({ label, distanceMeters, isMe, checkedInAt }) {
+function DistanceCard({ label, distanceMeters, isMe, checkedInAt, accuracy }) {
   const color = isMe ? '#2563eb' : '#16a34a';
   const dotColor = isMe ? 'bg-blue-500' : 'bg-emerald-500';
 
   let distLabel = '—';
   let distColor = '#6b7280';
   if (distanceMeters !== null) {
-    if (distanceMeters <= 50) {
+    if (distanceMeters <= CHECKIN_RADIUS_M) {
       distLabel = `${distanceMeters} ม. ✅`;
       distColor = '#16a34a';
-    } else if (distanceMeters <= 200) {
+    } else if (distanceMeters <= CHECKIN_RADIUS_M * 3) {
       distLabel = `${distanceMeters} ม. 🚶`;
       distColor = '#d97706';
     } else {
@@ -712,6 +692,8 @@ function DistanceCard({ label, distanceMeters, isMe, checkedInAt }) {
       distColor = '#dc2626';
     }
   }
+
+  const accOk = Number.isFinite(accuracy) && accuracy <= CHECKIN_MAX_ACCURACY_M;
 
   return (
     <div style={{
@@ -729,6 +711,11 @@ function DistanceCard({ label, distanceMeters, isMe, checkedInAt }) {
       <div style={{ fontSize: 13, fontWeight: 800, color: distColor }}>
         {distanceMeters !== null ? distLabel : <span style={{ color: '#9ca3af', fontWeight: 400, fontSize: 11 }}>รอสัญญาณ GPS…</span>}
       </div>
+      {isMe && Number.isFinite(accuracy) && (
+        <div style={{ marginTop: 2, fontSize: 10, color: accOk ? '#16a34a' : '#d97706' }}>
+          ความแม่นยำ ±{Math.round(accuracy)} ม. {accOk ? '' : '(ยังไม่แม่นพอสำหรับเช็คอิน)'}
+        </div>
+      )}
       {checkedInAt && (
         <div style={{ marginTop: 4, fontSize: 10, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 3 }}>
           <Clock size={10} />
@@ -757,7 +744,7 @@ export function MeetupCheckInPage() {
   const [cancelling, setCancelling] = useState(false);
   const [showDeliveryConfirm, setShowDeliveryConfirm] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const [serverPenalty, setServerPenalty] = useState(null); // ค่าตัดคะแนนจริงจาก backend (409 requiresConfirm)
+  const [serverPenalty, setServerPenalty] = useState(null);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [, forceTick] = useState(0);
@@ -766,14 +753,29 @@ export function MeetupCheckInPage() {
   const feedbackTimerRef = useRef(null);
 
   // ── GPS & ระยะห่าง ──
-  const [myDistance, setMyDistance] = useState(null);       // เมตร จากจุดนัดรับ
-  const [peerDistance, setPeerDistance] = useState(null);   // เมตร จากจุดนัดรับ (อีกฝ่าย)
-  const [myCoords, setMyCoords] = useState(null);           // { lat, lng }
-  const [peerCoords, setPeerCoords] = useState(null);       // { lat, lng }
+  const [myDistance, setMyDistance] = useState(null);
+  const [peerDistance, setPeerDistance] = useState(null);
+  const [myCoords, setMyCoords] = useState(null);     // { lat, lng, accuracy }
+  const [peerCoords, setPeerCoords] = useState(null); // { lat, lng, accuracy }
   const [gpsActive, setGpsActive] = useState(false);
   const watchIdRef = useRef(null);
 
   const myId = user?.id ?? 'me';
+
+  const meetupRef = useRef(null);
+  meetupRef.current = meetup;
+
+  // พิกัดจุดนัดรับ (ใช้ DB ก่อน)
+  const targetPoint = (() => {
+    if (meetup?.locationLat != null && meetup?.locationLng != null) {
+      return { lat: meetup.locationLat, lng: meetup.locationLng };
+    }
+    const found = meetupPoints.find((p) => p.id === meetup?.locationId);
+    if (found) return { lat: found.lat, lng: found.lng };
+    return { lat: CAMPUS_CENTER.lat, lng: CAMPUS_CENTER.lng };
+  })();
+  const targetRef = useRef(targetPoint);
+  targetRef.current = targetPoint;
 
   const showFeedback = useCallback((type, title, message) => {
     setFeedback({ type, title, message });
@@ -785,7 +787,7 @@ export function MeetupCheckInPage() {
     if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
   }, []);
 
-  // Tick ทุก 30 วิ เพื่ออัปเดต badge ช่วงเวลา และคำเตือนตัดคะแนน
+  // Tick ทุก 30 วิ
   useEffect(() => {
     const t = setInterval(() => forceTick((n) => n + 1), 30000);
     return () => clearInterval(t);
@@ -800,8 +802,6 @@ export function MeetupCheckInPage() {
       if (!found) { setNotFound(true); setMeetup(null); return; }
       const mapped = mapAppointment(found);
       const hydrated = hydrateMeetup(mapped);
-      // ค่าจาก backend (ฐานข้อมูล) เป็นความจริงเดียว: ให้ซ้อนทับค่าจาก store ในเครื่องเสมอ
-      // กัน store เขียนทับวันที่/เวลา/confirmedAt/สถานะ จนคำนวณคำเตือนตัดคะแนนผิด
       setMeetup({ ...(hydrated || {}), ...mapped });
     } catch (err) {
       console.warn('Failed to load meetup detail:', err);
@@ -813,55 +813,93 @@ export function MeetupCheckInPage() {
 
   useEffect(() => { load(); }, [id]);
 
-  // ── เปิด GPS ติดตามระยะห่าง ──
-  const startGps = useCallback((targetLat, targetLng) => {
-    if (!navigator.geolocation || gpsActive) return;
+  // ── GPS: เริ่ม/หยุด ──
+  const clearGpsWatch = useCallback(() => {
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+  }, []);
+
+  const stopGps = useCallback(() => {
+    clearGpsWatch();
+    setGpsActive(false);
+    setMyCoords(null);
+    setMyDistance(null);
+  }, [clearGpsWatch]);
+
+  const startGps = useCallback(() => {
+    if (!navigator.geolocation) {
+      showFeedback('warning', 'อุปกรณ์ไม่รองรับ GPS', 'กรุณาเปิดตำแหน่งที่ตั้งบนอุปกรณ์แล้วลองอีกครั้ง');
+      return;
+    }
+    if (watchIdRef.current !== null) return;
     setGpsActive(true);
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
         const { latitude, longitude, accuracy } = pos.coords;
-        setMyCoords({ lat: latitude, lng: longitude });
-        if (targetLat && targetLng) {
-          const dist = Math.round(haversineDistanceMeters(latitude, longitude, targetLat, targetLng));
-          setMyDistance(dist);
-        }
-        // ส่งพิกัดผ่าน Socket ให้อีกฝ่ายเห็น
+        setMyCoords({ lat: latitude, lng: longitude, accuracy });
+        const m = meetupRef.current;
         emitLiveLocation({
           meetupId: id,
           userId: myId,
           userName: user?.username || user?.display_name || 'ผู้ใช้',
-          role: meetup ? (String(meetup.buyerId) === String(myId) ? 'buyer' : 'seller') : 'buyer',
+          role: m && String(m.buyerId) === String(myId) ? 'buyer' : 'seller',
           lat: latitude,
           lng: longitude,
           accuracy,
-          targetPoint: { lat: targetLat, lng: targetLng },
+          targetPoint: { lat: targetRef.current.lat, lng: targetRef.current.lng },
         });
       },
-      (err) => { console.warn('GPS error:', err.message); },
+      (err) => {
+        console.warn('GPS error:', err.message);
+        if (err.code === 1) {
+          clearGpsWatch();
+          setGpsActive(false);
+          showFeedback('warning', 'ไม่ได้รับอนุญาตใช้ตำแหน่ง', 'กรุณาอนุญาตให้เว็บไซต์เข้าถึงตำแหน่ง แล้วกดเปิด GPS ใหม่');
+        }
+      },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
-  }, [id, myId, user, meetup, gpsActive]);
+  }, [id, myId, user, showFeedback, clearGpsWatch]);
 
-  // ── รับพิกัดอีกฝ่ายผ่าน Socket ──
+  // ปิด GPS เมื่อออกจากหน้า (เฉพาะตอน unmount เท่านั้น)
+  useEffect(() => () => {
+    if (watchIdRef.current !== null && navigator.geolocation) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+  }, []);
+
+  // ── คำนวณระยะห่างใหม่ทุกครั้งที่พิกัดหรือจุดนัดเปลี่ยน ──
+  useEffect(() => {
+    if (myCoords) {
+      setMyDistance(Math.round(haversineDistanceMeters(myCoords.lat, myCoords.lng, targetPoint.lat, targetPoint.lng)));
+    } else {
+      setMyDistance(null);
+    }
+  }, [myCoords, targetPoint.lat, targetPoint.lng]);
+
+  useEffect(() => {
+    if (peerCoords) {
+      setPeerDistance(Math.round(haversineDistanceMeters(peerCoords.lat, peerCoords.lng, targetPoint.lat, targetPoint.lng)));
+    } else {
+      setPeerDistance(null);
+    }
+  }, [peerCoords, targetPoint.lat, targetPoint.lng]);
+
+  // ── Socket: รับพิกัดอีกฝ่าย + สถานะเช็คอิน (ไม่เกี่ยวกับ GPS ของเรา) ──
   useEffect(() => {
     if (!id || !myId) return;
     const socket = getSocket();
     joinMeetupTracking({ meetupId: id, userId: myId });
 
     const handleLocationUpdate = (data) => {
-      if (String(data.userId) !== String(myId)) {
-        if (data.lat && data.lng) {
-          setPeerCoords({ lat: data.lat, lng: data.lng });
-        }
-        // คำนวณระยะห่างอีกฝ่ายจากจุดนัดรับ
-        if (meetup?.locationLat && data.lat) {
-          const dist = Math.round(
-            haversineDistanceMeters(data.lat, data.lng, meetup.locationLat, meetup.locationLng)
-          );
-          setPeerDistance(dist);
-        } else if (data.distanceToPointMeters != null) {
-          setPeerDistance(Math.round(data.distanceToPointMeters));
-        }
+      if (String(data.userId) === String(myId)) return;
+      const lat = Number(data.lat);
+      const lng = Number(data.lng);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        setPeerCoords({ lat, lng, accuracy: Number.isFinite(Number(data.accuracy)) ? Number(data.accuracy) : undefined });
       }
     };
 
@@ -881,24 +919,20 @@ export function MeetupCheckInPage() {
       });
     };
 
-    socket.on('live_location_update', handleLocationUpdate);
-    socket.on('peer_checked_in', handlePeerCheckIn);
-    socket.on('meetup_status_update', handlePeerCheckIn);
-    socket.on('meetup_updated', handlePeerCheckIn);
+    socket?.on('live_location_update', handleLocationUpdate);
+    socket?.on('peer_checked_in', handlePeerCheckIn);
+    socket?.on('meetup_status_update', handlePeerCheckIn);
+    socket?.on('meetup_updated', handlePeerCheckIn);
     return () => {
-      socket.off('live_location_update', handleLocationUpdate);
-      socket.off('peer_checked_in', handlePeerCheckIn);
-      socket.off('meetup_status_update', handlePeerCheckIn);
-      socket.off('meetup_updated', handlePeerCheckIn);
+      socket?.off('live_location_update', handleLocationUpdate);
+      socket?.off('peer_checked_in', handlePeerCheckIn);
+      socket?.off('meetup_status_update', handlePeerCheckIn);
+      socket?.off('meetup_updated', handlePeerCheckIn);
       leaveMeetupTracking({ meetupId: id, userId: myId });
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-        watchIdRef.current = null;
-      }
     };
-  }, [id, myId, meetup?.locationLat, meetup?.locationLng]);
+  }, [id, myId]);
 
-  // ── Auto-poll ทุก 15 วินาที เพื่อดึงสถานะเช็คอินแบบ Realtime แม้ Socket หลุด ──
+  // ── Auto-poll ทุก 15 วินาที ──
   useEffect(() => {
     if (!id) return;
     const interval = setInterval(async () => {
@@ -914,6 +948,8 @@ export function MeetupCheckInPage() {
             if (
               mapped.buyerCheckedIn !== prev.buyerCheckedIn ||
               mapped.sellerCheckedIn !== prev.sellerCheckedIn ||
+              mapped.buyerConfirmedDelivery !== prev.buyerConfirmedDelivery ||
+              mapped.sellerConfirmedDelivery !== prev.sellerConfirmedDelivery ||
               mapped.status !== prev.status ||
               mapped.confirmedAt !== prev.confirmedAt
             ) {
@@ -930,19 +966,6 @@ export function MeetupCheckInPage() {
     }, 15000);
     return () => clearInterval(interval);
   }, [id]);
-
-  // ── ปิด GPS ──
-  const stopGps = useCallback(() => {
-    if (watchIdRef.current !== null) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
-      watchIdRef.current = null;
-    }
-    setGpsActive(false);
-    setMyCoords(null);
-    setMyDistance(null);
-  }, []);
-
-  // ไม่เปิด GPS อัตโนมัติ — ให้ผู้ใช้เป็นคนกดยืนยันเปิดด้วยตนเองทุกครั้ง
 
   // ── Loading / Not found ──
   if (loading) {
@@ -987,9 +1010,10 @@ export function MeetupCheckInPage() {
   const otherCheckedInAt = role === 'buyer' ? meetup.sellerCheckedInAt : meetup.buyerCheckedInAt;
   const bothCheckedIn = !!meetup.buyerCheckedIn && !!meetup.sellerCheckedIn;
 
+  // FIX: ใช้เฉพาะค่าที่มาจากธุรกรรมจริง (buyer_received / seller_handed_over)
   const myConfirmedDelivery = role === 'buyer'
-    ? Boolean(meetup.buyerConfirmedDelivery || meetup.buyerReceived)
-    : Boolean(meetup.sellerConfirmedDelivery || meetup.sellerHandedOver);
+    ? Boolean(meetup.buyerConfirmedDelivery)
+    : Boolean(meetup.sellerConfirmedDelivery);
 
   const userReviewFromDb = Array.isArray(meetup.reviews)
     ? meetup.reviews.find((r) => String(r.reviewer_id) === String(myId))
@@ -1001,22 +1025,7 @@ export function MeetupCheckInPage() {
 
   const meetupAccepted = isMeetupAccepted(meetup);
 
-  // คะแนนที่จะถูกหักถ้ายกเลิกตอนนี้ (null = ยกเลิกได้โดยไม่เสียคะแนน)
-  // ถ้า backend เคยตอบค่าจริงมาแล้ว (serverPenalty) ให้ใช้ค่านั้นก่อน
   const cancelPenalty = serverPenalty || getLateCancelPenalty(meetup, myCheckedIn);
-
-  // debug: ดูค่าที่หน้านี้ใช้คำนวณ (เปิด Console ในเบราว์เซอร์) — ลบออกได้เมื่อแก้เสร็จ
-  console.debug('[cancel-penalty]', {
-    status: meetup.status,
-    statusCode: meetup.statusCode,
-    date: meetup.date,
-    time: meetup.time,
-    confirmedAt: meetup.confirmedAt,
-    myCheckedIn,
-    minutesLeft: getMinutesUntilMeetup(meetup),
-    minutesSinceConfirm: meetup.confirmedAt ? (Date.now() - new Date(meetup.confirmedAt).getTime()) / 60000 : null,
-    cancelPenalty,
-  });
 
   // ── เช็คอิน ──
   const handleCheckIn = async () => {
@@ -1024,23 +1033,20 @@ export function MeetupCheckInPage() {
     checkInInFlightRef.current = true;
     setCheckingIn(true);
     try {
-      if (!navigator.geolocation) {
-        throw new Error('อุปกรณ์นี้ไม่รองรับ GPS กรุณาเปิดตำแหน่งที่ตั้งบนอุปกรณ์แล้วลองอีกครั้ง');
-      }
-
-      const pos = await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 18000,
-          maximumAge: 15000,
-        });
-      });
-      const coordinates = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      // อ่านตำแหน่งสดที่แม่นที่สุด (สูงสุด 12 วินาที) ไม่ใช้ค่าแคช
+      const pos = await getBestPosition({ maxWaitMs: 12000, goodAccuracy: 20 });
+      const coordinates = {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracy: pos.coords.accuracy,
+      };
       if (!Number.isFinite(coordinates.lat) || !Number.isFinite(coordinates.lng)) {
         throw new Error('อ่านพิกัด GPS ไม่สำเร็จ กรุณาลองใหม่');
       }
+      if (Number.isFinite(coordinates.accuracy) && coordinates.accuracy > CHECKIN_MAX_ACCURACY_M) {
+        throw new Error(`สัญญาณ GPS ยังไม่แม่นพอ (คลาดเคลื่อน ±${Math.round(coordinates.accuracy)} ม. ต้องไม่เกิน ${CHECKIN_MAX_ACCURACY_M} ม.) กรุณาออกที่โล่ง เปิด GPS แบบความแม่นยำสูง แล้วลองใหม่`);
+      }
 
-      // ให้ backend เป็นผู้ตรวจเวลาและระยะ 200 เมตร แล้วค่อยอัปเดต UI เมื่อบันทึกสำเร็จ
       const result = await api.checkInMeetup(meetup.id, coordinates);
       const checkInData = result.checkInData || {};
       const checkedInAt = role === 'buyer'
@@ -1078,14 +1084,14 @@ export function MeetupCheckInPage() {
             : null;
       const message = geoMessage || err?.message || 'เกิดข้อผิดพลาดในการเช็คอิน กรุณาลองอีกครั้ง';
       const distance = message.match(/([\d,]+)\s*เมตร/);
-      if (message.includes('200 เมตร') || message.includes('TOO_FAR') || distance) {
+      if (message.includes(`${CHECKIN_RADIUS_M} เมตร`) || message.includes('TOO_FAR') || distance) {
         showFeedback(
           'warning',
           'คุณยังอยู่นอกระยะเช็คอิน',
-          `${distance ? `ตอนนี้อยู่ห่างประมาณ ${distance[1]} เมตร ` : ''}กรุณาเข้าใกล้จุดนัดรับให้อยู่ภายใน 200 เมตร แล้วลองเช็คอินอีกครั้ง`
+          `${distance ? `ตอนนี้อยู่ห่างประมาณ ${distance[1]} เมตร ` : ''}กรุณาเข้าใกล้จุดนัดรับให้อยู่ภายใน ${CHECKIN_RADIUS_M} เมตร แล้วลองเช็คอินอีกครั้ง`
         );
       } else if (/location|position|gps|พิกัด|ตำแหน่ง/i.test(message)) {
-        showFeedback('warning', 'อ่านตำแหน่งไม่สำเร็จ', `${message} ตรวจสอบการอนุญาตใช้ตำแหน่งและลองใหม่อีกครั้ง`);
+        showFeedback('warning', 'อ่านตำแหน่งไม่สำเร็จ', message);
       } else {
         showFeedback('error', 'เช็คอินไม่สำเร็จ', message);
       }
@@ -1122,7 +1128,6 @@ export function MeetupCheckInPage() {
 
       setShowDeliveryConfirm(false);
       showFeedback('success', 'ยืนยันสำเร็จแล้ว!', 'จบงานของคุณแล้ว คุณสามารถให้คะแนนรีวิวเพื่อรับคะแนนความสำเร็จได้ทันที (หรือข้ามได้)');
-      // ถ้ากดได้รับสินค้าจะเด้งไปให้รีวิวทันที
       setShowReviewModal(true);
     } catch (err) {
       showFeedback('warning', 'ยังยืนยันส่งมอบไม่ได้', err.message || 'เกิดข้อผิดพลาดในการยืนยันรับสินค้า');
@@ -1164,7 +1169,6 @@ export function MeetupCheckInPage() {
     showFeedback('success', 'ส่งรีวิวสำเร็จ! 🎉', 'คุณได้รับคะแนนความสำเร็จและคะแนนความน่าเชื่อถือเรียบร้อยแล้ว');
   };
 
-  // ── เปิด/ปิด dialog ยกเลิกนัด ──
   const openCancelDialog = () => {
     setServerPenalty(null);
     setShowCancelConfirm(true);
@@ -1175,9 +1179,6 @@ export function MeetupCheckInPage() {
     setServerPenalty(null);
   };
 
-  // ── ยกเลิกนัด (ผ่าน ConfirmDialog) ──
-  // ถ้าจะโดนตัดคะแนน ต้องส่ง confirmPenalty: true (ผู้ใช้เห็นคำเตือนแล้วกดยอมรับ)
-  // ถ้า backend เห็นว่าต้องตัดคะแนนแต่หน้านี้ยังไม่รู้ จะตอบ 409 กลับมา แล้ว dialog จะเปลี่ยนเป็นคำเตือนให้ยืนยันอีกครั้ง
   const executeCancel = async () => {
     setCancelling(true);
     try {
@@ -1186,9 +1187,6 @@ export function MeetupCheckInPage() {
         cancelRequest(meetup.id);
       } catch (e) {}
 
-      // ดึงข้อมูลผู้ใช้ล่าสุดจาก backend (รวมคะแนนความน่าเชื่อถือ) มาอัปเดตใน authStore
-      // เพื่อให้คะแนนบนหน้าเว็บตรงกับฐานข้อมูลทันทีหลังโดนตัดคะแนน ไม่ต้องรีเฟรชหน้า
-      // verifyToken จะ logout เฉพาะตอน 401/403 เท่านั้น ถ้าเน็ตสะดุดจะไม่กระทบ session
       try {
         await useAuthStore.getState().verifyToken();
       } catch (e) {}
@@ -1197,7 +1195,6 @@ export function MeetupCheckInPage() {
       navigate('/meetups');
     } catch (err) {
       if (err?.status === 409 && err?.data?.requiresConfirm) {
-        // dialog ยังเปิดอยู่ และเปลี่ยนเป็นข้อความเตือนตัดคะแนนด้วยค่าจริงจาก backend
         setServerPenalty(normalizeServerPenalty(err.data, meetup));
         return;
       }
@@ -1267,7 +1264,7 @@ export function MeetupCheckInPage() {
         </div>
       </div>
 
-      {/* ── ขั้นตอนการนัดรับสินค้า ─────────────────────── */}
+      {/* ── ขั้นตอนการนัดรับสินค้า ── */}
       <div style={{ background: '#fff', borderRadius: 16, padding: '12px 16px', marginBottom: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
         <p style={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', marginBottom: 10, letterSpacing: 1 }}>ขั้นตอนการนัดรับสินค้า</p>
         <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -1299,7 +1296,6 @@ export function MeetupCheckInPage() {
           ))}
         </div>
       </div>
-
 
       {/* แผนที่ + เวลา */}
       <div className="cm-card p-4 mb-4">
@@ -1354,16 +1350,7 @@ export function MeetupCheckInPage() {
             ) : (
               <button
                 type="button"
-                onClick={() => {
-                  let targetLat = meetup.locationLat;
-                  let targetLng = meetup.locationLng;
-                  if (!targetLat || !targetLng) {
-                    const found = meetupPoints.find((p) => p.id === meetup.locationId);
-                    if (found) { targetLat = found.lat; targetLng = found.lng; }
-                    else { targetLat = CAMPUS_CENTER.lat; targetLng = CAMPUS_CENTER.lng; }
-                  }
-                  startGps(targetLat, targetLng);
-                }}
+                onClick={startGps}
                 className="text-[11px] font-bold text-white bg-[#f95721] hover:bg-orange-600 px-3 py-1 rounded-lg shadow-2xs transition-colors flex items-center gap-1"
                 title="กดเพื่อขอสิทธิ์เข้าถึงพิกัด GPS"
               >
@@ -1380,6 +1367,7 @@ export function MeetupCheckInPage() {
             distanceMeters={myDistance}
             isMe={true}
             checkedInAt={myCheckedInAt}
+            accuracy={myCoords?.accuracy}
           />
           <DistanceCard
             label={`${otherName} (${role === 'buyer' ? 'ผู้ขาย' : 'ผู้ซื้อ'})`}
@@ -1390,7 +1378,7 @@ export function MeetupCheckInPage() {
         </div>
 
         <p className="mt-2 text-[10px] text-ink-400">
-          💡 ระยะห่างของอีกฝ่ายจะแสดงเมื่อเขาเปิด GPS บนอุปกรณ์ของตัวเองแล้ว
+          💡 ระยะห่างของอีกฝ่ายจะแสดงเมื่อเขาเปิด GPS บนอุปกรณ์ของตัวเองแล้ว · ต้องอยู่ภายใน {CHECKIN_RADIUS_M} เมตร และ GPS คลาดเคลื่อนไม่เกิน {CHECKIN_MAX_ACCURACY_M} เมตรจึงเช็คอินได้ (แนะนำให้ใช้มือถือ)
         </p>
       </div>
 
@@ -1408,7 +1396,6 @@ export function MeetupCheckInPage() {
           <CheckInWindowBadge status={checkInWindow.status} />
         </div>
 
-        {/* ข้อมูลเวลาและกำหนดเส้นตายเช็คอิน */}
         <div className="flex flex-wrap items-center gap-2 rounded-xl bg-orange-50/70 border border-orange-100 px-3.5 py-2.5 text-xs">
           <Clock size={15} className="text-[#f95721] shrink-0" />
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1422,7 +1409,6 @@ export function MeetupCheckInPage() {
           </div>
         </div>
 
-        {/* แสดงสถานะแยก 2 ฝั่งชัดเจน (ผู้ซื้อ vs ผู้ขาย) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {/* ฝั่งผู้ซื้อ */}
           <div className={`p-3.5 rounded-2xl border transition-all ${
@@ -1511,7 +1497,6 @@ export function MeetupCheckInPage() {
           </div>
         </div>
 
-        {/* ปุ่มเช็คอินสำหรับตนเอง */}
         {isNoShow ? (
           <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 space-y-1">
             <p className="font-bold flex items-center gap-1.5 text-rose-900">
@@ -1541,7 +1526,7 @@ export function MeetupCheckInPage() {
             >
               <span className="flex items-center justify-center gap-1.5">
                 <Navigation size={15} className={checkingIn ? 'animate-spin' : 'animate-pulse'} />
-                {checkingIn ? 'กำลังตรวจสอบพิกัด GPS...' : '📍 กดเช็คอินยืนยันว่าฉันถึงจุดนัดพบแล้ว'}
+                {checkingIn ? 'กำลังอ่านพิกัด GPS ให้แม่นยำ...' : '📍 กดเช็คอินยืนยันว่าฉันถึงจุดนัดพบแล้ว'}
               </span>
             </Button>
           </div>
@@ -1554,7 +1539,7 @@ export function MeetupCheckInPage() {
         )}
       </div>
 
-      {/* ─── ยืนยันส่งมอบสินค้า (เฉพาะนัดที่ยังไม่ถูกตัดจบ) ─── */}
+      {/* ─── ยืนยันส่งมอบสินค้า ─── */}
       {!isNoShow && (
         <div className="cm-card p-4 space-y-3 mb-4">
           <p className="text-sm font-bold text-ink-900 flex items-center gap-1.5">
@@ -1622,7 +1607,6 @@ export function MeetupCheckInPage() {
             ถ้าไม่สะดวกตามนัดหรือต้องการเปลี่ยนวัน/เวลา ให้ยกเลิกแล้วสร้างนัดใหม่ · ยกเลิกได้เฉพาะก่อนเช็คอิน
           </p>
 
-          {/* คำเตือนตัดคะแนน: แสดงให้เห็นก่อนกดยกเลิก */}
           {cancelPenalty ? (
             <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5">
               <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-600" />
@@ -1648,19 +1632,16 @@ export function MeetupCheckInPage() {
         </div>
       )}
 
-      {/* ─── ปุ่มไปแชท + ส่งสรุปนัดรับ ─── */}
+      {/* ─── ปุ่มไปแชท ─── */}
       <div className="cm-card p-4 mb-4">
         <p className="text-sm font-bold text-ink-900 mb-3 flex items-center gap-1.5">
           <MessageCircle size={16} className="text-brand-500" /> ติดต่อคู่ค้า
         </p>
         <div className="flex flex-col sm:flex-row gap-2">
-          {/* ปุ่มไปแชท + ส่งสรุปนัดรับ */}
           <button
             type="button"
-            onClick={async () => {
+            onClick={() => {
               const partnerId = role === 'buyer' ? meetup.sellerId : meetup.buyerId;
-              // การ์ดนัดรับในแชทถูกส่งจากเซิร์ฟเวอร์ตอนสร้าง/ยืนยัน/ยกเลิกนัดอยู่แล้ว
-              // จึงไม่ส่งซ้ำจากปุ่มนี้ (กันการ์ดซ้ำในห้องแชท)
               navigate(`/chat?productId=${meetup.productId}&partnerId=${partnerId}`);
             }}
             className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-[#f95721] hover:bg-orange-600 active:bg-orange-700 text-white text-sm font-bold px-4 py-2.5 transition-colors shadow-xs"
@@ -1668,7 +1649,6 @@ export function MeetupCheckInPage() {
             <MessageCircle size={16} />
             แชทกับ{role === 'buyer' ? 'ผู้ขาย' : 'ผู้ซื้อ'} ({otherName})
           </button>
-
         </div>
       </div>
 
@@ -1685,7 +1665,7 @@ export function MeetupCheckInPage() {
         loading={completing}
       />
 
-      {/* ─── Review Modal (เด้งขึ้นมาทันทีหลังกดยืนยันรับสินค้า) ─── */}
+      {/* ─── Review Modal ─── */}
       <ReviewModal
         open={showReviewModal}
         onClose={() => {
@@ -1695,7 +1675,7 @@ export function MeetupCheckInPage() {
         onSubmit={handleReviewSubmit}
       />
 
-      {/* ─── Confirm Cancel Dialog (เตือนตัดคะแนนถ้าเข้าเงื่อนไข) ─── */}
+      {/* ─── Confirm Cancel Dialog ─── */}
       <ConfirmDialog
         open={showCancelConfirm}
         onClose={closeCancelDialog}
