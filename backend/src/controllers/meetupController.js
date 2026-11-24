@@ -1450,6 +1450,13 @@ async function completeMeetup(req, res, next) {
       await supabase.from("appointments").update({
         status_id: 3,
       }).eq("id", id);
+
+      // ส่งข้อความแจ้งเตือนสรุปการส่งมอบเสร็จสิ้นลงห้องแชท
+      await postMeetupChatMessage({
+        appointmentId: Number(id),
+        event: "completed",
+        actorId: req.user.id,
+      });
     } else {
       await supabase.from("appointments").update({
         status_id: 3,

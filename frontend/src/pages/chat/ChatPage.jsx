@@ -56,6 +56,7 @@ function previewText(text, type) {
     try {
       const p = JSON.parse(raw);
       if (p.event === "confirmed") return "✅ นัดรับได้รับการยืนยันแล้ว";
+      if (p.event === "completed") return "✅ นัดรับสินค้าเสร็จสิ้นแล้ว";
       if (p.event === "rejected") return "❌ ปฏิเสธคำขอนัดรับ";
       if (p.event === "cancelled") return "❌ ยกเลิกคำขอนัดรับ";
       return "📅 คำขอนัดรับสินค้า";
@@ -640,21 +641,42 @@ export function ChatPage() {
           || [mt.buyerId, mt.sellerId].some((x) => String(x) === String(active.partnerId));
         return mine && withPartner
           && String(pid) === String(active.productId)
-          && ["pending", "confirmed"].includes(st)
+          && ["pending", "confirmed", "completed"].includes(st)
           && !referenced.has(String(mt.id));
       })
-      .map((mt) => ({
-        id: `meetup-${mt.id}`,
-        from: String(mt.createdBy ?? mt.created_by) === String(user.id) ? "me" : "them",
-        senderName: null,
-        text: JSON.stringify({ meetupId: mt.id, event: "requested" }),
-        type: "MEETUP_SUMMARY",
-        image: null,
-        time: mt.created_at
-          ? new Date(mt.created_at).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })
-          : "",
-      }));
-    return synthetic.length ? [...activeMessages, ...synthetic] : activeMessages;
+      .map((mt) => {
+        const st = String(mt.status || "").toLowerCase();
+        const event = st === "completed" ? "completed" : st === "confirmed" ? "confirmed" : "requested";
+        return {
+          id: `meetup-${mt.id}`,
+          from: String(mt.createdBy ?? mt.created_by) === String(user.id) ? "me" : "them",
+          senderName: null,
+          text: JSON.stringify({
+            kind: "MEETUP",
+            meetupId: mt.id,
+            event,
+            status: mt.status || st,
+            productId: mt.productId ?? mt.product_id,
+            productTitle: mt.productTitle || mt.product_title || active?.productTitle,
+            price: mt.price ?? mt.agreedPrice ?? mt.productPrice ?? active?.productPrice,
+            date: mt.date || mt.appointment_date,
+            time: mt.time || mt.appointment_time,
+            locationName: mt.locationName || mt.location?.name,
+          }),
+          type: "MEETUP_SUMMARY",
+          image: null,
+          time: mt.created_at
+            ? new Date(mt.created_at).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })
+            : "",
+          created_at: mt.created_at || null,
+        };
+      });
+    const combined = synthetic.length ? [...activeMessages, ...synthetic] : activeMessages;
+    return [...combined].sort((a, b) => {
+      const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return ta - tb;
+    });
   })();
 
   const loadOlderMessages = async () => {

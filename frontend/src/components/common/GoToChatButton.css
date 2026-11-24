@@ -1,0 +1,85 @@
+/* ==========================================================================
+   ChatFlyButton / GoToChatButton
+   สไตล์และแอนิเมชันปุ่มจรวดบินสำหรับปุ่ม "ไปยังแชท" (UIverse style)
+   ========================================================================== */
+
+.chat-fly-btn {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  background-color: #fff8e1;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+  padding: 0.45em 0.95em 0.45em 0.8em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  overflow: hidden;
+  transition: all 0.25s ease-in-out;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  line-height: 1.25;
+  user-select: none;
+  outline: none;
+}
+
+.chat-fly-btn:hover {
+  background-color: #fef3c7;
+  border-color: #fdba74;
+  box-shadow: 0 2px 6px rgba(249, 115, 22, 0.15);
+}
+
+.chat-fly-btn .svg-wrapper-1 {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-fly-btn .svg-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-fly-btn svg {
+  display: block;
+  transform-origin: center center;
+  transition: transform 0.3s ease-in-out;
+  color: #ea580c;
+}
+
+.chat-fly-btn span {
+  display: block;
+  margin-left: 0.35em;
+  white-space: nowrap;
+  transition: transform 0.3s ease-in-out, opacity 0.25s ease-in-out;
+}
+
+/* Hover effects */
+.chat-fly-btn:hover .svg-wrapper {
+  animation: fly-1 0.6s ease-in-out infinite alternate;
+}
+
+.chat-fly-btn:hover svg {
+  transform: translateX(1.2em) rotate(45deg) scale(1.1);
+}
+
+.chat-fly-btn:hover span {
+  transform: translateX(6.5em);
+  opacity: 0;
+}
+
+/* Active / Click effect */
+.chat-fly-btn:active {
+  transform: scale(0.95);
+}
+
+@keyframes fly-1 {
+  from {
+    transform: translateY(0.12em);
+  }
+  to {
+    transform: translateY(-0.12em);
+  }
+}

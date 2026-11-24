@@ -8,6 +8,7 @@ import { MeetupStatusBadge } from '@/components/meetup/MeetupStatusBadge';
 import { ReviewModal } from '@/components/meetup/ReviewModal';
 import { EmptyState } from '@/components/common/EmptyState';
 import { Button } from '@/components/common/Button';
+import { GoToChatButton } from '@/components/common/GoToChatButton';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { CAMPUS_CENTER, meetupPoints } from '@/constants/meetupPoints';
 import { api } from '@/lib/api';
@@ -770,13 +771,10 @@ export function MeetupListPage() {
                     <Button size="sm" onClick={() => handleRespond(m, 'confirm')}>✅ ยืนยันนัดหมาย</Button>
                     <Button size="sm" variant="ghost" onClick={() => handleRespond(m, 'reject')}>❌ ปฏิเสธ</Button>
                     {m.productId && (
-                      <button
-                        type="button"
+                      <GoToChatButton
                         onClick={() => navigate(`/chat?productId=${m.productId}&partnerId=${m.buyerId}`)}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-orange-200 bg-white hover:bg-orange-100 px-3 py-1.5 text-xs font-bold text-orange-700 transition-colors shadow-2xs ml-auto"
-                      >
-                        💬 ไปยังแชท
-                      </button>
+                        className="ml-auto"
+                      />
                     )}
                   </div>
                 </div>
@@ -787,13 +785,9 @@ export function MeetupListPage() {
                   <p className="text-xs text-ink-500 flex-1">⏳ รอผู้ขายตอบรับคำขอนัดรับ...</p>
                   <div className="flex items-center gap-2">
                     {m.productId && (
-                      <button
-                        type="button"
+                      <GoToChatButton
                         onClick={() => navigate(`/chat?productId=${m.productId}&partnerId=${m.sellerId}`)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-orange-200 bg-white hover:bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-700 transition-colors shadow-2xs"
-                      >
-                        💬 ไปยังแชท
-                      </button>
+                      />
                     )}
                     <button
                       onClick={() => handleCancelClick(m, role)}
@@ -983,14 +977,9 @@ export function MeetupListPage() {
               {/* ── ปุ่มไปยังแชท (สำหรับสถานะอื่นๆ ที่ยังไม่มีปุ่มในกล่อง) ── */}
               {m.productId && m.status !== 'pending' && (
                 <div className="pt-1 border-t border-gray-100 flex justify-end">
-                  <button
-                    type="button"
+                  <GoToChatButton
                     onClick={() => navigate(`/chat?productId=${m.productId}&partnerId=${role === 'buyer' ? m.sellerId : m.buyerId}`)}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-orange-200 bg-orange-50 hover:bg-orange-100 px-3.5 py-1.5 text-xs font-bold text-orange-700 transition-colors shadow-2xs"
-                    title="ไปยังห้องแชทของสินค้านี้"
-                  >
-                    💬 ไปยังแชท
-                  </button>
+                  />
                 </div>
               )}
 

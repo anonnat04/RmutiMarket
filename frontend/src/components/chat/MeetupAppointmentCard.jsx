@@ -261,18 +261,36 @@ export function MeetupAppointmentCard({ data, currentUserId, onActionDone }) {
 
   // ─────────── การ์ดสรุปผลที่ระบบส่งอัตโนมัติ ───────────
   if (isSummary) {
-    const confirmed = data.event === "confirmed";
+    const isCompleted = status === "completed" || data.event === "completed";
+    const confirmed = data.event === "confirmed" || isCompleted;
     return (
-      <div className={`${wrapper} ${confirmed ? "border-emerald-200" : "border-red-200"}`}>
+      <div className={`${wrapper} ${isCompleted ? "border-emerald-300" : confirmed ? "border-emerald-200" : "border-red-200"}`}>
         <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-3 mb-3">
           <h4 className={`font-extrabold text-sm flex items-center gap-1.5 ${confirmed ? "text-emerald-700" : "text-red-600"}`}>
-            {confirmed ? "✅ นัดรับได้รับการยืนยันแล้ว" : data.event === "rejected" ? "❌ คำขอนัดรับถูกปฏิเสธ" : "❌ คำขอนัดรับถูกยกเลิก"}
+            {isCompleted
+              ? "✅ นัดรับสินค้าเสร็จสิ้นแล้ว"
+              : confirmed
+              ? "✅ นัดรับได้รับการยืนยันแล้ว"
+              : data.event === "rejected"
+              ? "❌ คำขอนัดรับถูกปฏิเสธ"
+              : "❌ คำขอนัดรับถูกยกเลิก"}
           </h4>
-          <StatusBadge status={confirmed ? "confirmed" : "cancelled"} />
+          <StatusBadge status={isCompleted ? "completed" : confirmed ? "confirmed" : "cancelled"} />
         </div>
         <DetailRows data={data} />
         <div className="mt-3.5 pt-3 border-t border-gray-100 space-y-2">
-          {confirmed ? (
+          {isCompleted ? (
+            <div className="space-y-2">
+              <p className="text-[11px] text-emerald-600 text-center font-bold">🎉 ซื้อขายและส่งมอบสินค้าเสร็จสมบูรณ์แล้ว</p>
+              <button
+                type="button"
+                onClick={goCheckIn}
+                className="w-full py-2.5 px-4 rounded-xl border border-emerald-200 bg-white hover:bg-emerald-50 text-emerald-700 font-bold text-xs flex items-center justify-center gap-2 shadow-2xs transition-colors cursor-pointer"
+              >
+                📍 ดู Safe Point และรายละเอียดนัดรับ
+              </button>
+            </div>
+          ) : confirmed ? (
             status === "cancelled" || status === "no_show" ? (
               <p className="text-[11px] text-red-500 text-center font-medium">นัดหมายนี้ถูกยกเลิกภายหลัง สามารถสร้างคำขอนัดรับใหม่ได้</p>
             ) : (
@@ -296,14 +314,17 @@ export function MeetupAppointmentCard({ data, currentUserId, onActionDone }) {
   }
 
   // ─────────── การ์ดคำขอนัดรับ (กดได้ทันที) ───────────
-  const confirmedState = status === "confirmed" || status === "completed";
+  const isCompleted = status === "completed";
+  const confirmedState = status === "confirmed" || isCompleted;
   const cancelledState = status === "cancelled";
 
   return (
     <div className={`${wrapper} border-gray-200/90 transition-all`}>
       <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-3 mb-3">
         <h4 className="font-extrabold text-sm text-gray-900 flex items-center gap-1.5">
-          {confirmedState ? (
+          {isCompleted ? (
+            <span className="text-emerald-700">✅ นัดรับสินค้าเสร็จสิ้นแล้ว</span>
+          ) : confirmedState ? (
             <span className="text-emerald-700">✅ นัดรับได้รับการยืนยันแล้ว</span>
           ) : cancelledState ? (
             <span className="text-red-600">❌ คำขอนัดรับถูกปฏิเสธ/ยกเลิก</span>
@@ -325,7 +346,18 @@ export function MeetupAppointmentCard({ data, currentUserId, onActionDone }) {
       )}
 
       <div className="mt-3.5 pt-3 border-t border-gray-100">
-        {confirmedState ? (
+        {isCompleted ? (
+          <div className="space-y-2">
+            <p className="text-[11px] text-emerald-600 text-center font-bold">🎉 ซื้อขายและส่งมอบสินค้าเสร็จสมบูรณ์แล้ว</p>
+            <button
+              type="button"
+              onClick={goCheckIn}
+              className="w-full py-2.5 px-4 rounded-xl border border-emerald-200 bg-white hover:bg-emerald-50 text-emerald-700 font-bold text-xs flex items-center justify-center gap-2 shadow-2xs transition-colors cursor-pointer"
+            >
+              📍 ดู Safe Point และรายละเอียดนัดรับ
+            </button>
+          </div>
+        ) : confirmedState ? (
           <div className="space-y-2">
             <p className="text-[11px] text-gray-500 text-center">ทั้งสองฝ่ายสามารถดูรายละเอียดและไปยังหน้าเช็คอินได้</p>
             <button

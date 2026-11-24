@@ -33,11 +33,14 @@ async function postMeetupChatMessage({ appointmentId, event, actorId }) {
     const [{ data: product }, { data: users }, { data: convs }] = await Promise.all([
       supabase.from("products").select("title, price").eq("id", txn.product_id).maybeSingle(),
       supabase.from("users").select("id, username, full_name").in("id", [txn.buyer_id, txn.seller_id]),
-      supabase.from("conversations").select("id").eq("product_id", txn.product_id),
+      supabase.from("conversations").select("id, product_id, listing_id, buyer_id, seller_id")
+        .or(`product_id.eq.${txn.product_id},listing_id.eq.${txn.product_id}`),
     ]);
 
     // หาห้องแชทที่มีทั้งผู้ซื้อและผู้ขายของนัดนี้
     let conversationId = null;
+
+    // 1. ตรวจสอบจาก conversation_members
     for (const c of convs || []) {
       const { data: mems } = await supabase
         .from("conversation_members")
@@ -49,28 +52,69 @@ async function postMeetupChatMessage({ appointmentId, event, actorId }) {
         break;
       }
     }
-    // ยังไม่มีห้องแชทของคู่นี้ → สร้างให้ เพื่อให้การ์ดนัดรับขึ้นในแชททันที
-    // (เดิมจะข้ามเงียบๆ ทำให้ผู้ใช้เปิดแชทมาแล้วไม่เห็นการ์ดนัดรับเลย)
+
+    // 2. ถ้ายังไม่พบ ตรวจสอบจาก buyer_id และ seller_id บนตาราง conversations โดยตรง (รองรับ schema เดิม)
+    if (!conversationId) {
+      for (const c of convs || []) {
+        const directUids = [String(c.buyer_id), String(c.seller_id)];
+        if (directUids.includes(String(txn.buyer_id)) && directUids.includes(String(txn.seller_id))) {
+          conversationId = c.id;
+          break;
+        }
+      }
+    }
+
+    // 3. ถ้ายังไม่พบ หาจากห้องที่มีข้อความคุยกันของคู่นี้ในสินค้านี้
+    if (!conversationId && convs?.length) {
+      for (const c of convs) {
+        const { data: msgs } = await supabase
+          .from("messages")
+          .select("sender_id")
+          .eq("conversation_id", c.id)
+          .limit(10);
+        const senders = (msgs || []).map((m) => String(m.sender_id));
+        if (senders.includes(String(txn.buyer_id)) || senders.includes(String(txn.seller_id))) {
+          conversationId = c.id;
+          break;
+        }
+      }
+      if (!conversationId) conversationId = convs[0].id;
+    }
+
+    // 4. ยังไม่มีห้องแชทของคู่นี้ → สร้างให้ใหม่โดยใส่ครบทุกฟิลด์เพื่อความเข้ากันได้
     if (!conversationId) {
       const { data: newConv, error: convErr } = await supabase
         .from("conversations")
-        .insert({ product_id: txn.product_id })
+        .insert({
+          product_id: txn.product_id,
+          listing_id: txn.product_id,
+          buyer_id: txn.buyer_id,
+          seller_id: txn.seller_id,
+        })
         .select("id")
-        .single();
-      if (convErr || !newConv) {
+        .maybeSingle();
+
+      if (newConv) {
+        conversationId = newConv.id;
+        await supabase.from("conversation_members").insert([
+          { conversation_id: newConv.id, user_id: txn.buyer_id },
+          { conversation_id: newConv.id, user_id: txn.seller_id },
+        ]).catch(() => {});
+      } else if (convErr) {
         console.warn("[meetupChat] สร้างห้องแชทไม่สำเร็จ:", convErr?.message);
-        return null;
+        // Fallback: ลอง insert เฉพาะ product_id
+        const { data: fallbackConv } = await supabase
+          .from("conversations")
+          .insert({ product_id: txn.product_id })
+          .select("id")
+          .maybeSingle();
+        if (fallbackConv) conversationId = fallbackConv.id;
       }
-      const { error: memErr } = await supabase.from("conversation_members").insert([
-        { conversation_id: newConv.id, user_id: txn.buyer_id },
-        { conversation_id: newConv.id, user_id: txn.seller_id },
-      ]);
-      if (memErr) {
-        console.warn("[meetupChat] เพิ่มสมาชิกห้องแชทไม่สำเร็จ:", memErr.message);
-        await supabase.from("conversations").delete().eq("id", newConv.id);
-        return null;
-      }
-      conversationId = newConv.id;
+    }
+
+    if (!conversationId) {
+      console.warn("[meetupChat] ไม่พบห้องแชทสำหรับนัดหมาย:", appointmentId);
+      return null;
     }
 
     const nameOf = (id, fallback) => {
@@ -79,7 +123,7 @@ async function postMeetupChatMessage({ appointmentId, event, actorId }) {
     };
     const actorName = nameOf(actorId, "ผู้ใช้");
 
-    const status = event === "confirmed" ? "confirmed" : event === "requested" ? "pending" : "cancelled";
+    const status = event === "completed" ? "completed" : event === "confirmed" ? "confirmed" : event === "requested" ? "pending" : "cancelled";
     const payload = {
       kind: "MEETUP",
       event,
