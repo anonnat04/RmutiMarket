@@ -646,6 +646,10 @@ export function ChatPage() {
   /* ── ส่งข้อความ ── */
   const sendMessage = async (text, message_type = "TEXT", image = null) => {
     if (!active) return false;
+    if (isConversationEnded(active)) {
+      setSendError("การขายเสร็จสิ้นแล้ว ไม่สามารถส่งข้อความในห้องนี้ได้");
+      return false;
+    }
     if (!isRealConversationId(active.id)) {
       setSendError("ห้องแชทนี้ยังไม่พร้อมใช้งาน กรุณารีเฟรชหน้าแล้วลองใหม่");
       return false;
@@ -700,6 +704,7 @@ export function ChatPage() {
         [roomId]: (prev[roomId] || []).filter((m) => m.id !== tempId),
       }));
       setSendError(err?.message || "ส่งข้อความไม่สำเร็จ กรุณาลองใหม่");
+      if (String(err?.message || "").includes("เสร็จสิ้น")) refreshRef.current();
       return false;
     } finally {
       clearTimeout(typingTimeoutRef.current);
@@ -1104,6 +1109,12 @@ export function ChatPage() {
                   </button>
                 </div>
               )}
+              {ended ? (
+                <div className="flex items-center justify-center gap-2 bg-gray-50 px-4 py-4 text-sm font-semibold text-ink-500">
+                  <FlatIcon name="double-check" size={18} />
+                  การขายเสร็จสิ้นแล้ว ห้องแชทนี้ปิดการสนทนา (ดูประวัติย้อนหลังได้)
+                </div>
+              ) : (
               <form onSubmit={handleSendText} className="flex items-center gap-2 p-3">
                 <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
                 <button
@@ -1133,6 +1144,7 @@ export function ChatPage() {
                   <FlatIcon name="send" size={18} className={draft.trim() ? "brightness-0 invert" : "opacity-50"} />
                 </button>
               </form>
+              )}
             </div>
           </>
         ) : (

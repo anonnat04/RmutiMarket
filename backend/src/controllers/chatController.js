@@ -1,5 +1,5 @@
 const { supabase } = require("../config/db");
-const { sendNotificationToUser, emitNewMessage, emitMessagesRead } = require("../services/chatSocket");
+const { sendNotificationToUser, emitNewMessage, emitMessagesRead, isConversationClosed } = require("../services/chatSocket");
 
 /**
  * Schema จริงของแชท (ตาม postgreSQL ที่ใช้อยู่):
@@ -420,6 +420,9 @@ async function sendMessage(req, res, next) {
 
     const { mine } = await getMembership(convId, myId);
     if (!mine) return res.status(403).json({ error: "คุณไม่มีสิทธิ์ส่งข้อความในห้องแชทนี้" });
+    if (await isConversationClosed(convId)) {
+      return res.status(403).json({ code: "CONVERSATION_CLOSED", error: "การขายเสร็จสิ้นแล้ว ไม่สามารถส่งข้อความในห้องนี้ได้" });
+    }
 
     const { data: msg, error: msgErr } = await supabase
       .from("messages")
