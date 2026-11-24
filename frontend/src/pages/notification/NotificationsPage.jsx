@@ -22,8 +22,8 @@ export function NotificationsPage() {
 
   const filtered = notifications.filter((n) => {
     if (filter === 'unread') return !n.read;
-    if (filter === 'meetup') return n.type === 'meetup';
-    if (filter === 'chat') return n.type === 'chat';
+    if (filter === 'meetup') return n.type?.includes('meetup') || n.reference_type === 'meetup';
+    if (filter === 'chat') return n.type?.includes('chat') || n.type?.includes('message') || n.reference_type === 'conversation';
     return true;
   });
 

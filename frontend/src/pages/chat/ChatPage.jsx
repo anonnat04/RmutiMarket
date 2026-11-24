@@ -95,6 +95,7 @@ function mapBackendMessage(message, currentUserId) {
     time: message.created_at
       ? new Date(message.created_at).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })
       : "เมื่อสักครู่",
+    created_at: message.created_at || message.createdAt || null,
   };
 }
 
@@ -343,8 +344,21 @@ export function ChatPage() {
 
           const fallbackRoomId = targetConvId || `conv-${queryProductId}`;
 
-          // หาห้องที่ id ตรงกับ fallbackRoomId เป๊ะๆ ก่อน (มาจาก backend แล้ว)
-          let existingIdx = convList.findIndex((c) => String(c.id) === String(fallbackRoomId));
+          // หาห้องที่มีอยู่แล้วใน convList โดยตรวจทั้ง id ตรงกัน หรือเป็นห้องของสินค้านี้กับคู่ค้านี้
+          let existingIdx = convList.findIndex((c) => {
+            if (targetConvId && String(c.id) === String(targetConvId)) return true;
+            if (String(c.id) === String(fallbackRoomId)) return true;
+            if (queryProductId && String(c.productId) === String(queryProductId)) {
+              if (queryPartnerId) {
+                return (
+                  String(c.partnerId) === String(queryPartnerId) ||
+                  String(c.sellerId) === String(queryPartnerId)
+                );
+              }
+              return true;
+            }
+            return false;
+          });
 
           if (existingIdx >= 0) {
             setActiveId(String(convList[existingIdx].id));
@@ -458,6 +472,7 @@ export function ChatPage() {
           type: msg.message_type || msg.type || "TEXT",
           image: msg.imageUrl,
           time: msg.time || new Date().toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" }),
+          created_at: msg.createdAt || msg.created_at || new Date().toISOString(),
         };
 
         return {
@@ -502,6 +517,7 @@ export function ChatPage() {
     const handleMeetupUpdate = () => {
       fetchMeetups();
       refreshConversationsFromBackend();
+      setReloadMessagesKey((k) => k + 1);
     };
     // Authentication and room joining are asynchronous. Fetch once the server
     // confirms the room join so a first load cannot race ahead of Socket auth.
@@ -580,9 +596,15 @@ export function ChatPage() {
         setLocalMessages((prev) => {
           const liveMessages = prev[activeId] || [];
           const knownIds = new Set(formatted.map((m) => String(m.id)));
+          const unmergedLive = liveMessages.filter((m) => !knownIds.has(String(m.id)));
+          const allMsgs = [...formatted, ...unmergedLive].sort((a, b) => {
+            const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+            return ta - tb;
+          });
           return {
             ...prev,
-            [activeId]: [...formatted, ...liveMessages.filter((m) => !knownIds.has(String(m.id)))],
+            [activeId]: allMsgs,
           };
         });
 
@@ -650,6 +672,11 @@ export function ChatPage() {
           : st === "confirmed" ? "confirmed"
           : (st === "cancelled" || st === "rejected") ? "cancelled"
           : "requested";
+        const eventTime = (st === "cancelled" || st === "rejected")
+          ? (mt.cancelled_at || mt.cancelledAt || mt.created_at)
+          : (st === "completed"
+            ? (mt.completed_at || mt.completedAt || mt.created_at)
+            : (mt.confirmed_at || mt.confirmedAt || mt.created_at));
         return {
           id: `meetup-${mt.id}`,
           from: String(mt.createdBy ?? mt.created_by) === String(user.id) ? "me" : "them",
@@ -668,10 +695,10 @@ export function ChatPage() {
           }),
           type: "MEETUP_SUMMARY",
           image: null,
-          time: mt.created_at
-            ? new Date(mt.created_at).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })
-            : "",
-          created_at: mt.created_at || null,
+          time: eventTime
+            ? new Date(eventTime).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })
+            : (mt.created_at ? new Date(mt.created_at).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" }) : ""),
+          created_at: eventTime || mt.created_at || new Date().toISOString(),
         };
       });
     const combined = synthetic.length ? [...activeMessages, ...synthetic] : activeMessages;
@@ -698,7 +725,12 @@ export function ChatPage() {
         const current = prev[requestedConversationId] || [];
         const currentIds = new Set(current.map((m) => String(m.id)));
         const uniqueOlder = olderMessages.filter((m) => !currentIds.has(String(m.id)));
-        return { ...prev, [requestedConversationId]: [...uniqueOlder, ...current] };
+        const merged = [...uniqueOlder, ...current].sort((a, b) => {
+          const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return ta - tb;
+        });
+        return { ...prev, [requestedConversationId]: merged };
       });
       setMessagePage(nextPage);
       setMessageTotal(Math.max(Number(res?.total) || 0, activeMessages.length + olderMessages.length));
@@ -736,6 +768,7 @@ export function ChatPage() {
       name: user?.username || user?.name || user?.full_name || "ฉัน",
     };
 
+    const nowIso = new Date().toISOString();
     const tempId = `msg-${Date.now()}`;
     const formattedMsg = {
       id: tempId,
@@ -746,6 +779,7 @@ export function ChatPage() {
       image,
       isRead: false,
       time: new Date().toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" }),
+      created_at: nowIso,
     };
 
     // 1. Optimistic UI update — แสดงบับเบิลของตัวเองทันที
@@ -774,7 +808,12 @@ export function ChatPage() {
       setLocalMessages((prev) => ({
         ...prev,
         [active.id]: (prev[active.id] || []).map((message) => message.id === tempId
-          ? { ...message, id: savedMessage.id, time: savedMessage.time || message.time }
+          ? {
+              ...message,
+              id: savedMessage.id,
+              time: savedMessage.time || message.time,
+              created_at: savedMessage.createdAt || savedMessage.created_at || message.created_at || nowIso,
+            }
           : message),
       }));
       setMessageTotal((count) => count + 1);
@@ -1022,23 +1061,15 @@ export function ChatPage() {
             </div>
 
             {/* Chat Message Stream */}
-            {/* Banner แจ้งเตือนเฉพาะเมื่อ "ขายสำเร็จ" — แสดงจำนวนวันที่เหลือก่อนลบแชทอัตโนมัติ (7 วัน)
-                กรณียกเลิกนัด/ไม่มาตามนัด แชทจะถูกลบทันทีจากฝั่ง backend จึงไม่มี banner นับถอยหลัง */}
-            {active && isConversationEnded(active) && (() => {
-              const closedAt = active.dealClosedAt ? new Date(active.dealClosedAt) : null;
-              const daysLeft = closedAt
-                ? Math.max(0, 7 - Math.floor((Date.now() - closedAt.getTime()) / (1000 * 60 * 60 * 24)))
-                : 7;
-              return (
-                <div className="mx-4 mt-3 mb-0 flex items-start gap-2 rounded-xl bg-amber-50 border border-amber-200 px-4 py-2.5 text-xs text-amber-700">
-                  <span className="text-base leading-none mt-0.5">💬</span>
-                  <span>
-                    การขายนี้ <strong>เสร็จสิ้นแล้ว</strong> — ประวัติการสนทนาจะถูกลบอัตโนมัติ
-                    {daysLeft > 0 ? ` ภายใน ${daysLeft} วัน` : ' เร็วๆ นี้'}
-                  </span>
-                </div>
-              );
-            })()}
+            {/* Banner แจ้งเตือนเมื่อ "ขายสำเร็จ" — เก็บประวัติการสนทนาไว้ตลอด */}
+            {active && isConversationEnded(active) && (
+              <div className="mx-4 mt-3 mb-0 flex items-start gap-2 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-2.5 text-xs text-emerald-800">
+                <span className="text-base leading-none mt-0.5">✅</span>
+                <span>
+                  การขายนี้ <strong>เสร็จสิ้นแล้ว</strong> — ประวัติการสนทนาและการนัดรับจะถูกเก็บไว้ตลอดเพื่อเป็นหลักฐาน
+                </span>
+              </div>
+            )}
             <div ref={messageListRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4 bg-surface-muted/20">
               {activeMessages.length < messageTotal && (
                 <div className="flex flex-col items-center gap-1 pb-2">

@@ -13,6 +13,7 @@ import {
   MessageCircle,
   Star,
   X,
+  XCircle,
 } from 'lucide-react';
 import { useNotificationStore, buildNotificationLink } from '@/store/notificationStore';
 import { useAuthStore } from '@/store/authStore';
@@ -73,33 +74,48 @@ export function NotificationDropdown() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen]);
 
-  const getIconConfig = (type) => {
-    switch (type) {
-      case 'meetup':
-        return {
-          icon: CalendarClock,
-          bg: 'bg-orange-50 text-orange-600 border border-orange-200',
-          badge: 'นัดรับสินค้า',
-        };
-      case 'return':
-        return {
-          icon: RotateCcw,
-          bg: 'bg-rose-50 text-rose-600 border border-rose-200',
-          badge: 'การคืนสินค้า',
-        };
-      case 'product':
-        return {
-          icon: ShoppingBag,
-          bg: 'bg-emerald-50 text-emerald-600 border border-emerald-200',
-          badge: 'สินค้า',
-        };
-      default:
-        return {
-          icon: Bell,
-          bg: 'bg-blue-50 text-blue-600 border border-blue-200',
-          badge: 'ทั่วไป',
-        };
+  const getIconConfig = (type = '') => {
+    const t = String(type).toLowerCase();
+    if (t.includes('cancel') || t.includes('reject')) {
+      return {
+        icon: XCircle,
+        bg: 'bg-rose-50 text-rose-600 border border-rose-200',
+        badge: 'ยกเลิกนัดรับ',
+      };
     }
+    if (t.includes('meetup') || t.includes('appointment')) {
+      return {
+        icon: CalendarClock,
+        bg: 'bg-orange-50 text-orange-600 border border-orange-200',
+        badge: 'นัดรับสินค้า',
+      };
+    }
+    if (t.includes('return')) {
+      return {
+        icon: RotateCcw,
+        bg: 'bg-rose-50 text-rose-600 border border-rose-200',
+        badge: 'การคืนสินค้า',
+      };
+    }
+    if (t.includes('product')) {
+      return {
+        icon: ShoppingBag,
+        bg: 'bg-emerald-50 text-emerald-600 border border-emerald-200',
+        badge: 'สินค้า',
+      };
+    }
+    if (t.includes('chat') || t.includes('message')) {
+      return {
+        icon: MessageCircle,
+        bg: 'bg-orange-50 text-orange-600 border border-orange-200',
+        badge: 'ข้อความแชท',
+      };
+    }
+    return {
+      icon: Bell,
+      bg: 'bg-blue-50 text-blue-600 border border-blue-200',
+      badge: 'ทั่วไป',
+    };
   };
 
   return (

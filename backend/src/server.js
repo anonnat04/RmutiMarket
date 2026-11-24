@@ -135,14 +135,8 @@ setTimeout(() => {
   processWeeklySundayRecovery().catch(() => {});
 }, 5000); // ตรวจสอบครั้งแรก 5 วินาทีหลัง server เปิด
 
-// ── Chat Retention Background Job (ลบห้องแชทที่เกิน 7 วันหลังปิดการขาย) ──
-const { deleteExpiredChats } = require("./controllers/chatController");
-setInterval(() => {
-  deleteExpiredChats().catch((e) => console.warn("[Chat Retention Background Job]", e.message));
-}, 60 * 60 * 1000); // ทุก 1 ชั่วโมง
-setTimeout(() => {
-  deleteExpiredChats().catch(() => {});
-}, 10000); // รันครั้งแรก 10 วินาทีหลัง server เปิด
+// ── Chat Retention: ปิดการทำงาน (เก็บประวัติการสนทนาไว้ตลอด ไม่ลบห้องแชทอัตโนมัติ) ──
+// const { deleteExpiredChats } = require("./controllers/chatController");
 
 // ── 404 + Error Handler (ดักจับ Error จากทุก Endpoint) ──────────────
 app.use(notFoundHandler);

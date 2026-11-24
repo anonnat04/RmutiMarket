@@ -10,12 +10,10 @@ const { sendNotificationToUser, emitNewMessage, emitMessagesRead } = require("..
 //  1) ปุ่ม "นัดรับ" ยังแสดงได้ ตราบใดที่สินค้ายัง "ว่าง" (status_id = 1)
 //     แม้เคยยกเลิกนัด/ไม่มาตามนัดมาก่อน
 //  2) จะขึ้น "สิ้นสุดแล้ว" เฉพาะเมื่อสินค้าขายแล้ว (SOLD) หรือมีดีลที่ COMPLETED
-//  3) ยกเลิกนัดที่ยอมรับแล้ว / ไม่มาตามนัด (ธุรกรรม CANCELLED / NO_SHOW)
-//     → ลบห้องแชทของคู่นั้นทันที (ดู deleteCancelledDealChats)
-//  4) ลบแชทอัตโนมัติหลัง 7 วัน "เฉพาะ" แชทของสินค้าที่ขายสำเร็จเท่านั้น
+//  3) เก็บประวัติแชทไว้ตลอด ไม่ลบห้องแชทอัตโนมัติ (ไม่ว่าจะยกเลิกหรือปิดการขายสำเร็จ)
 // ----------------------------------------------------------------
 const TX_COLUMNS = "id, product_id, buyer_id, seller_id, status_id, completed_at, cancelled_at, created_at";
-const RETENTION_MS = Infinity; // เก็บประวัติแชทไว้แม้ธุรกรรมเสร็จสิ้น
+const RETENTION_MS = Infinity; // เก็บประวัติแชทไว้ตลอด ไม่ลบอัตโนมัติ
 
 // transactions.status_id: 1=PENDING, 2=CONFIRMED, 3=COMPLETED, 4=CANCELLED, 5=NO_SHOW
 const TX_COMPLETED = 3;
@@ -191,19 +189,22 @@ async function getConversations(req, res, next) {
     // ไม่ลบห้องแชทอัตโนมัติเพียงเพราะมีการยกเลิกนัด เพื่อให้ผู้ใช้ยังคงพูดคุยตกลงเวลากันต่อได้
     // await deleteCancelledDealChats({ userId: myId });
 
-    // 1. ลองดึงจาก schema ใหม่: conversation_members
-    const { data: myMemberships, error: memErr } = await supabase
-      .from("conversation_members")
-      .select("conversation_id, last_read_at, joined_at")
-      .eq("user_id", myId);
+    // 1. ลองดึงจาก schema ใหม่: conversation_members และ direct buyer/seller
+    const [{ data: myMemberships, error: memErr }, { data: directRows }] = await Promise.all([
+      supabase.from("conversation_members").select("conversation_id, last_read_at, joined_at").eq("user_id", myId),
+      supabase.from("conversations").select("id").or(`buyer_id.eq.${myId},seller_id.eq.${myId}`),
+    ]);
 
     if (memErr) {
       console.error("[getConversations] memErr (query conversation_members ล้มเหลว):", memErr);
     }
 
-    // ถ้าไม่มี membership ให้ลองอ่าน schema เดิมด้านล่าง แทนการตอบรายการว่างทันที
-    if (!memErr && myMemberships?.length > 0) {
-      const convIds = myMemberships.map((m) => m.conversation_id);
+    const membershipConvIds = (myMemberships || []).map((m) => m.conversation_id);
+    const directConvIds = (directRows || []).map((c) => c.id);
+    const convIds = [...new Set([...membershipConvIds, ...directConvIds])];
+
+    // ถ้ามีห้อง ให้ดึงรายละเอียด
+    if (convIds.length > 0) {
 
       const { data: convs, error: convErr } = await supabase
         .from("conversations")
@@ -658,8 +659,8 @@ async function createOrGetConversation(req, res, next) {
         // แยก query 2 ขั้น เพราะ Supabase PostgREST ไม่ return nested relation ครบเสมอ
         const { data: existingConvs } = await supabase
           .from("conversations")
-          .select("id")
-          .eq("product_id", product.id);
+          .select("id, buyer_id, seller_id")
+          .or(`product_id.eq.${product.id},listing_id.eq.${product.id}`);
 
         if (existingConvs && existingConvs.length > 0) {
           const convIds = existingConvs.map((c) => c.id);
@@ -682,15 +683,43 @@ async function createOrGetConversation(req, res, next) {
               .eq("user_id", targetPartnerId);
 
             if (partnerMems && partnerMems.length > 0) {
-              // พบห้องแชทที่มีทั้งคู่อยู่แล้ว → คืน id ห้องเดิม ไม่สร้างใหม่
-              return res.json({ conversationId: partnerMems[0].conversation_id, isNew: false });
+              const matchedIds = partnerMems.map((m) => m.conversation_id);
+              // หากมีมากกว่า 1 ห้อง ให้เลือกห้องที่มีข้อความล่าสุด (หรือห้องแรก)
+              const { data: latestMsg } = await supabase
+                .from("messages")
+                .select("conversation_id")
+                .in("conversation_id", matchedIds)
+                .order("created_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+              const chosenConvId = latestMsg?.conversation_id || matchedIds[0];
+              return res.json({ conversationId: chosenConvId, isNew: false });
             }
+          }
+
+          // ขั้น 3: ตรวจสอบจาก buyer_id / seller_id บนตาราง conversations โดยตรง (กรณี conversation_members ตกหล่น)
+          const matchedDirect = existingConvs.find((c) =>
+            (String(c.buyer_id) === String(myId) && String(c.seller_id) === String(targetPartnerId)) ||
+            (String(c.buyer_id) === String(targetPartnerId) && String(c.seller_id) === String(myId))
+          );
+          if (matchedDirect) {
+            await supabase.from("conversation_members").upsert([
+              { conversation_id: matchedDirect.id, user_id: myId },
+              { conversation_id: matchedDirect.id, user_id: targetPartnerId },
+            ], { onConflict: "conversation_id,user_id" }).catch(() => {});
+            return res.json({ conversationId: matchedDirect.id, isNew: false });
           }
         }
 
         const { data: newConv, error: createErr } = await supabase
           .from("conversations")
-          .insert({ product_id: product.id })
+          .insert({
+            product_id: product.id,
+            listing_id: product.id,
+            buyer_id: isSeller ? targetPartnerId : myId,
+            seller_id: isSeller ? myId : targetPartnerId,
+          })
           .select("id")
           .single();
 
@@ -1006,149 +1035,23 @@ async function deleteConversation(req, res, next) {
 }
 
 // ----------------------------------------------------------------
-// ตัวช่วยลบแชทตามกติกา (ใช้ร่วมกันทั้ง job ตามรอบและการลบทันที)
-//
-//  กติกา A (sales)     : สินค้าที่ขายสำเร็จ (มีดีล COMPLETED) → ลบแชทของสินค้านั้น
-//                        เมื่อเลย 7 วันนับจาก completed_at
-//  กติกา B (cancelled) : ดีลของคู่สนทนาถูกยกเลิก/ไม่มาตามนัด (CANCELLED / NO_SHOW)
-//                        → ลบห้องแชทของคู่นั้น "ทันที"
-//                        - ต้องไม่มีดีลค้าง (PENDING/CONFIRMED) ของคู่นั้นเหลืออยู่
-//                        - ต้องยกเลิกหลังจากห้องแชทนี้ถูกสร้าง (กันลบห้องใหม่ที่เพิ่งทักกลับมา
-//                          เพื่อนัดรับใหม่ หลังจากห้องเก่าถูกลบไปแล้ว)
-//                        - ไม่ลบถ้าคู่นี้มีดีลสำเร็จ (ให้ไปเข้ากติกา A)
-//
-// options:
-//   sales     : เปิดกติกา A
-//   cancelled : เปิดกติกา B
-//   productId : จำกัดเฉพาะสินค้านี้
-//   userId    : จำกัดเฉพาะดีลที่ผู้ใช้นี้เป็นผู้ซื้อ/ผู้ขาย
+// ตัวช่วยลบแชทตามกติกา
+// กติกาใหม่: เก็บประวัติการสนทนาไว้ตลอด ไม่ลบห้องแชทอัตโนมัติ
+// ไม่ว่าจะยกเลิกนัดหรือซื้อขายเสร็จสิ้น เพื่อป้องกันข้อมูลหายและบั๊ก
 // ----------------------------------------------------------------
-async function runChatCleanup({ sales = false, cancelled = false, productId = null, userId = null } = {}) {
-  try {
-    if (!sales && !cancelled) return [];
-    const cutoff = Date.now() - RETENTION_MS;
-
-    let txQuery = supabase.from("transactions").select(TX_COLUMNS);
-    if (productId) txQuery = txQuery.eq("product_id", productId);
-    if (userId) txQuery = txQuery.or(`buyer_id.eq.${userId},seller_id.eq.${userId}`);
-    const { data: transactions, error: txErr } = await txQuery;
-
-    if (txErr) {
-      console.error("[runChatCleanup] ดึง transactions ล้มเหลว:", txErr);
-      return [];
-    }
-    if (!transactions?.length) return [];
-
-    const txByProduct = new Map();
-    transactions.forEach((tx) => {
-      const key = String(tx.product_id);
-      if (!txByProduct.has(key)) txByProduct.set(key, []);
-      txByProduct.get(key).push(tx);
-    });
-    const productIds = [...txByProduct.keys()].map((k) => (isNaN(Number(k)) ? k : Number(k)));
-    if (!productIds.length) return [];
-
-    const { data: productConvs, error: convErr } = await supabase
-      .from("conversations")
-      .select("id, product_id, created_at")
-      .in("product_id", productIds);
-
-    if (convErr) {
-      console.error("[runChatCleanup] ดึง conversations ล้มเหลว:", convErr);
-      return [];
-    }
-    if (!productConvs?.length) return [];
-
-    const convIds = productConvs.map((c) => c.id);
-    const [membersRes, messagesRes] = await Promise.all([
-      supabase.from("conversation_members").select("conversation_id, user_id").in("conversation_id", convIds),
-      supabase.from("messages").select("conversation_id, sender_id").in("conversation_id", convIds),
-    ]);
-    if (membersRes.error) console.warn("[runChatCleanup] ดึงสมาชิกห้องแชทล้มเหลว:", membersRes.error);
-    if (messagesRes.error) {
-      console.error("[runChatCleanup] ดึงผู้ร่วมแชทจากข้อความล้มเหลว:", messagesRes.error);
-      return [];
-    }
-
-    // รวบรวมผู้ร่วมห้องจากทั้ง members และผู้ส่งข้อความ
-    const participants = new Map(); // convId -> Set(userId)
-    const addParticipant = (cid, uid) => {
-      const key = String(cid);
-      if (!participants.has(key)) participants.set(key, new Set());
-      participants.get(key).add(String(uid));
-    };
-    (membersRes.data || []).forEach((m) => addParticipant(m.conversation_id, m.user_id));
-    (messagesRes.data || []).forEach((m) => addParticipant(m.conversation_id, m.sender_id));
-
-    const expiredConvIds = productConvs
-      .filter((conv) => {
-        const productTxs = txByProduct.get(String(conv.product_id)) || [];
-
-        // ── กติกา A: สินค้าขายสำเร็จ → ลบแชทหลัง 7 วัน ──
-        if (sales) {
-          const completedTimes = productTxs
-            .filter((tx) => Number(tx.status_id) === TX_COMPLETED)
-            .map((tx) => Date.parse(tx.completed_at))
-            .filter(Number.isFinite);
-          if (completedTimes.length && Math.max(...completedTimes) < cutoff) return false;
-        }
-
-        // ── กติกา B: ยกเลิกนัด/ไม่มาตามนัด → ลบทันที ──
-        if (cancelled) {
-          const ids = [...(participants.get(String(conv.id)) || [])].sort();
-          if (ids.length !== 2) return false;
-          const key = ids.join(":");
-
-          const pairTxs = productTxs.filter((tx) => pairKey(tx.buyer_id, tx.seller_id) === key);
-          if (!pairTxs.length) return false;
-
-          // ยังมีดีลค้างอยู่ หรือเคยขายสำเร็จกับคู่นี้ → ไม่ลบตามกติกานี้
-          if (pairTxs.some((tx) => OPEN_TX_STATUS.includes(Number(tx.status_id)))) return false;
-          if (pairTxs.some((tx) => Number(tx.status_id) === TX_COMPLETED)) return false;
-
-          const convCreated = Date.parse(conv.created_at);
-          return pairTxs.some((tx) => {
-            if (!CANCELLED_TX_STATUS.includes(Number(tx.status_id))) return false;
-            const cancelledAt = Date.parse(tx.cancelled_at || tx.created_at);
-            return Number.isFinite(cancelledAt) &&
-              (!Number.isFinite(convCreated) || cancelledAt >= convCreated);
-          });
-        }
-
-        return false;
-      })
-      .map((conv) => conv.id);
-
-    if (expiredConvIds.length === 0) return [];
-    await deleteConversations(expiredConvIds);
-    return expiredConvIds;
-  } catch (err) {
-    console.error("[runChatCleanup] unexpected error:", err?.message || err);
-    return [];
-  }
+async function runChatCleanup() {
+  // ไม่ลบห้องแชทอัตโนมัติ เก็บข้อมูลไว้ตลอด
+  return [];
 }
 
-// ----------------------------------------------------------------
-// Background Job: ลบแชทตามรอบ (เรียกจาก server.js เหมือนเดิม)
-//   - แชทของสินค้าที่ขายสำเร็จ เกิน 7 วันหลังปิดดีล
-//   - แชทของดีลที่ยกเลิก/ไม่มาตามนัด (เก็บกวาดกรณีที่ยังไม่ถูกลบทันที)
-// ----------------------------------------------------------------
 async function deleteExpiredChats() {
-  const deleted = await runChatCleanup({ sales: true, cancelled: true });
-  if (deleted.length) {
-    console.log(`✅ [Chat Retention] ลบห้องแชทเรียบร้อย (${deleted.join(", ")})`);
-  }
+  // ไม่ลบห้องแชทอัตโนมัติ เก็บข้อมูลไว้ตลอด
+  return [];
 }
 
-// ----------------------------------------------------------------
-// ลบแชทของดีลที่ยกเลิกนัด/ไม่มาตามนัดทันที
-// ใช้ได้ทั้ง:
-//   - เรียกหลังยกเลิกนัดใน meetupController:   deleteCancelledDealChats({ productId })
-//   - เรียกหลัง process_no_shows() ใน scheduler: deleteCancelledDealChats()
-//   - ถูกเรียกอัตโนมัติทุกครั้งที่ดึงรายการแชท (เฉพาะดีลของผู้ใช้นั้น)
-// ----------------------------------------------------------------
-async function deleteCancelledDealChats(options = {}) {
-  return runChatCleanup({ ...options, cancelled: true, sales: false });
+async function deleteCancelledDealChats() {
+  // ไม่ลบห้องแชทอัตโนมัติ เก็บข้อมูลไว้ตลอด
+  return [];
 }
 
 module.exports = {

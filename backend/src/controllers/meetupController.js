@@ -1620,10 +1620,16 @@ async function cancelMeetup(req, res, next) {
       ? appt.transactions.seller_id
       : appt.transactions.buyer_id;
     if (partnerId) {
+      let prodTitle = "สินค้า";
+      if (appt.transactions?.product_id) {
+        const { data: p } = await supabase.from("products").select("title").eq("id", appt.transactions.product_id).maybeSingle();
+        if (p?.title) prodTitle = p.title;
+      }
+      const cancellerName = req.user.username || req.user.full_name || "คู่ค้า";
       await persistAndSendNotification(partnerId, {
         type: "meetup_cancelled",
-        title: "คู่ค้ายกเลิกนัดรับ",
-        message: `เหตุผล: ${reason}`,
+        title: `❌ คู่ค้ายกเลิกนัดรับ (${prodTitle})`,
+        message: `${cancellerName} ได้ยกเลิกนัดรับสินค้า "${prodTitle}" (เหตุผล: ${reason || "ไม่ระบุเหตุผล"})`,
         reference_type: "meetup",
         reference_id: Number(id),
       });
@@ -1635,6 +1641,9 @@ async function cancelMeetup(req, res, next) {
       statusCode: "CANCELLED",
       buyerId: appt.transactions.buyer_id,
       sellerId: appt.transactions.seller_id,
+      productId: appt.transactions.product_id,
+      reason,
+      cancelledBy: req.user.id,
     });
 
     // ส่งผลลัพธ์ลงแชท: รอยืนยันแล้วอีกฝ่ายกด = ปฏิเสธ, นอกนั้น = ยกเลิก
