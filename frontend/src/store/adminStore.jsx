@@ -78,18 +78,6 @@ const INITIAL_LISTINGS = [
     createdAt: '2026-06-08',
     views: 35,
   },
-  {
-    id: 'p4',
-    title: 'บุหรี่ไฟฟ้าและอุปกรณ์ (สินค้าผิดระเบียบ)',
-    price: 990,
-    sellerName: 'นายสมชาย หลอกลวง (ต้องสงสัย)',
-    sellerEmail: 'scammer.fake@rmuti.ac.th',
-    category: 'others',
-    status: 'banned',
-    createdAt: '2026-06-09',
-    views: 12,
-    banReason: 'สินค้าผิดระเบียบและกฎหมายมหาวิทยาลัย',
-  },
 ];
 
 export const useAdminStore = create()(
