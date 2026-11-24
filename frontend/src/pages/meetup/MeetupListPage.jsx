@@ -18,9 +18,7 @@ import { getSocket } from '@/services/socket';
 // ⚠️ หมายเหตุสำคัญ: ระบบนี้ไม่มี "เลื่อนนัด" อีกต่อไป
 // ถ้าต้องการเปลี่ยนวัน/เวลา/จุดนัด ผู้ใช้ต้อง "ยกเลิกนัดเดิม" แล้วสร้างนัดใหม่จากหน้ารายละเอียดสินค้า
 //
-// ⚠️ หมายเหตุ (แก้ล่าสุด): ส่วนเช็คอิน + เรดาร์ GPS สด + ยืนยันรับสินค้า ถูกย้ายไปอยู่
-// หน้าแยกต่างหากแล้วที่ /meetups/:id/checkin (ดูไฟล์ MeetupCheckInPage.jsx)
-// การ์ดในหน้านี้จึงแสดงแค่สรุปสถานะเช็คอิน + ปุ่มลิงก์ไปหน้านั้น ไม่มีปุ่มแอ็กชันตรงๆ อีกต่อไป
+// ⚠️ ส่วนเช็คอิน + เรดาร์ GPS สด + ยืนยันรับสินค้า อยู่ที่หน้า /meetups/:id/checkin (MeetupCheckInPage.jsx)
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
@@ -35,8 +33,6 @@ function formatDate(dateStr) {
   }
 }
 
-// ── แปลง appointment_status.code (PENDING/CONFIRMED/COMPLETED/CANCELLED/NO_SHOW) ──
-// ให้เป็น string status ที่ store ใช้อยู่จริง (pending/confirmed/completed/cancelled/no_show)
 function mapStatusCode(code) {
   switch (code) {
     case 'PENDING': return 'pending';
@@ -48,12 +44,11 @@ function mapStatusCode(code) {
   }
 }
 
-// ── ตรวจสอบว่านัดหมายเลยเวลา 45 นาที และมีฝ่ายไม่เช็คอินหรือไม่ (No-show) ──
 function isMeetupOverdue(date, time, buyerCheckedIn, sellerCheckedIn) {
   if (!date || !time) return false;
   try {
     const timeClean = String(time).slice(0, 5);
-    const apptDate = new Date(`${date}T${timeClean}:00`);
+    const apptDate = new Date(`${String(date).slice(0, 10)}T${timeClean}:00+07:00`);
     if (isNaN(apptDate.getTime())) return false;
     const deadline = new Date(apptDate.getTime() + 45 * 60 * 1000);
     return new Date() > deadline && (!buyerCheckedIn || !sellerCheckedIn);
@@ -62,7 +57,6 @@ function isMeetupOverdue(date, time, buyerCheckedIn, sellerCheckedIn) {
   }
 }
 
-// ── เลือกชื่อที่จะแสดง: ใช้ username เป็นหลักเสมอ (ตรงกับ users.username ในฐานข้อมูล) ──
 function resolveUserName(u) {
   if (!u) return 'ผู้ใช้';
   if (typeof u === 'string') return u;
@@ -101,17 +95,29 @@ function mapAppointmentFromApi(m) {
     (typeof product.images === 'string' ? product.images : '') ||
     '';
 
-  const date = m.appointment_date || m.date || (m.scheduledAt ? m.scheduledAt.split('T')[0] : '');
+  const rawDate = m.appointment_date || m.date || (m.scheduledAt ? m.scheduledAt.split('T')[0] : '');
+  const date = rawDate ? String(rawDate).slice(0, 10) : '';
   const rawTime = m.appointment_time || m.time || m.startTime || (m.scheduledAt ? m.scheduledAt.split('T')[1]?.slice(0, 5) : '12:00');
   const time = rawTime ? String(rawTime).slice(0, 5) : '12:00';
 
   const buyerCheckedIn = Boolean(m.buyerCheckedIn || m.buyer_checked_in);
   const sellerCheckedIn = Boolean(m.sellerCheckedIn || m.seller_checked_in);
 
-  // ตรวจจับ Overdue 45 นาที หากเลยเวลาแล้วไม่เช็คอิน ให้แสดงเป็น no_show ทันที
   if ((rawStatusCode === 'CONFIRMED' || mappedStatus === 'confirmed') && isMeetupOverdue(date, time, buyerCheckedIn, sellerCheckedIn)) {
     mappedStatus = 'no_show';
   }
+
+  // พิกัดจุดนัด: ใช้ค่าจาก DB ก่อน (ตรงกับที่ backend ตรวจระยะ) ค่าคงที่ใช้เป็น fallback
+  const locName = location.name || m.locationName;
+  const fallbackPoint = meetupPoints.find((p) => p.name === locName);
+  const locationLat =
+    m.locationLat != null ? parseFloat(m.locationLat)
+      : location.latitude != null ? parseFloat(location.latitude)
+        : (fallbackPoint?.lat ?? null);
+  const locationLng =
+    m.locationLng != null ? parseFloat(m.locationLng)
+      : location.longitude != null ? parseFloat(location.longitude)
+        : (fallbackPoint?.lng ?? null);
 
   return {
     id: m.id,
@@ -130,22 +136,22 @@ function mapAppointmentFromApi(m) {
     time,
     startTime: time,
     locationId: m.locationId ?? m.location_id ?? location.id,
-    locationName: location.name || m.locationName || 'จุดนัดรับ มทร.อีสาน',
-    locationLat: m.locationLat != null ? parseFloat(m.locationLat) : (meetupPoints.find((p) => p.name === (location.name || m.locationName))?.lat ?? (location.latitude != null ? parseFloat(location.latitude) : null)),
-    locationLng: m.locationLng != null ? parseFloat(m.locationLng) : (meetupPoints.find((p) => p.name === (location.name || m.locationName))?.lng ?? (location.longitude != null ? parseFloat(location.longitude) : null)),
+    locationName: locName || 'จุดนัดรับ มทร.อีสาน',
+    locationLat,
+    locationLng,
     buyerCheckedIn,
     sellerCheckedIn,
     buyerCheckedInAt: m.buyerCheckedInAt || m.buyer_checked_in_at || null,
     sellerCheckedInAt: m.sellerCheckedInAt || m.seller_checked_in_at || null,
-    buyerConfirmedDelivery: Boolean(txn.buyer_received || txn.buyerConfirmedDelivery || rawStatusCode === 'COMPLETED' || mappedStatus === 'completed'),
-    sellerConfirmedDelivery: Boolean(txn.seller_handed_over || txn.sellerHandedOver || rawStatusCode === 'COMPLETED' || mappedStatus === 'completed'),
+    // FIX: ดูจากธุรกรรมจริงเท่านั้น ห้ามเดาจากสถานะนัด (เดิมทำให้ฝั่งที่ยังไม่กดขึ้นว่ายืนยันแล้ว)
+    buyerConfirmedDelivery: Boolean(txn.buyer_received || txn.buyerReceived),
+    sellerConfirmedDelivery: Boolean(txn.seller_handed_over || txn.sellerHandedOver),
     note: m.meetingDetail || m.meeting_detail || '',
     reviews: m.reviews || txn.reviews || [],
     isDb: true,
   };
 }
 
-// ── ป้ายสถานะช่วง Check-in ───────────────────────────────────────────
 function CheckInWindowBadge({ status }) {
   const map = {
     waiting: { label: '🕐 ยังไม่ถึงเวลาเปิด Check-in', style: { background: '#f3f4f6', color: '#6b7280' } },
@@ -175,19 +181,22 @@ function MiniMap({ meetup }) {
   useEffect(() => {
     if (!mapRef.current) return;
 
-    // ถ้า map ถูกสร้างแล้ว ให้ invalidateSize เมื่อ container ปรากฏ
     if (mapInstanceRef.current) {
       setTimeout(() => mapInstanceRef.current?.invalidateSize(), 100);
       return;
     }
 
+    // ใช้พิกัดจาก DB ก่อน
     let lat = CAMPUS_CENTER.lat;
     let lng = CAMPUS_CENTER.lng;
-    const found = meetupPoints.find((p) => p.id === meetup.locationId);
-    if (found) { lat = found.lat; lng = found.lng; }
-    else if (meetup.locationLat) { lat = meetup.locationLat; lng = meetup.locationLng; }
+    if (meetup.locationLat != null && meetup.locationLng != null) {
+      lat = meetup.locationLat;
+      lng = meetup.locationLng;
+    } else {
+      const found = meetupPoints.find((p) => p.id === meetup.locationId);
+      if (found) { lat = found.lat; lng = found.lng; }
+    }
 
-    // ใส่ Leaflet CSS ถ้ายังไม่มี
     if (!document.querySelector('link[data-leaflet]')) {
       const link = document.createElement('link');
       link.rel = 'stylesheet';
@@ -196,7 +205,6 @@ function MiniMap({ meetup }) {
       document.head.appendChild(link);
     }
 
-    // รอให้ CSS โหลดก่อนสร้าง map (100ms)
     const timer = setTimeout(() => {
       import('leaflet').then((mod) => {
         if (mapInstanceRef.current || !mapRef.current) return;
@@ -223,7 +231,6 @@ function MiniMap({ meetup }) {
           });
           L.marker([lat, lng], { icon }).addTo(map);
           mapInstanceRef.current = map;
-          // invalidateSize หลัง render เสร็จ
           setTimeout(() => map.invalidateSize(), 200);
         } catch (e) {
           console.warn('Map init error:', e);
@@ -281,12 +288,11 @@ export function MeetupListPage() {
   const [activeTab, setActiveTab] = useState(() => { const p = searchParams.get('tab'); return (p && TABS.some(t => t.key === p)) ? p : 'pending'; });
   const [highlightId, setHighlightId] = useState(() => searchParams.get('highlight') || null);
   const [expandedMap, setExpandedMap] = useState(null);
-  const [cancelLoading, setCancelLoading] = useState(null);   // meetup id ที่กำลังยกเลิก
-  const [cancelTarget, setCancelTarget] = useState(null);     // { meetup, role } สำหรับ confirm dialog
-  const [cancelPenalty, setCancelPenalty] = useState(null);   // เงื่อนไขตัดคะแนนจากกฎในฐานข้อมูล
-  const [rejectTarget, setRejectTarget] = useState(null);     // meetup สำหรับ confirm ปฏิเสธนัด
+  const [cancelLoading, setCancelLoading] = useState(null);
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const [cancelPenalty, setCancelPenalty] = useState(null);
+  const [rejectTarget, setRejectTarget] = useState(null);
 
-  // ── จดจำรายการนัดรับที่เคยกดเปิดดูแล้ว (เพื่อให้ตัวเลขแจ้งเตือนบนแท็บหายไปเมื่อกดดูแล้ว) ──
   const [seenMeetupIds, setSeenMeetupIds] = useState(() => {
     try {
       const stored = localStorage.getItem('cm_seen_meetup_ids');
@@ -296,9 +302,7 @@ export function MeetupListPage() {
     }
   });
 
-  // บังคับ re-render ทุกนาทีเพื่อให้ป้ายสถานะช่วง Check-in อัปเดตตามเวลาจริง
   const [, forceTick] = useState(0);
-
 
   const myId = user?.id ?? 'me';
 
@@ -307,7 +311,6 @@ export function MeetupListPage() {
     return () => clearInterval(t);
   }, []);
 
-  // ── ดึงรายการนัดรับจริงจาก Backend API ──
   const fetchMeetups = async () => {
     const token = localStorage.getItem('cm_token') || localStorage.getItem('token') || localStorage.getItem('cm_admin_token');
     if (!token && !user) return;
@@ -327,7 +330,6 @@ export function MeetupListPage() {
     fetchMeetups();
   }, [user]);
 
-  // รับการอัปเดตนัดหมายแบบเรียลไทม์ผ่าน Socket.IO
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
@@ -342,8 +344,6 @@ export function MeetupListPage() {
     };
   }, []);
 
-  // นัดหมายจริงต้องมาจาก API เท่านั้น ห้ามรวมข้อมูลจำลอง/ข้อมูลค้างใน
-  // localStorage เพราะข้อมูลนั้นอยู่ข้ามการสลับหรือลบบัญชีได้
   const allMeetups = useMemo(() => dbMeetups, [dbMeetups]);
 
   const myMeetups = useMemo(() => {
@@ -363,7 +363,6 @@ export function MeetupListPage() {
     return false;
   }).length;
 
-  // ── เมื่อเปิดดูแท็บใด ให้บันทึกว่ารายการในแท็บนั้นถูกเปิดดูแล้ว เพื่อลบเลขแจ้งเตือนบนแท็บ ──
   const markTabAsSeen = (tabKey) => {
     const tabObj = TABS.find((t) => t.key === tabKey);
     if (!tabObj) return;
@@ -398,7 +397,6 @@ export function MeetupListPage() {
     }
   }, [activeTab, myMeetups]);
 
-  // ── เมื่อเพิ่งสร้างคำขอนัดรับใหม่ ให้เปิดแท็บ "รอดำเนินการ" และรีเฟรชทันที ──
   useEffect(() => {
     if (location.state?.justCreated) {
       setActiveTab('pending');
@@ -406,7 +404,6 @@ export function MeetupListPage() {
     }
   }, [location.state]);
 
-  // ── อ่าน ?tab=X&highlight=Y จาก URL เมื่อมาจากแจ้งเตือน ──────────────────
   useEffect(() => {
     const tabParam = searchParams.get('tab');
     const highlightParam = searchParams.get('highlight');
@@ -414,7 +411,6 @@ export function MeetupListPage() {
     if (highlightParam) setHighlightId(highlightParam);
   }, [searchParams]);
 
-  // ── Auto-scroll ไปที่การ์ดที่ถูก highlight ──────────────────────────────
   const highlightRef = useRef(null);
   useEffect(() => {
     if (!highlightId || !highlightRef.current) return;
@@ -425,7 +421,6 @@ export function MeetupListPage() {
   }, [highlightId, filteredMeetups]);
 
 
-  // ── ส่ง Notification จำลองให้อีกฝ่าย ──────────────────────────────
   const notifyOther = (meetup, actionType, role) => {
     const targetUserId = role === 'buyer' ? meetup.sellerId : meetup.buyerId;
     if (!targetUserId || String(targetUserId) === String(myId)) return;
@@ -466,7 +461,6 @@ export function MeetupListPage() {
     addNotification({ userId: targetUserId, link: '/meetups', ...cfg });
   };
 
-  // ── ยืนยัน/ปฏิเสธคำขอนัดรับ (ผู้ขายเท่านั้น) ──────────────────────
   const handleRespond = async (m, action) => {
     if (action === 'reject') {
       setRejectTarget(m);
@@ -487,13 +481,11 @@ export function MeetupListPage() {
         } catch (apiErr) {
           console.warn('api.acceptMeetup warning:', apiErr);
         }
-        // อัปเดตนัดหมายใน local state ให้เป็น confirmed ทันที
         setDbMeetups((prev) =>
           prev.map((x) =>
             x.id === m.id ? { ...x, status: 'confirmed', statusCode: 'CONFIRMED' } : x
           )
         );
-        // ไปยังขั้นตอนการนัดรับ (หน้าเช็คอิน GPS) ทันที
         navigate(`/meetups/${m.id}/checkin`);
         return;
       } else if (action === 'reject') {
@@ -507,7 +499,6 @@ export function MeetupListPage() {
     setRejectTarget(null);
   };
 
-  // ── ยกเลิกนัด (ทั้งผู้ซื้อและผู้ขายทำได้, ยืนยันก่อนเสมอผ่าน ConfirmDialog) ────
   const handleCancelClick = (m, role) => {
     setCancelTarget({ meetup: m, role });
   };
@@ -518,10 +509,8 @@ export function MeetupListPage() {
 
     try {
       setCancelLoading(m.id);
-      // เรียก API ยกเลิกที่ backend
       await api.cancelMeetup(m.id, undefined, { confirmPenalty });
 
-      // อัปเดต UI เมื่อ backend ยืนยันการยกเลิกแล้ว
       setDbMeetups((prev) =>
         prev.map((x) =>
           x.id === m.id ? { ...x, status: 'cancelled', statusCode: 'CANCELLED' } : x
@@ -586,8 +575,6 @@ export function MeetupListPage() {
           const isNoShowTab = tab.key === 'no_show';
           const tabMeetups = myMeetups.filter((m) => tabMatches(tab, m.status));
 
-          // นับเฉพาะรายการใหม่ที่ยังไม่เคยเปิดดูในหน้านี้ (!seenMeetupIds.has)
-          // และถ้ากำลังเปิดดูแท็บนั้นอยู่ (activeTab === tab.key) ให้ซ่อนตัวเลขแจ้งเตือนออกทันที
           const unseenCount = activeTab === tab.key
             ? 0
             : tab.key === 'pending'
@@ -801,16 +788,14 @@ export function MeetupListPage() {
                 </div>
               )}
 
-              {/* ─── CONFIRMED: สถานะเช็คอิน + ปุ่มเช็คอิน + ยกเลิก ─── */}
+              {/* ─── CONFIRMED ─── */}
               {m.status === 'confirmed' && (
                 <div className="flex flex-col gap-2 rounded-xl bg-orange-50/50 p-3 border border-orange-100">
-                  {/* หัว: ชื่อกล่อง + ป้ายช่วงเวลา */}
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                     <span className="font-bold text-orange-950">📍 สถานะเช็คอิน</span>
                     {checkInWindow && <CheckInWindowBadge status={checkInWindow.status} />}
                   </div>
 
-                  {/* สถานะเช็คอินผู้ซื้อ */}
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
                       {m.buyerCheckedIn
@@ -827,7 +812,6 @@ export function MeetupListPage() {
                       )}
                     </div>
 
-                    {/* สถานะเช็คอินผู้ขาย */}
                     <div className="flex items-center gap-2">
                       {m.sellerCheckedIn
                         ? <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
@@ -848,7 +832,6 @@ export function MeetupListPage() {
                     )}
                   </div>
 
-                  {/* ปุ่มไปหน้าเช็คอิน (GPS) */}
                   {!bothDelivered && (
                     <div className="flex flex-wrap items-center gap-2 mt-1">
                       {myCheckedIn && (
@@ -872,7 +855,6 @@ export function MeetupListPage() {
                     <span className="text-xs font-medium text-brand-600">✅ ทั้งสองฝ่ายยืนยันรับ–ส่งสินค้าครบแล้ว</span>
                   )}
 
-                  {/* ปุ่มยกเลิก (ทั้งผู้ซื้อและผู้ขายสามารถกดยกเลิกได้ก่อนปิดการขาย) */}
                   {canCancel && (
                     <div className="border-t border-orange-100 pt-2.5 mt-2 flex justify-end">
                       <button
@@ -889,7 +871,7 @@ export function MeetupListPage() {
                 </div>
               )}
 
-              {/* ─── Completed: Review Logic ─────────────────── */}
+              {/* ─── Completed / ยืนยันแล้ว: ส่วนรีวิว ─── */}
               {(m.status === 'completed' || myConfirmedDelivery) && !m.isNoShow && m.status !== 'cancelled' && (
                 <div className="flex flex-col gap-2 pt-1 border-t border-gray-100">
                   <div className="flex flex-wrap items-center gap-2">
@@ -917,7 +899,8 @@ export function MeetupListPage() {
                           <ChevronRight size={13} />
                         </Link>
                       </div>
-                    ) : (
+                    ) : myConfirmedDelivery ? (
+                      // FIX: ปุ่มให้คะแนนแสดงเฉพาะคนที่ยืนยันรับ/ส่งมอบของฝั่งตัวเองแล้วเท่านั้น
                       <div className="flex flex-wrap items-center gap-2">
                         <Button
                           size="sm"
@@ -931,6 +914,20 @@ export function MeetupListPage() {
                           className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 font-semibold text-xs transition-colors shadow-2xs"
                         >
                           <span>ดูรีวิว ({otherName})</span>
+                          <ChevronRight size={13} />
+                        </Link>
+                      </div>
+                    ) : (
+                      // นัดถูกมาร์คว่าเสร็จแล้ว แต่ฝั่งเรายังไม่ได้กดยืนยัน → พาไปกดยืนยันก่อน
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[11px] font-semibold text-amber-700">
+                          ⏳ อีกฝ่ายยืนยันแล้ว — คุณต้องกดยืนยัน{role === 'buyer' ? 'รับสินค้า' : 'ส่งมอบสินค้า'}ก่อนจึงจะรีวิวได้
+                        </span>
+                        <Link
+                          to={`/meetups/${m.id}/checkin`}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-orange-200 bg-white hover:bg-orange-50 px-3.5 py-2 text-xs font-bold text-orange-700 transition-colors shadow-2xs"
+                        >
+                          📦 ไปยืนยัน{role === 'buyer' ? 'รับสินค้า' : 'ส่งมอบสินค้า'}
                           <ChevronRight size={13} />
                         </Link>
                       </div>
@@ -974,7 +971,6 @@ export function MeetupListPage() {
                 </div>
               )}
 
-              {/* ── ปุ่มไปยังแชท (สำหรับสถานะอื่นๆ ที่ยังไม่มีปุ่มในกล่อง) ── */}
               {m.productId && m.status !== 'pending' && (
                 <div className="pt-1 border-t border-gray-100 flex justify-end">
                   <GoToChatButton
@@ -1015,14 +1011,11 @@ export function MeetupListPage() {
 
           submitReview(meetup.id, role, { rating, comment, images });
 
-          // Scores and public reviews are published by the server only when
-          // the reciprocal review has also been submitted.
-
           setReviewTarget(null);
+          fetchMeetups();
         }}
       />
 
-      {/* Confirm Cancel Meetup Dialog */}
       <ConfirmDialog
         open={!!cancelTarget && !cancelPenalty}
         onClose={() => setCancelTarget(null)}
@@ -1047,7 +1040,6 @@ export function MeetupListPage() {
         loading={!!cancelLoading}
       />
 
-      {/* Confirm Reject Meetup Dialog */}
       <ConfirmDialog
         open={!!rejectTarget}
         onClose={() => setRejectTarget(null)}
