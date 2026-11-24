@@ -92,3 +92,11 @@ body {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ─── Leaflet Map Stacking Context Fix ─── */
+/* ป้องกันไม่ให้แผนที่ Leaflet, แผงควบคุม (Controls) และ Markers ลอยทับ Navbar เมื่อเลื่อนหน้าจอ */
+.leaflet-container {
+  z-index: 0 !important;
+  isolation: isolate;
+}
+

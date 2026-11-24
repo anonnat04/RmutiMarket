@@ -51,17 +51,17 @@ function isRealConversationId(id) {
 function previewText(text, type) {
   const raw = String(text || "").trim();
   if (!raw) return "";
-  if (type === "MEETUP_SUMMARY" || /^\[(MEETUP_SUMMARY|SYSTEM)\]$/.test(raw)) return "📅 นัดรับสินค้า";
   if (raw.startsWith("{") && raw.includes('"kind":"MEETUP"')) {
     try {
       const p = JSON.parse(raw);
-      if (p.event === "confirmed") return "✅ นัดรับได้รับการยืนยันแล้ว";
-      if (p.event === "completed") return "✅ นัดรับสินค้าเสร็จสิ้นแล้ว";
-      if (p.event === "rejected") return "❌ ปฏิเสธคำขอนัดรับ";
-      if (p.event === "cancelled") return "❌ ยกเลิกคำขอนัดรับ";
+      if (p.event === "confirmed" || p.status === "confirmed") return "✅ นัดรับได้รับการยืนยันแล้ว";
+      if (p.event === "completed" || p.status === "completed") return "✅ นัดรับสินค้าเสร็จสิ้นแล้ว";
+      if (p.event === "rejected" || p.status === "rejected") return "❌ ปฏิเสธคำขอนัดรับ";
+      if (p.event === "cancelled" || p.status === "cancelled") return "❌ นัดหมายถูกยกเลิกแล้ว";
       return "📅 คำขอนัดรับสินค้า";
     } catch { /* fall through */ }
   }
+  if (type === "MEETUP_SUMMARY" || /^\[(MEETUP_SUMMARY|SYSTEM)\]$/.test(raw)) return "📅 นัดรับสินค้า";
   return raw;
 }
 
@@ -641,12 +641,15 @@ export function ChatPage() {
           || [mt.buyerId, mt.sellerId].some((x) => String(x) === String(active.partnerId));
         return mine && withPartner
           && String(pid) === String(active.productId)
-          && ["pending", "confirmed", "completed"].includes(st)
+          && ["pending", "confirmed", "completed", "cancelled", "rejected", "no_show"].includes(st)
           && !referenced.has(String(mt.id));
       })
       .map((mt) => {
         const st = String(mt.status || "").toLowerCase();
-        const event = st === "completed" ? "completed" : st === "confirmed" ? "confirmed" : "requested";
+        const event = st === "completed" ? "completed"
+          : st === "confirmed" ? "confirmed"
+          : (st === "cancelled" || st === "rejected") ? "cancelled"
+          : "requested";
         return {
           id: `meetup-${mt.id}`,
           from: String(mt.createdBy ?? mt.created_by) === String(user.id) ? "me" : "them",

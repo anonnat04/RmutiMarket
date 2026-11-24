@@ -81,6 +81,25 @@ async function postMeetupChatMessage({ appointmentId, event, actorId }) {
       if (!conversationId) conversationId = convs[0].id;
     }
 
+    // 3.5 ถ้ายังไม่พบ หาจากห้องใดๆ ที่มีทั้งผู้ซื้อและผู้ขายคู่นี้ (ไม่จำกัดเฉพาะ product_id)
+    if (!conversationId) {
+      const { data: buyerMems } = await supabase
+        .from("conversation_members")
+        .select("conversation_id")
+        .eq("user_id", txn.buyer_id);
+      if (buyerMems && buyerMems.length > 0) {
+        const candidateIds = buyerMems.map((m) => m.conversation_id);
+        const { data: commonMems } = await supabase
+          .from("conversation_members")
+          .select("conversation_id")
+          .in("conversation_id", candidateIds)
+          .eq("user_id", txn.seller_id);
+        if (commonMems && commonMems.length > 0) {
+          conversationId = commonMems[0].conversation_id;
+        }
+      }
+    }
+
     // 4. ยังไม่มีห้องแชทของคู่นี้ → สร้างให้ใหม่โดยใส่ครบทุกฟิลด์เพื่อความเข้ากันได้
     if (!conversationId) {
       const { data: newConv, error: convErr } = await supabase

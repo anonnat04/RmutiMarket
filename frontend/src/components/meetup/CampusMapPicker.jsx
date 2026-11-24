@@ -295,7 +295,7 @@ export function CampusMapPicker({ value, onChange }) {
   return (
     <div className="flex flex-col gap-3">
       {/* ─── แผนที่ ──────────────────────────────────────────────────── */}
-      <div className="relative overflow-hidden rounded-2xl border border-surface-border shadow-sm">
+      <div className="relative z-0 isolate overflow-hidden rounded-2xl border border-surface-border shadow-sm">
         {/* Filter bar ลอยบนแผนที่ */}
         <div
           style={{
@@ -303,7 +303,7 @@ export function CampusMapPicker({ value, onChange }) {
             top: 10,
             left: '50%',
             transform: 'translateX(-50%)',
-            zIndex: 1000,
+            zIndex: 20,
             display: 'flex',
             gap: 6,
             flexWrap: 'nowrap',
@@ -345,7 +345,7 @@ export function CampusMapPicker({ value, onChange }) {
             position: 'absolute',
             top: 10,
             right: 10,
-            zIndex: 1000,
+            zIndex: 20,
             display: 'flex',
             flexDirection: 'column',
             gap: 6,

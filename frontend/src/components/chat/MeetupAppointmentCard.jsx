@@ -152,7 +152,7 @@ function StatusBadge({ status }) {
     return <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">ยืนยันแล้ว</span>;
   }
   if (status === "cancelled") {
-    return <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 shrink-0">ปฏิเสธ/ยกเลิกแล้ว</span>;
+    return <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-red-50 text-red-600 border border-red-200 shrink-0">ยกเลิกแล้ว</span>;
   }
   if (status === "completed") {
     return <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">เสร็จสิ้น</span>;
@@ -273,7 +273,7 @@ export function MeetupAppointmentCard({ data, currentUserId, onActionDone }) {
               ? "✅ นัดรับได้รับการยืนยันแล้ว"
               : data.event === "rejected"
               ? "❌ คำขอนัดรับถูกปฏิเสธ"
-              : "❌ คำขอนัดรับถูกยกเลิก"}
+              : "❌ นัดหมายถูกยกเลิกแล้ว"}
           </h4>
           <StatusBadge status={isCompleted ? "completed" : confirmed ? "confirmed" : "cancelled"} />
         </div>
@@ -327,7 +327,7 @@ export function MeetupAppointmentCard({ data, currentUserId, onActionDone }) {
           ) : confirmedState ? (
             <span className="text-emerald-700">✅ นัดรับได้รับการยืนยันแล้ว</span>
           ) : cancelledState ? (
-            <span className="text-red-600">❌ คำขอนัดรับถูกปฏิเสธ/ยกเลิก</span>
+            <span className="text-red-600">❌ นัดหมายถูกยกเลิกแล้ว</span>
           ) : status === "no_show" ? (
             <span className="text-rose-600">⚠️ ไม่มาตามนัด</span>
           ) : (
@@ -369,9 +369,14 @@ export function MeetupAppointmentCard({ data, currentUserId, onActionDone }) {
             </button>
           </div>
         ) : cancelledState || status === "no_show" ? (
-          <p className="text-[11px] text-red-500 text-center font-medium">
-            {status === "no_show" ? "นัดหมายนี้ถูกตัดจบเพราะไม่มาตามนัด" : "นัดหมายนี้ถูกยกเลิกแล้ว"} สามารถสร้างคำขอนัดรับใหม่ได้
-          </p>
+          <div className="rounded-xl bg-red-50/70 p-2.5 border border-red-100 text-center space-y-1">
+            <p className="text-xs font-bold text-red-600">
+              {status === "no_show" ? "⚠️ นัดหมายนี้ถูกตัดจบเพราะไม่มาตามนัด" : "❌ นัดหมายนี้ถูกยกเลิกแล้ว"}
+            </p>
+            <p className="text-[11px] text-red-400">
+              หากต้องการนัดใหม่ สามารถสร้างคำขอนัดรับใหม่ได้จากหน้ารายละเอียดสินค้า
+            </p>
+          </div>
         ) : canAccept ? (
           <div className="space-y-2">
             <p className="text-[11px] text-gray-500">ผู้ขายสามารถเลือกดำเนินการได้</p>

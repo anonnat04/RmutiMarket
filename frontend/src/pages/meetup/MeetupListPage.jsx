@@ -243,7 +243,7 @@ function MiniMap({ meetup }) {
   return (
     <div
       ref={mapRef}
-      style={{ height: 180, borderRadius: 12, overflow: 'hidden', border: '1px solid #e5e7eb', background: '#f3f4f6' }}
+      style={{ height: 180, borderRadius: 12, overflow: 'hidden', border: '1px solid #e5e7eb', background: '#f3f4f6', position: 'relative', zIndex: 0, isolation: 'isolate' }}
     />
   );
 }
