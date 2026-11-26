@@ -87,12 +87,6 @@ async function isConversationMember(conversationId, userId) {
     .select("user_id")
     .eq("conversation_id", conversationId);
   if (!error && (members || []).some((m) => String(m.user_id) === String(userId))) return true;
-  const { data: oldConv } = await supabase
-    .from("conversations")
-    .select("buyer_id, seller_id")
-    .eq("id", conversationId)
-    .maybeSingle();
-  if (oldConv && [oldConv.buyer_id, oldConv.seller_id].some((id) => String(id) === String(userId))) return true;
   // Historical rooms can lack membership rows. A persisted message authored by
   // the verified user proves participation without trusting client supplied IDs.
   const { data: ownMessage } = await supabase
@@ -351,15 +345,7 @@ function setupChatSocket(httpServer, allowedOrigin) {
                 .select("user_id")
                 .eq("conversation_id", parseInt(conversationId));
 
-              let memberIds = (members || []).map((m) => m.user_id);
-              if (memberIds.length === 0) {
-                const { data: oldConversation } = await supabase
-                  .from("conversations")
-                  .select("buyer_id, seller_id")
-                  .eq("id", convId)
-                  .maybeSingle();
-                memberIds = [oldConversation?.buyer_id, oldConversation?.seller_id].filter(Boolean);
-              }
+              const memberIds = (members || []).map((m) => m.user_id);
               const recipientIds = memberIds
                 .filter((uid) => String(uid) !== String(senderId));
 

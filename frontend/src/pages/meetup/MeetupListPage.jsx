@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { CalendarClock, MapPin, ChevronDown, ChevronUp, Bell, ArrowLeft, ChevronRight, CheckCircle2, XCircle, RefreshCw, Star, AlertTriangle, ShoppingBag } from 'lucide-react';
+import { CalendarClock, MapPin, ChevronDown, ChevronUp, Bell, ArrowLeft, ChevronRight, CheckCircle2, XCircle, RefreshCw, Star, AlertTriangle, ShoppingBag, Clock, Calendar, Pin, PartyPopper, PackageCheck, Tag } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useMeetupStore, getCheckInWindow } from '@/store/meetupStore';
 import { useNotificationStore } from '@/store/notificationStore';
@@ -154,20 +154,23 @@ function mapAppointmentFromApi(m) {
 
 function CheckInWindowBadge({ status }) {
   const map = {
-    waiting: { label: '🕐 ยังไม่ถึงเวลาเปิด Check-in', style: { background: '#f3f4f6', color: '#6b7280' } },
-    open: { label: '🟢 เปิด Check-in แล้ว', style: { background: '#dcfce7', color: '#16a34a' } },
-    late: { label: '⚠️ อยู่ในช่วง Check-in สาย', style: { background: '#fef3c7', color: '#b45309' } },
-    closed: { label: '🔴 ปิด Check-in แล้ว', style: { background: '#fee2e2', color: '#dc2626' } },
-    unknown: { label: '—', style: { background: '#f3f4f6', color: '#9ca3af' } },
+    waiting: { label: 'ยังไม่ถึงเวลาเปิด Check-in', Icon: Clock, style: { background: '#f3f4f6', color: '#6b7280' } },
+    open: { label: 'เปิด Check-in แล้ว', Icon: CheckCircle2, style: { background: '#dcfce7', color: '#16a34a' } },
+    late: { label: 'อยู่ในช่วง Check-in สาย', Icon: AlertTriangle, style: { background: '#fef3c7', color: '#b45309' } },
+    closed: { label: 'ปิด Check-in แล้ว', Icon: XCircle, style: { background: '#fee2e2', color: '#dc2626' } },
+    unknown: { label: '—', Icon: null, style: { background: '#f3f4f6', color: '#9ca3af' } },
   };
   const cfg = map[status] || map.unknown;
+  const BadgeIcon = cfg.Icon;
   return (
     <span
       style={{
         fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 999,
+        display: 'inline-flex', alignItems: 'center', gap: 4,
         ...cfg.style,
       }}
     >
+      {BadgeIcon && <BadgeIcon size={12} />}
       {cfg.label}
     </span>
   );
@@ -431,12 +434,12 @@ export function MeetupListPage() {
         type: 'meetup',
       },
       reject_request: {
-        title: '❌ ผู้ขายปฏิเสธคำขอนัดรับ',
+        title: 'ผู้ขายปฏิเสธคำขอนัดรับ',
         message: `คำขอนัดรับสินค้า ${meetup.productTitle} ถูกปฏิเสธ`,
         type: 'meetup',
       },
       cancel_request: {
-        title: '❌ นัดรับถูกยกเลิก',
+        title: 'นัดรับถูกยกเลิก',
         message: `นัดรับสินค้า ${meetup.productTitle} ถูกยกเลิกแล้ว`,
         type: 'meetup',
       },
@@ -548,7 +551,9 @@ export function MeetupListPage() {
             <ArrowLeft size={18} />
           </button>
           <div>
-            <h1 className="text-lg font-extrabold text-ink-900 sm:text-xl">📅 นัดรับสินค้าของฉัน</h1>
+            <h1 className="text-lg font-extrabold text-ink-900 sm:text-xl flex items-center gap-2">
+              <Calendar size={20} className="text-brand-500 shrink-0" /> นัดรับสินค้าของฉัน
+            </h1>
             <p className="text-xs text-ink-500">ติดตามสถานะการนัดพบและส่งมอบสินค้า</p>
           </div>
         </div>
@@ -715,8 +720,8 @@ export function MeetupListPage() {
                   </div>
                 </div>
                 {m.status === 'completed' && myReview ? (
-                  <span className="inline-block rounded-full px-3 py-1 text-xs font-bold bg-emerald-100 text-emerald-800 shrink-0">
-                    ✅ เสร็จสิ้นแล้ว
+                  <span className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold bg-emerald-100 text-emerald-800 shrink-0">
+                    <CheckCircle2 size={12} /> เสร็จสิ้นแล้ว
                   </span>
                 ) : (
                   <MeetupStatusBadge status={m.status} />
@@ -736,27 +741,40 @@ export function MeetupListPage() {
               </div>
 
               {m.note && (
-                <p className="rounded-lg bg-orange-50 px-3 py-2 text-xs leading-relaxed text-orange-900 break-words">
-                  📌 รายละเอียดจุดเพิ่มเติม: {m.note}
+                <p className="rounded-lg bg-orange-50 px-3 py-2 text-xs leading-relaxed text-orange-900 break-words flex items-start gap-1.5">
+                  <Pin size={13} className="shrink-0 text-orange-600 mt-0.5" />
+                  <span>รายละเอียดจุดเพิ่มเติม: {m.note}</span>
                 </p>
               )}
 
               {mapOpen && (
                 <div style={{ marginTop: 4 }}>
                   <MiniMap meetup={m} />
-                  <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>📍 {m.locationName}</p>
-                  {m.note && m.note !== m.locationName && (<p style={{ fontSize: 11, color: '#78716c', marginTop: 2 }}>💬 หมายเหตุ: {m.note}</p>)}
+                  <p className="mt-1 text-[11px] text-gray-400 flex items-center gap-1">
+                    <MapPin size={11} className="text-brand-500" /> {m.locationName}
+                  </p>
+                  {m.note && m.note !== m.locationName && (
+                    <p className="mt-0.5 text-[11px] text-stone-500 flex items-center gap-1">
+                      <Pin size={11} className="text-orange-500" /> หมายเหตุ: {m.note}
+                    </p>
+                  )}
                 </div>
               )}
 
               {/* ─── PENDING: ผู้ขายตอบรับ / ผู้ซื้อรอ ─── */}
               {m.status === 'pending' && role === 'seller' && (
                 <div className="bg-orange-50 rounded-xl p-3 flex flex-col gap-2">
-                  <p className="text-xs font-bold text-orange-700">🔔 ผู้ซื้อขอนัดรับสินค้า — กรุณาตอบรับ</p>
+                  <p className="text-xs font-bold text-orange-700 inline-flex items-center gap-1.5">
+                    <Bell size={13} /> ผู้ซื้อขอนัดรับสินค้า — กรุณาตอบรับ
+                  </p>
                   <p className="text-[11px] text-orange-600">หากต้องการวัน/เวลาอื่น กรุณาปฏิเสธคำขอนี้ แล้วให้ผู้ซื้อสร้างนัดใหม่ (ระบบไม่มีการเลื่อนนัด)</p>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Button size="sm" onClick={() => handleRespond(m, 'confirm')}>✅ ยืนยันนัดหมาย</Button>
-                    <Button size="sm" variant="ghost" onClick={() => handleRespond(m, 'reject')}>❌ ปฏิเสธ</Button>
+                    <Button size="sm" onClick={() => handleRespond(m, 'confirm')}>
+                      <CheckCircle2 size={14} /> ยืนยันนัดหมาย
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => handleRespond(m, 'reject')}>
+                      <XCircle size={14} /> ปฏิเสธ
+                    </Button>
                     {m.productId && (
                       <GoToChatButton
                         onClick={() => navigate(`/chat?productId=${m.productId}&partnerId=${m.buyerId}`)}
@@ -769,7 +787,9 @@ export function MeetupListPage() {
 
               {m.status === 'pending' && role === 'buyer' && (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2">
-                  <p className="text-xs text-ink-500 flex-1">⏳ รอผู้ขายตอบรับคำขอนัดรับ...</p>
+                  <p className="text-xs text-ink-500 flex-1 inline-flex items-center gap-1.5">
+                    <Clock size={13} className="text-ink-400" /> รอผู้ขายตอบรับคำขอนัดรับ...
+                  </p>
                   <div className="flex items-center gap-2">
                     {m.productId && (
                       <GoToChatButton
@@ -792,7 +812,9 @@ export function MeetupListPage() {
               {m.status === 'confirmed' && (
                 <div className="flex flex-col gap-2 rounded-xl bg-orange-50/50 p-3 border border-orange-100">
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span className="font-bold text-orange-950">📍 สถานะเช็คอิน</span>
+                    <span className="font-bold text-orange-950 inline-flex items-center gap-1.5">
+                      <MapPin size={13} className="text-orange-600" /> สถานะเช็คอิน
+                    </span>
                     {checkInWindow && <CheckInWindowBadge status={checkInWindow.status} />}
                   </div>
 
@@ -828,7 +850,9 @@ export function MeetupListPage() {
                     </div>
 
                     {bothCheckedIn && (
-                      <p className="text-[11px] font-semibold text-emerald-600 mt-0.5">🎉 มาครบทั้งสองฝ่ายแล้ว!</p>
+                      <p className="text-[11px] font-semibold text-emerald-600 mt-0.5 inline-flex items-center gap-1">
+                        <PartyPopper size={13} /> มาครบทั้งสองฝ่ายแล้ว!
+                      </p>
                     )}
                   </div>
 
@@ -845,14 +869,17 @@ export function MeetupListPage() {
                         to={`/meetups/${m.id}/checkin`}
                         className="inline-flex items-center gap-1.5 rounded-xl border border-orange-200 bg-white hover:bg-orange-50 px-3.5 py-2 text-xs font-bold text-orange-700 transition-colors shadow-2xs"
                       >
-                        📍 หน้าเช็คอิน GPS
+                        <MapPin size={13} className="text-orange-500" />
+                        หน้าเช็คอิน GPS
                         <ChevronRight size={13} />
                       </Link>
                     </div>
                   )}
 
                   {bothDelivered && (
-                    <span className="text-xs font-medium text-brand-600">✅ ทั้งสองฝ่ายยืนยันรับ–ส่งสินค้าครบแล้ว</span>
+                    <span className="text-xs font-medium text-brand-600 inline-flex items-center gap-1">
+                      <CheckCircle2 size={13} /> ทั้งสองฝ่ายยืนยันรับ–ส่งสินค้าครบแล้ว
+                    </span>
                   )}
 
                   {canCancel && (
@@ -880,8 +907,10 @@ export function MeetupListPage() {
                         <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 font-bold text-xs border border-emerald-200">
                           <CheckCircle2 size={14} className="text-emerald-600" />
                           เสร็จสิ้นแล้ว (ให้คะแนนแล้ว)
-                          <span className="ml-1 text-amber-500 font-bold">
-                            {'★'.repeat(myReview.rating || 5)}
+                          <span className="ml-1 inline-flex items-center gap-0.5 text-amber-500 font-bold">
+                            {Array.from({ length: myReview.rating || 5 }).map((_, idx) => (
+                              <Star key={idx} size={11} className="fill-amber-400 text-amber-500" />
+                            ))}
                           </span>
                         </span>
                         {myReview.comment && (
@@ -907,7 +936,7 @@ export function MeetupListPage() {
                           onClick={() => setReviewTarget({ meetup: m, role })}
                           className="bg-[#f95721] hover:bg-orange-600 text-white font-bold text-xs shadow-xs"
                         >
-                          ⭐ ให้คะแนน
+                          <Star size={13} className="fill-white" /> ให้คะแนน
                         </Button>
                         <Link
                           to={targetUserId ? `/profile/${targetUserId}/reviews` : '/reviews'}
@@ -920,14 +949,15 @@ export function MeetupListPage() {
                     ) : (
                       // นัดถูกมาร์คว่าเสร็จแล้ว แต่ฝั่งเรายังไม่ได้กดยืนยัน → พาไปกดยืนยันก่อน
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[11px] font-semibold text-amber-700">
-                          ⏳ อีกฝ่ายยืนยันแล้ว — คุณต้องกดยืนยัน{role === 'buyer' ? 'รับสินค้า' : 'ส่งมอบสินค้า'}ก่อนจึงจะรีวิวได้
+                        <span className="text-[11px] font-semibold text-amber-700 inline-flex items-center gap-1">
+                          <Clock size={12} /> อีกฝ่ายยืนยันแล้ว — คุณต้องกดยืนยัน{role === 'buyer' ? 'รับสินค้า' : 'ส่งมอบสินค้า'}ก่อนจึงจะรีวิวได้
                         </span>
                         <Link
                           to={`/meetups/${m.id}/checkin`}
                           className="inline-flex items-center gap-1.5 rounded-xl border border-orange-200 bg-white hover:bg-orange-50 px-3.5 py-2 text-xs font-bold text-orange-700 transition-colors shadow-2xs"
                         >
-                          📦 ไปยืนยัน{role === 'buyer' ? 'รับสินค้า' : 'ส่งมอบสินค้า'}
+                          <PackageCheck size={14} className="text-orange-500" />
+                          ไปยืนยัน{role === 'buyer' ? 'รับสินค้า' : 'ส่งมอบสินค้า'}
                           <ChevronRight size={13} />
                         </Link>
                       </div>
@@ -949,10 +979,12 @@ export function MeetupListPage() {
                     </p>
                     <div className="flex flex-wrap gap-2 pt-1 text-[11px] font-semibold">
                       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md ${m.buyerCheckedIn ? "text-emerald-700 bg-emerald-100/80" : "text-rose-700 bg-rose-100/90"}`}>
-                        🛒 ผู้ซื้อ ({m.buyerName || 'ผู้ซื้อ'}): {m.buyerCheckedIn ? "เช็คอินแล้ว ✅" : "ไม่มาเช็คอิน ❌ (ถูกตัดคะแนน)"}
+                        <ShoppingBag size={11} /> ผู้ซื้อ ({m.buyerName || 'ผู้ซื้อ'}): {m.buyerCheckedIn ? "เช็คอินแล้ว" : "ไม่มาเช็คอิน (ถูกตัดคะแนน)"}
+                        {m.buyerCheckedIn ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
                       </span>
                       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md ${m.sellerCheckedIn ? "text-emerald-700 bg-emerald-100/80" : "text-rose-700 bg-rose-100/90"}`}>
-                        🏷️ ผู้ขาย ({m.sellerName || 'ผู้ขาย'}): {m.sellerCheckedIn ? "เช็คอินแล้ว ✅" : "ไม่มาเช็คอิน ❌ (ถูกตัดคะแนน)"}
+                        <Tag size={11} /> ผู้ขาย ({m.sellerName || 'ผู้ขาย'}): {m.sellerCheckedIn ? "เช็คอินแล้ว" : "ไม่มาเช็คอิน (ถูกตัดคะแนน)"}
+                        {m.sellerCheckedIn ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
                       </span>
                     </div>
                   </div>

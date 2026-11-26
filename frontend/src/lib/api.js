@@ -286,6 +286,21 @@ export const api = {
   adminDeleteListing: (token, id, reason = "") =>
     request(`/api/admin/listings/${id}`, { method: "DELETE", token, body: { reason } }),
 
+  // ── Wanted Posts (โพสต์ตามหาสินค้า) ──
+  adminGetWantedPosts: (token, { q = "", status = "", category = "", page = 1, limit = 20 } = {}) => {
+    const qs = new URLSearchParams();
+    if (q) qs.set("q", q);
+    if (status && status !== "all") qs.set("status", status);
+    if (category && category !== "all") qs.set("category", category);
+    qs.set("page", page);
+    qs.set("limit", limit);
+    return request(`/api/admin/wanted-posts?${qs.toString()}`, { token });
+  },
+  adminDeleteWantedPost: (token, id, reason = "") =>
+    request(`/api/admin/wanted-posts/${id}`, { method: "DELETE", token, body: { reason } }),
+  adminUpdateWantedPostStatus: (token, id, statusId, reason = "") =>
+    request(`/api/admin/wanted-posts/${id}/status`, { method: "PATCH", token, body: { statusId, reason } }),
+
   // ── Reviews (paginated, with reviewer/reviewee info) ──
   adminGetReviews: (token, { q = "", userId = "", rating = "", page = 1, limit = 20 } = {}) => {
     const qs = new URLSearchParams();

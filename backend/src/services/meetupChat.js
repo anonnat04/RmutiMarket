@@ -33,8 +33,8 @@ async function postMeetupChatMessage({ appointmentId, event, actorId }) {
     const [{ data: product }, { data: users }, { data: convs }] = await Promise.all([
       supabase.from("products").select("title, price").eq("id", txn.product_id).maybeSingle(),
       supabase.from("users").select("id, username, full_name").in("id", [txn.buyer_id, txn.seller_id]),
-      supabase.from("conversations").select("id, product_id, listing_id, buyer_id, seller_id")
-        .or(`product_id.eq.${txn.product_id},listing_id.eq.${txn.product_id}`),
+      supabase.from("conversations").select("id, product_id")
+        .eq("product_id", txn.product_id),
     ]);
 
     // หาห้องแชทที่มีทั้งผู้ซื้อและผู้ขายของนัดนี้
@@ -100,15 +100,12 @@ async function postMeetupChatMessage({ appointmentId, event, actorId }) {
       }
     }
 
-    // 4. ยังไม่มีห้องแชทของคู่นี้ → สร้างให้ใหม่โดยใส่ครบทุกฟิลด์เพื่อความเข้ากันได้
+    // 4. ยังไม่มีห้องแชทของคู่นี้ → สร้างให้ใหม่
     if (!conversationId) {
       const { data: newConv, error: convErr } = await supabase
         .from("conversations")
         .insert({
           product_id: txn.product_id,
-          listing_id: txn.product_id,
-          buyer_id: txn.buyer_id,
-          seller_id: txn.seller_id,
         })
         .select("id")
         .maybeSingle();
@@ -121,13 +118,6 @@ async function postMeetupChatMessage({ appointmentId, event, actorId }) {
         ]).catch(() => {});
       } else if (convErr) {
         console.warn("[meetupChat] สร้างห้องแชทไม่สำเร็จ:", convErr?.message);
-        // Fallback: ลอง insert เฉพาะ product_id
-        const { data: fallbackConv } = await supabase
-          .from("conversations")
-          .insert({ product_id: txn.product_id })
-          .select("id")
-          .maybeSingle();
-        if (fallbackConv) conversationId = fallbackConv.id;
       }
     }
 

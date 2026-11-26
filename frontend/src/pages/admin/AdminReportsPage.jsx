@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useReportStore } from '@/store/reportStore';
-import { ShieldAlert, CheckCircle, XCircle, Search, Filter, AlertTriangle } from 'lucide-react';
+import { ShieldAlert, CheckCircle, XCircle, Search, Filter, AlertTriangle, Clock } from 'lucide-react';
 
 export function AdminReportsPage() {
   const reports = useReportStore((s) => s.reports);
@@ -80,13 +80,13 @@ export function AdminReportsPage() {
                 </div>
 
                 <span
-                  className={`rounded-full px-3 py-1 text-xs font-bold ${
+                  className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold ${
                     isPending
                       ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
                       : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
                   }`}
                 >
-                  {isPending ? '⏳ รอตรวจสอบ' : '✅ ตรวจสอบแล้ว'}
+                  {isPending ? <><Clock size={12} /> รอตรวจสอบ</> : <><CheckCircle size={12} /> ตรวจสอบแล้ว</>}
                 </span>
               </div>
 
@@ -107,9 +107,9 @@ export function AdminReportsPage() {
                       const note = prompt('บันทึกมาตรการที่ดำเนินการ (เช่น ตักเตือน, แบนบัญชี):') || 'ตักเตือนผู้ใช้';
                       resolveReport(r.id, 'resolved', note);
                     }}
-                    className="rounded-xl bg-emerald-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 transition-colors"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 transition-colors"
                   >
-                    ✅ ดำเนินการและบันทึกมาตรการ
+                    <CheckCircle size={13} /> ดำเนินการและบันทึกมาตรการ
                   </button>
                   <button
                     onClick={() => resolveReport(r.id, 'dismissed', 'รายงานไม่พบมูลความจริง')}

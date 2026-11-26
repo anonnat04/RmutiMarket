@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Link } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, SlidersHorizontal, Award, AlertTriangle } from "lucide-react";
 // api.* อาจคืน response เต็มของ axios หรือคืน body เลย — รองรับทั้งสองแบบ
 const unwrap = (res) => (res && typeof res.status === "number" && "data" in res ? res.data : res);
 
@@ -46,17 +46,21 @@ function getTone(score) {
 function HistoryRow({ item }) {
   const n = Number(item.changeAmount) || 0;
   const positive = n > 0;
-  const icon = item.sourceType === "ADMIN_ADJUST" ? "🛠️" : positive ? "🌟" : "⚠️";
+  const Icon = item.sourceType === "ADMIN_ADJUST" ? SlidersHorizontal : positive ? Award : AlertTriangle;
   const amountColor = positive ? "text-emerald-600" : n < 0 ? "text-red-600" : "text-gray-500";
 
   return (
     <li className="flex items-start gap-3 py-3">
       <div
-        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-lg ${
-          positive ? "bg-emerald-50" : "bg-red-50"
+        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
+          item.sourceType === "ADMIN_ADJUST"
+            ? "bg-amber-50 text-amber-600"
+            : positive
+            ? "bg-emerald-50 text-emerald-600"
+            : "bg-red-50 text-red-600"
         }`}
       >
-        {icon}
+        <Icon size={18} />
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-bold text-gray-900">{item.title}</p>

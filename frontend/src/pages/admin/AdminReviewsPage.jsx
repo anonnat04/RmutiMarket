@@ -192,12 +192,12 @@ export function AdminReviewsPage() {
           }}
           className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700 outline-none"
         >
-          <option value="">ทุกคะแนนดาว (1 - 5 ⭐)</option>
-          <option value="5">5 ดาว ⭐⭐⭐⭐⭐</option>
-          <option value="4">4 ดาว ⭐⭐⭐⭐</option>
-          <option value="3">3 ดาว ⭐⭐⭐</option>
-          <option value="2">2 ดาว ⭐⭐</option>
-          <option value="1">1 ดาว ⭐</option>
+          <option value="">ทุกคะแนนดาว (1 - 5 ดาว)</option>
+          <option value="5">5 ดาว (ยอดเยี่ยม)</option>
+          <option value="4">4 ดาว (ดีมาก)</option>
+          <option value="3">3 ดาว (ปานกลาง)</option>
+          <option value="2">2 ดาว (ต้องปรับปรุง)</option>
+          <option value="1">1 ดาว (ไม่ประทับใจ)</option>
         </select>
       </div>
 

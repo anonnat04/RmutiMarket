@@ -26,7 +26,7 @@ function makeTargetIcon(L, label = 'จุดนัดรับ') {
       transform:rotate(-45deg);
       box-shadow:0 4px 12px rgba(234,88,12,0.5);
     ">
-      <span style="transform:rotate(45deg);font-size:20px;line-height:1">📍</span>
+      <span style="transform:rotate(45deg);width:12px;height:12px;border-radius:50%;background:#fff;display:block"></span>
     </div>
   `;
   return L.divIcon({
@@ -41,7 +41,7 @@ function makeTargetIcon(L, label = 'จุดนัดรับ') {
 function makeUserLiveIcon(L, role = 'me', name = 'ฉัน') {
   const isMe = role === 'me';
   const bgColor = isMe ? '#2563eb' : '#16a34a'; // ฟ้า = ตัวเรา, เขียว = อีกฝ่าย
-  const emoji = isMe ? '👤' : '🤝';
+  const initial = isMe ? 'ฉัน' : (name || '?').trim().charAt(0).toUpperCase();
 
   const html = `
     <div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%, -100%)">
@@ -58,9 +58,9 @@ function makeUserLiveIcon(L, role = 'me', name = 'ฉัน') {
           border:3px solid #fff;border-radius:50%;
           display:flex;align-items:center;justify-content:center;
           box-shadow:0 3px 8px rgba(0,0,0,0.3);
-          font-size:14px;
+          font-size:11px;font-weight:800;color:#fff;
         ">
-          ${emoji}
+          ${initial}
         </div>
         <div style="
           position:absolute;inset:-4px;border-radius:50%;
@@ -159,7 +159,7 @@ export default function RealtimeMeetupMap({
         targetMarkerRef.current = leafletRef.current
           .marker([targetPoint.lat, targetPoint.lng], { icon })
           .addTo(map)
-          .bindPopup(`<b>📍 ${targetPoint.name || 'จุดนัดรับ'}</b><br/><span style="color:#666">จุดหมายปลายทาง</span>`)
+          .bindPopup(`<b>${targetPoint.name || 'จุดนัดรับ'}</b><br/><span style="color:#666">จุดหมายปลายทาง</span>`)
           .openPopup();
       }
 

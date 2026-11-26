@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Star, ShieldCheck, ArrowLeft, CheckCircle, MessageSquare, Award, Camera, Loader2 } from 'lucide-react';
+import { Star, ShieldCheck, ArrowLeft, CheckCircle, MessageSquare, Award, Camera, Loader2, Package, X } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { api } from '@/lib/api';
 
@@ -352,9 +352,12 @@ export function ReviewsPage() {
                       className="h-10 w-10 rounded-lg object-cover border border-surface-border flex-shrink-0"
                     />
                   )}
-                  <p className="text-[11px] font-medium text-ink-500">
-                    📦 สินค้าที่ซื้อ-ขาย:{' '}
-                    <span className="font-semibold text-ink-800">{r.productTitle}</span>
+                  <p className="text-[11px] font-medium text-ink-500 flex items-center gap-1.5">
+                    <Package size={13} className="text-brand-500 shrink-0" />
+                    <span>
+                      สินค้าที่ซื้อ-ขาย:{' '}
+                      <span className="font-semibold text-ink-800">{r.productTitle}</span>
+                    </span>
                   </p>
                 </div>
               )}
@@ -373,9 +376,10 @@ export function ReviewsPage() {
             <img src={activeImage} alt="รูปรีวิวขนาดเต็ม" className="max-h-[80vh] w-auto rounded-xl object-contain mx-auto" />
             <button
               onClick={() => setActiveImage(null)}
-              className="absolute top-4 right-4 rounded-full bg-black/60 p-2 text-white hover:bg-black"
+              aria-label="ปิด"
+              className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black transition-colors"
             >
-              ✕
+              <X size={16} />
             </button>
           </div>
         </div>

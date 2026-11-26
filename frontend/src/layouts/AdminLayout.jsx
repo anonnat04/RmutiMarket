@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate, Link } from 'react-router-dom';
 import {
-  LayoutDashboard, Users, ShoppingBag, Package, Star,
+  LayoutDashboard, Users, ShoppingBag, Search, Package, Star,
   ShieldCheck, LogOut, ShieldAlert, Store
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
@@ -31,6 +31,7 @@ export function AdminLayout() {
     { label: 'ภาพรวมระบบ', sub: 'Dashboard', path: '/admin', icon: LayoutDashboard, end: true },
     { label: 'จัดการผู้ใช้งาน', sub: 'Users', path: '/admin/users', icon: Users },
     { label: 'จัดการประกาศสินค้า', sub: 'Listings', path: '/admin/listings', icon: ShoppingBag },
+    { label: 'จัดการโพสต์ตามหาสินค้า', sub: 'Wanted Posts', path: '/admin/wanted-posts', icon: Search },
     { label: 'จัดการรีวิวสินค้า/ผู้ใช้', sub: 'Reviews', path: '/admin/reviews', icon: Star },
     { label: 'สถิติหมวดหมู่สินค้า', sub: 'Categories', path: '/admin/categories', icon: Package },
     { label: 'รายงานและแจ้งปัญหา', sub: 'Reports & Help', path: '/admin/disputes', icon: ShieldAlert },
@@ -120,7 +121,9 @@ export function AdminLayout() {
           </div>
 
           <div className="rounded-xl bg-orange-50 border border-orange-100 p-3">
-            <p className="text-[10px] font-bold text-orange-700 mb-1">⚠️ Admin Zone</p>
+            <p className="text-[10px] font-bold text-orange-700 mb-1 flex items-center gap-1">
+              <ShieldAlert size={12} className="text-orange-600" /> Admin Zone
+            </p>
             <p className="text-[9px] text-orange-500 leading-relaxed">
               หน้านี้จำกัดสำหรับผู้ดูแลระบบเท่านั้น การกระทำทั้งหมดถูกบันทึก
             </p>

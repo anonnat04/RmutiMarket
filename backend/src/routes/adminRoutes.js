@@ -33,6 +33,11 @@ router.delete("/listings/:id", adminController.deleteListing);
 router.post("/listings/:id/remove", adminController.removeListing);
 router.post("/listings/:id/restore", adminController.restoreListing);
 
+// Wanted Posts (โพสต์ตามหาสินค้า)
+router.get("/wanted-posts", adminController.getAdminWantedPosts);
+router.delete("/wanted-posts/:id", adminController.deleteWantedPost);
+router.patch("/wanted-posts/:id/status", adminController.updateWantedPostStatus);
+
 // Reviews
 router.get("/reviews", adminController.getAdminReviews);
 router.delete("/reviews/:id", adminController.deleteReview);

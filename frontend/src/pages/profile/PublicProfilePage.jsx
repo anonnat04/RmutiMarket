@@ -12,7 +12,9 @@ import {
   Clock,
   Search,
   UserX,
-  Sparkles
+  Sparkles,
+  MapPin,
+  Landmark
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { ProductCard } from '@/components/product/ProductCard';
@@ -225,10 +227,13 @@ export function PublicProfilePage({ targetId, navigate }) {
                 </p>
               )}
 
-              <p className="text-xs text-gray-600 mt-1">
-                📍 {publicUser.campus || 'มทร.อีสาน นครราชสีมา'}
-                {publicUser.faculty ? ` · คณะ${publicUser.faculty}` : ''}
-                {publicUser.major ? ` · สาขา${publicUser.major}` : ''}
+              <p className="text-xs text-gray-600 mt-1 flex items-center gap-1.5">
+                <MapPin size={13} className="text-brand-500 shrink-0" />
+                <span>
+                  {publicUser.campus || 'มทร.อีสาน นครราชสีมา'}
+                  {publicUser.faculty ? ` · คณะ${publicUser.faculty}` : ''}
+                  {publicUser.major ? ` · สาขา${publicUser.major}` : ''}
+                </span>
               </p>
 
               <p className={`mt-2 text-xs font-medium ${publicUser.bio ? 'text-gray-700' : 'text-gray-400'}`}>
@@ -374,8 +379,8 @@ export function PublicProfilePage({ targetId, navigate }) {
                       </div>
 
                       {isResolved ? (
-                        <span className="rounded-xl bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700">
-                          ✅ ได้ของแล้ว
+                        <span className="inline-flex items-center gap-1 rounded-xl bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700">
+                          <CheckCircle2 size={12} /> ได้ของแล้ว
                         </span>
                       ) : (
                         <button
@@ -493,7 +498,7 @@ export function PublicProfilePage({ targetId, navigate }) {
           </div>
           {publicUser.faculty && (
             <div className="flex items-center gap-3">
-              <span className="text-base shrink-0">🏛️</span>
+              <Landmark size={18} className="text-brand-500 shrink-0" />
               <span>{publicUser.faculty} {publicUser.major ? `(${publicUser.major})` : ''}</span>
             </div>
           )}

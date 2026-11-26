@@ -2,7 +2,11 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
-import { FlatIcon } from "@/components/common/FlatIcon";
+import {
+  MessageCircle, Wifi, WifiOff, Trash2, ArrowLeft, BadgeCheck,
+  ChevronRight, CheckCheck, Calendar, AlertCircle, Maximize2, X,
+  Image as ImageIcon, Send, CheckCircle2
+} from "lucide-react";
 import { formatCurrency } from "@/utils/formatCurrency";
 import { useAuthStore } from "@/store/authStore";
 import {
@@ -563,7 +567,7 @@ export function ChatPage() {
           withPartner &&
           afterRoom &&
           String(pid) === String(active.productId) &&
-          ["pending", "confirmed", "completed", "cancelled", "rejected", "no_show"].includes(st) &&
+          ["pending", "confirmed"].includes(st) &&
           !referenced.has(String(mt.id))
         );
       })
@@ -650,13 +654,31 @@ export function ChatPage() {
       setSendError("การขายเสร็จสิ้นแล้ว ไม่สามารถส่งข้อความในห้องนี้ได้");
       return false;
     }
-    if (!isRealConversationId(active.id)) {
-      setSendError("ห้องแชทนี้ยังไม่พร้อมใช้งาน กรุณารีเฟรชหน้าแล้วลองใหม่");
-      return false;
+    let currentConvId = active.id;
+    if (!isRealConversationId(currentConvId)) {
+      try {
+        const convRes = await api.createOrGetConversation({
+          productId: active.productId,
+          partnerId: active.partnerId,
+        });
+        if (convRes?.conversationId) {
+          currentConvId = convRes.conversationId;
+          setActiveId(currentConvId);
+          setRooms((prev) =>
+            prev.map((r) => (r.id === active.id ? { ...r, id: currentConvId } : r))
+          );
+        } else {
+          setSendError("ห้องแชทนี้ยังไม่พร้อมใช้งาน กรุณารีเฟรชหน้าแล้วลองใหม่");
+          return false;
+        }
+      } catch (err) {
+        setSendError("ไม่สามารถสร้างห้องแชทได้: " + (err.message || "เกิดข้อผิดพลาด"));
+        return false;
+      }
     }
     setSendError("");
 
-    const roomId = String(active.id);
+    const roomId = String(currentConvId);
     const sender = { id: user?.id, name: user?.username || user?.full_name || "ฉัน" };
     const nowIso = new Date().toISOString();
     const tempId = `msg-${Date.now()}`;
@@ -806,7 +828,7 @@ export function ChatPage() {
       <aside className={`cm-card flex-col overflow-hidden ${activeId ? "hidden md:flex" : "flex"}`}>
         <div className="flex shrink-0 items-center justify-between border-b border-surface-border bg-white px-4 py-3.5">
           <div className="flex items-center gap-2">
-            <FlatIcon name="chat" size={22} />
+            <MessageCircle size={20} className="text-brand-500" strokeWidth={2.2} />
             <h2 className="text-base font-extrabold text-ink-900">ข้อความ</h2>
           </div>
           <span
@@ -817,7 +839,7 @@ export function ChatPage() {
                 : "border-amber-200 bg-amber-50 text-amber-700"
             }`}
           >
-            <FlatIcon name="wifi" size={12} />
+            {isConnected ? <Wifi size={12} /> : <WifiOff size={12} />}
             {isConnected ? "ออนไลน์" : "กำลังเชื่อมต่อ"}
           </span>
         </div>
@@ -866,9 +888,9 @@ export function ChatPage() {
                   }}
                   aria-label="ลบห้องแชท"
                   title="ลบห้องแชท"
-                  className="absolute right-2 top-2 hidden h-7 w-7 items-center justify-center rounded-lg bg-white/90 shadow-sm ring-1 ring-surface-border hover:bg-red-50 group-hover:flex"
+                  className="absolute right-2 top-2 hidden h-7 w-7 items-center justify-center rounded-lg bg-white/90 text-red-500 shadow-sm ring-1 ring-surface-border hover:bg-red-50 group-hover:flex"
                 >
-                  <FlatIcon name="trash" size={14} />
+                  <Trash2 size={14} />
                 </button>
               </div>
             );
@@ -890,15 +912,15 @@ export function ChatPage() {
                     navigate("/chat", { replace: true });
                   }}
                   aria-label="กลับไปรายการแชท"
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-surface-border bg-white hover:bg-surface-muted md:hidden"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-surface-border bg-white text-ink-700 hover:bg-surface-muted md:hidden"
                 >
-                  <FlatIcon name="arrow-left" size={16} />
+                  <ArrowLeft size={16} />
                 </button>
                 <Avatar name={active.name} src={active.partnerImage} size={40} />
                 <div className="min-w-0">
                   <p className="flex items-center gap-1 truncate text-sm font-extrabold text-ink-900">
                     {active.name}
-                    <FlatIcon name="verified" size={15} />
+                    <BadgeCheck size={15} className="text-brand-500 shrink-0" />
                   </p>
                   <p className={`flex items-center gap-1 text-[11px] font-semibold ${isConnected ? "text-emerald-600" : "text-ink-400"}`}>
                     <span className={`h-1.5 w-1.5 rounded-full ${isConnected ? "bg-emerald-500" : "bg-gray-300"}`} />
@@ -923,7 +945,7 @@ export function ChatPage() {
                   <span className="min-w-0">
                     <span className="flex items-center gap-1 truncate text-sm font-bold text-ink-900 group-hover:text-brand-600">
                       {active.productTitle}
-                      <FlatIcon name="chevron-right" size={12} />
+                      <ChevronRight size={13} className="text-ink-400" />
                     </span>
                     <span className="flex items-center gap-2">
                       <span className="text-sm font-extrabold text-brand-600">{formatCurrency(active.productPrice)}</span>
@@ -936,7 +958,7 @@ export function ChatPage() {
 
                 {ended ? (
                   <span className="flex shrink-0 select-none items-center gap-1.5 rounded-xl border border-gray-200 bg-gray-100 px-3 py-2 text-xs font-bold text-gray-500">
-                    <FlatIcon name="double-check" size={14} />
+                    <CheckCheck size={14} />
                     รายการสิ้นสุดแล้ว
                   </span>
                 ) : showMeetupButton ? (
@@ -945,7 +967,7 @@ export function ChatPage() {
                     onClick={() => navigate(`/products/${active.productId}/meetup`)}
                     className="flex shrink-0 items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-brand-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
                   >
-                    <FlatIcon name="calendar" size={16} className="brightness-0 invert" />
+                    <Calendar size={15} />
                     ตกลงเวลาแล้ว นัดรับสินค้า
                   </button>
                 ) : null}
@@ -953,8 +975,8 @@ export function ChatPage() {
             </header>
 
             {ended && (
-              <div className="mx-4 mt-3 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800">
-                <FlatIcon name="verified" size={16} />
+              <div className="mx-4 mt-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800">
+                <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
                 <span>
                   การขายนี้ <strong>เสร็จสิ้นแล้ว</strong> ประวัติการสนทนาและการนัดรับจะถูกเก็บไว้เป็นหลักฐาน
                 </span>
@@ -979,7 +1001,7 @@ export function ChatPage() {
 
               {messagesLoadError ? (
                 <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-red-600">
-                  <FlatIcon name="alert" size={32} />
+                  <AlertCircle size={32} className="text-red-500" />
                   <p>{messagesLoadError}</p>
                   <button
                     type="button"
@@ -991,8 +1013,8 @@ export function ChatPage() {
                 </div>
               ) : displayMessages.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-                  <span className="flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
-                    <FlatIcon name="chat" size={34} />
+                  <span className="flex h-16 w-16 items-center justify-center rounded-full bg-brand-50 text-brand-500">
+                    <MessageCircle size={30} strokeWidth={1.75} />
                   </span>
                   <p className="text-sm font-bold text-ink-800">เริ่มคุยกับ {active.name}</p>
                   <p className="max-w-xs text-xs text-ink-400">
@@ -1056,8 +1078,8 @@ export function ChatPage() {
                                 title="ดูรูปขนาดใหญ่"
                               >
                                 <img src={m.image} alt="รูปภาพในแชท" className="max-h-60 w-full rounded-xl object-cover" />
-                                <span className="absolute bottom-2 right-2 rounded-md bg-black/50 p-1 opacity-0 transition-opacity group-hover:opacity-100">
-                                  <FlatIcon name="fullscreen" size={13} className="brightness-0 invert" />
+                                <span className="absolute bottom-2 right-2 rounded-md bg-black/50 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100">
+                                  <Maximize2 size={13} />
                                 </span>
                               </button>
                             )}
@@ -1067,11 +1089,10 @@ export function ChatPage() {
                             <div className={`mt-0.5 flex items-center justify-end gap-1 text-[10px] ${mine ? "text-white/80" : "text-ink-400"}`}>
                               <span>{m.pending ? "กำลังส่ง…" : m.time}</span>
                               {mine && !m.pending && (
-                                <FlatIcon
-                                  name="double-check"
-                                  size={12}
-                                  className={m.isRead ? "" : "opacity-50"}
-                                  alt={m.isRead ? "อ่านแล้ว" : "ส่งแล้ว"}
+                                <CheckCheck
+                                  size={13}
+                                  className={m.isRead ? "text-white" : "opacity-50"}
+                                  aria-label={m.isRead ? "อ่านแล้ว" : "ส่งแล้ว"}
                                 />
                               )}
                             </div>
@@ -1101,17 +1122,17 @@ export function ChatPage() {
               {sendError && (
                 <div role="alert" className="flex items-center justify-between gap-2 bg-red-50 px-4 py-2 text-xs font-semibold text-red-700">
                   <span className="flex items-center gap-2">
-                    <FlatIcon name="alert" size={14} />
+                    <AlertCircle size={14} />
                     {sendError}
                   </span>
                   <button type="button" onClick={() => setSendError("")} aria-label="ปิดข้อความแจ้งเตือน">
-                    <FlatIcon name="close" size={12} />
+                    <X size={13} />
                   </button>
                 </div>
               )}
               {ended ? (
                 <div className="flex items-center justify-center gap-2 bg-gray-50 px-4 py-4 text-sm font-semibold text-ink-500">
-                  <FlatIcon name="double-check" size={18} />
+                  <CheckCheck size={18} />
                   การขายเสร็จสิ้นแล้ว ห้องแชทนี้ปิดการสนทนา (ดูประวัติย้อนหลังได้)
                 </div>
               ) : (
@@ -1122,9 +1143,9 @@ export function ChatPage() {
                   onClick={() => fileInputRef.current?.click()}
                   title="ส่งรูปภาพ"
                   aria-label="ส่งรูปภาพ"
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full hover:bg-brand-50"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-ink-500 hover:bg-brand-50 hover:text-brand-600 transition-colors"
                 >
-                  <FlatIcon name="gallery" size={22} />
+                  <ImageIcon size={20} />
                 </button>
                 <input
                   value={draft}
@@ -1138,10 +1159,10 @@ export function ChatPage() {
                   disabled={!draft.trim()}
                   aria-label="ส่งข้อความ"
                   className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full shadow-sm transition-colors ${
-                    draft.trim() ? "bg-brand-500 hover:bg-brand-600" : "cursor-not-allowed bg-gray-200"
+                    draft.trim() ? "bg-brand-500 text-white hover:bg-brand-600" : "cursor-not-allowed bg-gray-200 text-gray-400"
                   }`}
                 >
-                  <FlatIcon name="send" size={18} className={draft.trim() ? "brightness-0 invert" : "opacity-50"} />
+                  <Send size={17} />
                 </button>
               </form>
               )}
@@ -1163,9 +1184,9 @@ export function ChatPage() {
               type="button"
               onClick={() => setLightboxImage(null)}
               aria-label="ปิด"
-              className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-black/60 hover:bg-black"
+              className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black"
             >
-              <FlatIcon name="close" size={16} className="brightness-0 invert" />
+              <X size={16} />
             </button>
             <img src={lightboxImage} alt="รูปภาพขนาดเต็ม" className="max-h-[85vh] w-auto rounded-xl object-contain shadow-2xl" />
           </div>

@@ -3,7 +3,7 @@ import { useMyListingsStore } from '@/store/myListingsStore';
 import { useAuthStore } from '@/store/authStore';
 import { Modal } from '@/components/common/Modal';
 import { EmptyState } from '@/components/common/EmptyState';
-import { ShoppingBag, Tag, AlertCircle, Lock, CheckCircle2, XCircle } from 'lucide-react';
+import { ShoppingBag, Tag, AlertCircle, Lock, CheckCircle2, XCircle, Sparkles, FileText } from 'lucide-react';
 import { formatCurrency } from '@/utils/formatCurrency';
 import { api } from '@/lib/api';
 import { formatListing } from '@/services/productService';
@@ -246,11 +246,11 @@ function ProductRow({ product, onSelect, canOffer = true, reason = '', isSubmitt
         <p className="text-brand-600 font-extrabold text-sm mt-0.5">{formatCurrency(product.price)}</p>
         
         <div className="flex flex-wrap items-center gap-1.5 mt-1">
-          <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
-            ● ว่าง
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> ว่าง
           </span>
-          <span className="text-[10px] text-ink-600 font-medium bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">
-            ✨ สภาพ: {conditionLabel}
+          <span className="inline-flex items-center gap-1 text-[10px] text-ink-600 font-medium bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">
+            <Sparkles size={10} className="text-amber-500" /> สภาพ: {conditionLabel}
           </span>
           {product.categoryName && (
             <span className="text-[10px] text-ink-400 bg-white border border-surface-border px-1.5 py-0.5 rounded-full">
@@ -265,8 +265,9 @@ function ProductRow({ product, onSelect, canOffer = true, reason = '', isSubmitt
         </div>
 
         {product.description && (
-          <p className="text-xs text-ink-500 mt-1 line-clamp-1 bg-surface-muted/50 px-2 py-0.5 rounded-md">
-            📝 {product.description}
+          <p className="text-xs text-ink-500 mt-1 flex items-center gap-1 line-clamp-1 bg-surface-muted/50 px-2 py-0.5 rounded-md">
+            <FileText size={11} className="text-ink-400 shrink-0" />
+            <span className="truncate">{product.description}</span>
           </p>
         )}
       </div>

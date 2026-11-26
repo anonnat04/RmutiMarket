@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
+  MapPin, Radar, School, AlertTriangle, Map, ShieldCheck,
+  Utensils, Landmark, Building2, ParkingSquare, CheckCircle2,
+  ClipboardList, Lock
+} from 'lucide-react';
+import {
   meetupPoints,
+  MeetupPointIcon,
   CAMPUS_CENTER,
   CAMPUS_ZOOM,
   CAMPUS_BOUNDARY,
@@ -20,8 +26,9 @@ function ensureLeafletCSS() {
 }
 
 // ─── สร้าง custom div icon สำหรับ Leaflet ────────────────────────────────
-function makeMarkerIcon(L, emoji, color, active = false) {
-  const size = active ? 44 : 36;
+function makeMarkerIcon(L, color, active = false) {
+  const size = active ? 38 : 30;
+  const dotSize = active ? 12 : 10;
   const html = `
     <div style="
       display:flex;align-items:center;justify-content:center;
@@ -30,10 +37,10 @@ function makeMarkerIcon(L, emoji, color, active = false) {
       border:3px solid ${active ? '#fff' : color};
       border-radius:50% 50% 50% 0;
       transform:rotate(-45deg);
-      box-shadow:0 2px 8px rgba(0,0,0,0.35);
+      box-shadow:0 2px 8px rgba(0,0,0,0.3);
       transition:all 0.2s;
     ">
-      <span style="transform:rotate(45deg);font-size:${active ? 18 : 15}px;line-height:1">${emoji}</span>
+      <span style="transform:rotate(45deg);width:${dotSize}px;height:${dotSize}px;border-radius:50%;background:#fff;display:block"></span>
     </div>
   `;
   return L.divIcon({
@@ -141,17 +148,17 @@ export function CampusMapPicker({ value, onChange }) {
       // วาง markers อาคาร RMUTI
       meetupPoints.forEach((pt) => {
         const color = categoryColors[pt.category] ?? '#6b7280';
-        const icon = makeMarkerIcon(L, pt.icon, color, false);
+        const icon = makeMarkerIcon(L, color, false);
         const marker = L.marker([pt.lat, pt.lng], { icon })
           .addTo(map)
           .bindPopup(
             `<div style="min-width:180px">
-              <div style="font-weight:700;font-size:13px;margin-bottom:4px">${pt.icon} ${pt.name}</div>
+              <div style="font-weight:700;font-size:13px;margin-bottom:4px">${pt.name}</div>
               <div style="font-size:11px;color:#555;margin-bottom:8px">${pt.description}</div>
               <button
                 onclick="window._cmSelectPoint && window._cmSelectPoint('${pt.id}')"
-                style="background:#f97316;color:#fff;border:none;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;width:100%"
-              >📍 เลือกจุดนี้</button>
+                style="background:#f97316;color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;width:100%"
+              >เลือกจุดนัดรับนี้</button>
             </div>`,
             { maxWidth: 220 }
           );
@@ -172,7 +179,7 @@ export function CampusMapPicker({ value, onChange }) {
         meetupPoints.forEach((p) => {
           const color = categoryColors[p.category] ?? '#6b7280';
           const active = p.id === id;
-          markerLayerRef.current[p.id]?.setIcon(makeMarkerIcon(L, p.icon, color, active));
+          markerLayerRef.current[p.id]?.setIcon(makeMarkerIcon(L, color, active));
         });
         map.closePopup();
       };
@@ -246,13 +253,13 @@ export function CampusMapPicker({ value, onChange }) {
       if (!gpsMarkerRef.current) {
         gpsMarkerRef.current = L.marker([lat, lng], { icon: makeGpsIcon(L), zIndexOffset: 1000 })
           .addTo(leafletMapRef.current)
-          .bindPopup(`<div style="font-size:12px;font-weight:600">📡 ตำแหน่งของคุณ<br><span style="font-size:10px;color:#777">ความแม่นยำ ±${accuracy?.toFixed(0)} ม.</span></div>`);
+          .bindPopup(`<div style="font-size:12px;font-weight:600">ตำแหน่งของคุณ<br><span style="font-size:10px;color:#777">ความแม่นยำ ±${accuracy?.toFixed(0)} ม.</span></div>`);
         leafletMapRef.current.setView([lat, lng], 18);
       } else {
         gpsMarkerRef.current.setLatLng([lat, lng]);
         gpsMarkerRef.current
           .getPopup()
-          ?.setContent(`<div style="font-size:12px;font-weight:600">📡 ตำแหน่งของคุณ<br><span style="font-size:10px;color:#777">ความแม่นยำ ±${accuracy?.toFixed(0)} ม.</span></div>`);
+          ?.setContent(`<div style="font-size:12px;font-weight:600">ตำแหน่งของคุณ<br><span style="font-size:10px;color:#777">ความแม่นยำ ±${accuracy?.toFixed(0)} ม.</span></div>`);
         leafletMapRef.current.panTo([lat, lng]);
       }
     };
@@ -280,12 +287,12 @@ export function CampusMapPicker({ value, onChange }) {
 
   // ─── Filtered categories for filter bar ───────────────────────────────
   const categories = [
-    { key: 'all', label: 'ทั้งหมด', emoji: '🗺️' },
-    { key: 'safe', label: 'จุดปลอดภัย', emoji: '🛡️' },
-    { key: 'food', label: 'ร้านอาหาร', emoji: '🍜' },
-    { key: 'landmark', label: 'สถานที่สำคัญ', emoji: '🏛️' },
-    { key: 'building', label: 'อาคาร', emoji: '🏢' },
-    { key: 'parking', label: 'ที่จอดรถ', emoji: '🅿️' },
+    { key: 'all', label: 'ทั้งหมด', Icon: Map },
+    { key: 'safe', label: 'จุดปลอดภัย', Icon: ShieldCheck },
+    { key: 'food', label: 'ร้านอาหาร', Icon: Utensils },
+    { key: 'landmark', label: 'สถานที่สำคัญ', Icon: Landmark },
+    { key: 'building', label: 'อาคาร', Icon: Building2 },
+    { key: 'parking', label: 'ที่จอดรถ', Icon: ParkingSquare },
   ];
 
   // แสดงเฉพาะจุดนัดรับที่ระบบกำหนด (ถ้า value เป็นค่าอื่น เช่น custom ที่หลงมา จะไม่นับว่าเลือกแล้ว)
@@ -316,27 +323,33 @@ export function CampusMapPicker({ value, onChange }) {
             maxWidth: 'calc(100% - 120px)',
           }}
         >
-          {categories.map((c) => (
-            <button
-              key={c.key}
-              type="button"
-              onClick={() => setFilter(c.key)}
-              style={{
-                padding: '3px 10px',
-                borderRadius: 999,
-                border: 'none',
-                fontSize: 11,
-                fontWeight: 600,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                background: filter === c.key ? '#f97316' : 'transparent',
-                color: filter === c.key ? '#fff' : '#374151',
-                transition: 'all 0.15s',
-              }}
-            >
-              {c.emoji} {c.label}
-            </button>
-          ))}
+          {categories.map((c) => {
+            const CatIcon = c.Icon;
+            return (
+              <button
+                key={c.key}
+                type="button"
+                onClick={() => setFilter(c.key)}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: 999,
+                  border: 'none',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  background: filter === c.key ? '#f97316' : 'transparent',
+                  color: filter === c.key ? '#fff' : '#374151',
+                  transition: 'all 0.15s',
+                }}
+              >
+                <CatIcon size={12} /> {c.label}
+              </button>
+            );
+          })}
         </div>
 
         {/* GPS button ─ ขวาบน */}
@@ -372,7 +385,7 @@ export function CampusMapPicker({ value, onChange }) {
               transition: 'all 0.2s',
             }}
           >
-            {gpsActive ? '📡' : '📍'}
+            {gpsActive ? <Radar size={18} /> : <MapPin size={18} />}
           </button>
           {/* กลับไปมุมมองมหาวิทยาลัย */}
           <button
@@ -395,7 +408,7 @@ export function CampusMapPicker({ value, onChange }) {
               backdropFilter: 'blur(6px)',
             }}
           >
-            🏫
+            <School size={18} />
           </button>
         </div>
 
@@ -417,7 +430,9 @@ export function CampusMapPicker({ value, onChange }) {
             fontSize: 13,
           }}
         >
-          <span style={{ fontSize: 16 }}>{gpsStatus === 'error' ? '⚠️' : '📡'}</span>
+          <span style={{ display: 'flex', color: gpsStatus === 'error' ? '#dc2626' : '#2563eb' }}>
+            {gpsStatus === 'error' ? <AlertTriangle size={16} /> : <Radar size={16} />}
+          </span>
           <div style={{ flex: 1 }}>
             {gpsStatus === 'error' ? (
               <span style={{ color: '#dc2626', fontWeight: 600 }}>ไม่สามารถเข้าถึง GPS ได้ — ตรวจสอบการอนุญาต</span>
@@ -464,11 +479,19 @@ export function CampusMapPicker({ value, onChange }) {
           }}
         >
           <strong>วิธีเลือกจุดนัดรับ:</strong>
-          <ul style={{ margin: '4px 0 0 0', paddingLeft: 16, lineHeight: 1.8 }}>
-            <li>📍 กดที่ <strong>pin อาคาร</strong> บนแผนที่แล้วกด "เลือกจุดนี้"</li>
-            <li>📋 หรือเลือกจาก <strong>รายการอาคารด้านล่าง</strong></li>
-            <li>🔒 เลือกได้เฉพาะ <strong>จุดนัดรับที่ระบบกำหนด</strong> เท่านั้น (ปักหมุดเองไม่ได้)</li>
-            <li>📡 กด <strong>ปุ่ม GPS</strong> เพื่อดูตำแหน่งปัจจุบันของคุณ</li>
+          <ul style={{ margin: '6px 0 0 0', paddingLeft: 4, listStyle: 'none', lineHeight: 1.8 }}>
+            <li style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <MapPin size={13} className="shrink-0 text-orange-600" /> กดที่ <strong>pin อาคาร</strong> บนแผนที่แล้วกด "เลือกจุดนัดรับนี้"
+            </li>
+            <li style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <ClipboardList size={13} className="shrink-0 text-orange-600" /> หรือเลือกจาก <strong>รายการอาคารด้านล่าง</strong>
+            </li>
+            <li style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Lock size={13} className="shrink-0 text-orange-600" /> เลือกได้เฉพาะ <strong>จุดนัดรับที่ระบบกำหนด</strong> เท่านั้น
+            </li>
+            <li style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Radar size={13} className="shrink-0 text-orange-600" /> กด <strong>ปุ่ม GPS</strong> เพื่อดูตำแหน่งปัจจุบันของคุณ
+            </li>
           </ul>
         </div>
       )}
@@ -478,7 +501,7 @@ export function CampusMapPicker({ value, onChange }) {
         <div
           style={{
             display: 'flex',
-            alignItems: 'flex-start',
+            alignItems: 'center',
             gap: 12,
             padding: '12px 16px',
             borderRadius: 14,
@@ -487,10 +510,25 @@ export function CampusMapPicker({ value, onChange }) {
             boxShadow: '0 2px 12px rgba(249,115,22,0.12)',
           }}
         >
-          <span style={{ fontSize: 24 }}>{currentSelection.icon ?? '📍'}</span>
+          <span
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: '50%',
+              background: '#ffedd5',
+              color: '#ea580c',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <MeetupPointIcon point={currentSelection} size={18} />
+          </span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ fontSize: 13, fontWeight: 700, color: '#1c1917', marginBottom: 2 }}>
-              ✅ จุดนัดหมาย: {currentSelection.name}
+            <p style={{ fontSize: 13, fontWeight: 700, color: '#1c1917', marginBottom: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+              <span>จุดนัดหมาย: {currentSelection.name}</span>
             </p>
             {currentSelection.description && (
               <p style={{ fontSize: 11, color: '#78716c' }}>{currentSelection.description}</p>
@@ -505,7 +543,7 @@ export function CampusMapPicker({ value, onChange }) {
               if (LRef.current) {
                 meetupPoints.forEach((p) => {
                   const color = categoryColors[p.category] ?? '#6b7280';
-                  markerLayerRef.current[p.id]?.setIcon(makeMarkerIcon(LRef.current, p.icon, color, false));
+                  markerLayerRef.current[p.id]?.setIcon(makeMarkerIcon(LRef.current, color, false));
                 });
               }
             }}
@@ -560,15 +598,15 @@ export function CampusMapPicker({ value, onChange }) {
                       width: 32,
                       height: 32,
                       borderRadius: '50%',
-                      background: `${color}22`,
+                      background: `${color}18`,
+                      color,
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      fontSize: 16,
                       flexShrink: 0,
                     }}
                   >
-                    {pt.icon}
+                    <MeetupPointIcon point={pt} size={16} />
                   </span>
                   <div style={{ minWidth: 0 }}>
                     <p

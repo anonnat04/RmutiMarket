@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { categories } from '@/constants/categories';
 import { Input } from '@/components/common/Input';
 import { Textarea } from '@/components/common/Textarea';
@@ -129,7 +129,7 @@ export function CreateProductPage() {
       // แจ้งเตือนเมื่อลงประกาศสำเร็จ
       useNotificationStore.getState().addNotification({
         userId: user?.id ?? "me",
-        title: "🎉 ลงขายสินค้าสำเร็จ",
+        title: "ลงขายสินค้าสำเร็จ",
         message: `สินค้า "${title.trim()}" ของคุณเปิดขายบนตลาด RmutiMarket เรียบร้อยแล้ว`,
         type: "product",
         link: `/products/${createdId}`,
@@ -150,8 +150,8 @@ export function CreateProductPage() {
   if (successId) {
     return (
       <div className="mx-auto flex max-w-md flex-col items-center gap-4 py-16 text-center">
-        <span className="flex h-16 w-16 items-center justify-center rounded-full bg-brand-50 text-3xl">
-          🎉
+        <span className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+          <CheckCircle2 size={32} />
         </span>
         <h1 className="text-xl font-bold text-ink-900">ลงขายสินค้าสำเร็จ</h1>
         <p className="text-sm text-ink-500">ประกาศของคุณขึ้นแสดงในหน้าสินค้าทั้งหมดแล้ว</p>
@@ -254,13 +254,14 @@ export function CreateProductPage() {
 
         {/* ─── กฎการลงขาย (ข้อความเตือนสั้นๆ สีแดง) ─── */}
         <div className="rounded-xl border border-red-200 bg-red-50/80 p-3 text-xs text-red-600 font-medium flex items-center gap-2">
-          <span>⚠️</span>
+          <AlertTriangle size={15} className="shrink-0 text-red-500" />
           <span><strong>กฎการลงขาย:</strong> ห้ามลงขายสินค้าที่ผิดกฎหมาย ละเมิดลิขสิทธิ์ หรือผิดระเบียบของมหาวิทยาลัยโดยเด็ดขาด</span>
         </div>
 
         {errors.submit && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            ⚠️ {errors.submit}
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 flex items-center gap-2">
+            <AlertTriangle size={16} className="shrink-0 text-red-600" />
+            <span>{errors.submit}</span>
           </div>
         )}
 

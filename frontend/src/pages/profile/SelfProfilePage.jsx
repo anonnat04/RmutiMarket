@@ -20,6 +20,8 @@ import {
   Pencil,
   Edit2,
   X,
+  MapPin,
+  Phone,
 } from 'lucide-react';
 import { useMyListingsStore } from '@/store/myListingsStore';
 import { useNotificationStore } from '@/store/notificationStore';
@@ -515,8 +517,9 @@ export function SelfProfilePage({ user, logout, navigate }) {
                   </p>
                 )}
 
-                <p className="text-xs text-gray-500 mt-0.5">
-                  📍 {profileData?.campus || 'มทร.อีสาน นครราชสีมา'} {profileData?.faculty ? `· คณะ${profileData.faculty}` : ''}
+                <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1.5">
+                  <MapPin size={13} className="text-brand-500 shrink-0" />
+                  <span>{profileData?.campus || 'มทร.อีสาน นครราชสีมา'} {profileData?.faculty ? `· คณะ${profileData.faculty}` : ''}</span>
                 </p>
 
                 <p className={`mt-2 text-xs font-medium ${profileData?.bio ? 'text-gray-700' : 'text-gray-400'}`}>
@@ -524,7 +527,10 @@ export function SelfProfilePage({ user, logout, navigate }) {
                 </p>
 
                 {profileData?.phone && (
-                  <p className="mt-1 text-[11px] text-gray-500">📞 {profileData.phone}</p>
+                  <p className="mt-1 text-[11px] text-gray-500 flex items-center gap-1.5">
+                    <Phone size={12} className="text-gray-400 shrink-0" />
+                    <span>{profileData.phone}</span>
+                  </p>
                 )}
               </div>
             </div>
@@ -723,7 +729,10 @@ export function SelfProfilePage({ user, logout, navigate }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fade-in">
           <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden">
             <div className="flex items-center justify-between p-5 border-b border-gray-100">
-              <h3 className="font-extrabold text-ink-900 text-base">✏️ แก้ไขข้อมูลโปรไฟล์</h3>
+              <h3 className="font-extrabold text-ink-900 text-base flex items-center gap-2">
+                <Pencil size={16} className="text-brand-500" />
+                แก้ไขข้อมูลโปรไฟล์
+              </h3>
               <button
                 onClick={() => setIsEditOpen(false)}
                 className="p-1 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100"

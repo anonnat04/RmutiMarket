@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, AlertTriangle } from 'lucide-react';
 import { categories } from '@/constants/categories';
 import { Input } from '@/components/common/Input';
 import { Textarea } from '@/components/common/Textarea';
@@ -76,7 +76,7 @@ export function CreateWantToBuyPage() {
 
     useNotificationStore.getState().addNotification({
       userId: user?.id ?? 'me',
-      title: '📢 โพสตามหาสินค้าสำเร็จ',
+      title: 'โพสตามหาสินค้าสำเร็จ',
       message: `โพสตามหา "${title.trim()}" ถูกเผยแพร่แล้ว รอผู้ขายติดต่อมา`,
       type: 'product',
       link: '/want-to-buy',
@@ -151,8 +151,9 @@ export function CreateWantToBuyPage() {
         </div>
 
         {errors.submit && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            ⚠️ {errors.submit}
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 flex items-center gap-2">
+            <AlertTriangle size={16} className="shrink-0 text-red-600" />
+            <span>{errors.submit}</span>
           </div>
         )}
 

@@ -31,6 +31,7 @@ import { InterestPickerPage } from '@/pages/auth/InterestPickerPage';
 import { AdminDashboardPage } from '@/pages/admin/AdminDashboardPage';
 import { AdminUsersPage } from '@/pages/admin/AdminUsersPage';
 import { AdminListingsPage } from '@/pages/admin/AdminListingsPage';
+import { AdminWantedPostsPage } from '@/pages/admin/AdminWantedPostsPage';
 import { AdminReviewsPage } from '@/pages/admin/AdminReviewsPage';
 import { AdminCategoriesPage } from '@/pages/admin/AdminCategoriesPage';
 import { AdminDisputesPage } from '@/pages/admin/AdminDisputesPage';
@@ -84,6 +85,7 @@ export function AppRoutes() {
         <Route index element={<AdminDashboardPage />} />
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="listings" element={<AdminListingsPage />} />
+        <Route path="wanted-posts" element={<AdminWantedPostsPage />} />
         <Route path="reviews" element={<AdminReviewsPage />} />
         <Route path="categories" element={<AdminCategoriesPage />} />
         <Route path="disputes" element={<AdminDisputesPage />} />

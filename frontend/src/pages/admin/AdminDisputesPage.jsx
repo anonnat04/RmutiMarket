@@ -86,7 +86,7 @@ export function AdminDisputesPage() {
       await api.takeDownReportedItem(report.id, {
         reason: report.category || 'ละเมิดข้อกำหนดความปลอดภัยของมหาวิทยาลัย',
       });
-      alert(`✅ ปลดและลบ ${itemLabel} เรียบร้อยแล้ว`);
+      alert(`ปลดและลบ ${itemLabel} เรียบร้อยแล้ว`);
       fetchReports();
     } catch (err) {
       alert(`เกิดข้อผิดพลาดในการปลด: ${err?.message || 'โปรดลองอีกครั้ง'}`);
@@ -425,7 +425,13 @@ export function AdminDisputesPage() {
                         : 'bg-gray-100 text-gray-600 border-gray-200'
                     }`}
                   >
-                    {isPending ? '⏳ รอดำเนินการ' : isResolved ? '✅ จัดการแล้ว' : '⚪ เพิกเฉย'}
+                    {isPending ? (
+                      <span className="inline-flex items-center gap-1"><Clock size={12} /> รอดำเนินการ</span>
+                    ) : isResolved ? (
+                      <span className="inline-flex items-center gap-1"><CheckCircle2 size={12} /> จัดการแล้ว</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1"><XCircle size={12} /> เพิกเฉย</span>
+                    )}
                   </span>
                 </div>
 
@@ -440,8 +446,8 @@ export function AdminDisputesPage() {
                   </p>
 
                   {adminNote && (
-                    <div className="mt-2 pt-2 border-t border-orange-100 text-[11px] font-semibold text-emerald-700">
-                      📌 บันทึกการจัดการแอดมิน: {adminNote}
+                    <div className="mt-2 pt-2 border-t border-orange-100 text-[11px] font-semibold text-emerald-700 flex items-center gap-1.5">
+                      <CheckCircle2 size={12} className="shrink-0" /> บันทึกการจัดการแอดมิน: {adminNote}
                     </div>
                   )}
                 </div>

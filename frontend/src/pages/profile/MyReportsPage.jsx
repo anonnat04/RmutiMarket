@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { Link } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Clock, Wrench, CheckCircle2, Ban, Check, Minus, Headphones, Flag } from "lucide-react";
 // api.* อาจคืน response เต็มของ axios หรือคืน body เลย — รองรับทั้งสองแบบ
 const unwrap = (res) => (res && typeof res.status === "number" && "data" in res ? res.data : res);
 
@@ -27,10 +27,10 @@ const STATUS_FILTERS = [
 ];
 
 const STATUS_STYLE = {
-  pending: { label: "รอดำเนินการ", icon: "⏳", cls: "border-amber-200 bg-amber-50 text-amber-700" },
-  in_progress: { label: "กำลังดำเนินการ", icon: "🔧", cls: "border-orange-200 bg-orange-50 text-orange-700" },
-  resolved: { label: "แก้ไขแล้ว", icon: "✅", cls: "border-emerald-200 bg-emerald-50 text-emerald-700" },
-  dismissed: { label: "เพิกเฉย", icon: "🚫", cls: "border-gray-200 bg-gray-50 text-gray-600" },
+  pending: { label: "รอดำเนินการ", Icon: Clock, cls: "border-amber-200 bg-amber-50 text-amber-700" },
+  in_progress: { label: "กำลังดำเนินการ", Icon: Wrench, cls: "border-orange-200 bg-orange-50 text-orange-700" },
+  resolved: { label: "แก้ไขแล้ว", Icon: CheckCircle2, cls: "border-emerald-200 bg-emerald-50 text-emerald-700" },
+  dismissed: { label: "เพิกเฉย", Icon: Ban, cls: "border-gray-200 bg-gray-50 text-gray-600" },
 };
 
 const CIRCLE = {
@@ -93,7 +93,7 @@ function Stepper({ item }) {
           <span
             className={`relative z-10 flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${CIRCLE[s.state]}`}
           >
-            {s.state === "done" ? "✓" : s.state === "dismissed" ? "–" : i + 1}
+            {s.state === "done" ? <Check size={14} strokeWidth={2.5} /> : s.state === "dismissed" ? <Minus size={14} /> : i + 1}
           </span>
           <span className="mt-1 px-1 text-xs font-semibold text-gray-700">{s.label}</span>
           {s.time && <span className="px-1 text-xs text-gray-400">{formatDateTime(s.time)}</span>}
@@ -105,6 +105,7 @@ function Stepper({ item }) {
 
 function ReportCard({ item }) {
   const st = STATUS_STYLE[item.status] || STATUS_STYLE.pending;
+  const StatusIcon = st.Icon;
   const isSupport = item.kind === "support";
   const showUpdated =
     item.updatedAt &&
@@ -115,13 +116,13 @@ function ReportCard({ item }) {
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <span
-            className={`rounded-lg border px-2 py-1 text-xs font-semibold ${
+            className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-semibold ${
               isSupport
                 ? "border-orange-200 bg-orange-50 text-orange-600"
                 : "border-red-200 bg-red-50 text-red-600"
             }`}
           >
-            {isSupport ? "🎧 ศูนย์ช่วยเหลือ" : "🚩 รายงานประกาศ"}
+            {isSupport ? <><Headphones size={12} /> ศูนย์ช่วยเหลือ</> : <><Flag size={12} /> รายงานประกาศ</>}
           </span>
           {item.category && (
             <span className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-xs font-semibold text-gray-600">
@@ -132,8 +133,8 @@ function ReportCard({ item }) {
             #{item.id} · {formatDateTime(item.createdAt)}
           </span>
         </div>
-        <span className={`rounded-full border px-3 py-1 text-xs font-bold ${st.cls}`}>
-          {st.icon} {item.statusLabel || st.label}
+        <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-bold ${st.cls}`}>
+          <StatusIcon size={12} /> {item.statusLabel || st.label}
         </span>
       </div>
 

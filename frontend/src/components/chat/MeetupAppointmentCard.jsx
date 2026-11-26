@@ -1,5 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  ShoppingBag, Banknote, Calendar, Clock, MapPin, Pin,
+  CheckCircle2, XCircle, AlertTriangle, PartyPopper
+} from "lucide-react";
 import { api } from "@/lib/api";
 
 // ────────────────────────────────────────────────────────────
@@ -167,26 +171,32 @@ function DetailRows({ data }) {
   return (
     <div className="space-y-2 text-xs text-gray-700">
       <div className="flex items-center justify-between gap-2 bg-orange-50/60 p-2 rounded-xl border border-orange-100">
-        <span className="font-bold text-gray-900 truncate max-w-[200px]">🛍️ {data.productTitle || "สินค้า"}</span>
+        <span className="font-bold text-gray-900 truncate max-w-[200px] inline-flex items-center gap-1.5">
+          <ShoppingBag size={14} className="text-orange-500 shrink-0" />
+          {data.productTitle || "สินค้า"}
+        </span>
         {Number(data.price) > 0 && (
-          <span className="font-extrabold text-brand-600 text-sm shrink-0">💰 {formatPrice(data.price)}</span>
+          <span className="font-extrabold text-brand-600 text-sm shrink-0 inline-flex items-center gap-1">
+            <Banknote size={14} className="text-brand-500" />
+            {formatPrice(data.price)}
+          </span>
         )}
       </div>
       <div className="flex items-center gap-2 text-gray-800">
-        <span className="text-sm">📅</span>
+        <Calendar size={14} className="text-gray-400 shrink-0" />
         <span className="font-medium">{formatThaiDate(data.date) || "ไม่ระบุวัน"}</span>
       </div>
       <div className="flex items-center gap-2 text-gray-800">
-        <span className="text-sm">🕒</span>
+        <Clock size={14} className="text-gray-400 shrink-0" />
         <span className="font-medium">{data.time ? `${data.time} น.` : "ไม่ระบุเวลา"}</span>
       </div>
       <div className="flex items-start gap-2 text-gray-800">
-        <span className="text-sm mt-0.5">📍</span>
+        <MapPin size={14} className="text-gray-400 shrink-0 mt-0.5" />
         <span className="font-medium leading-snug">{data.locationName || "Safe Point มหาวิทยาลัย"}</span>
       </div>
       {data.note && (
         <div className="flex items-start gap-2 text-amber-800 bg-amber-50/80 p-2 rounded-lg text-[11px]">
-          <span className="mt-0.5">📌</span>
+          <Pin size={13} className="text-amber-600 shrink-0 mt-0.5" />
           <span className="leading-relaxed">หมายเหตุ: {data.note}</span>
         </div>
       )}
@@ -226,14 +236,14 @@ export function MeetupAppointmentCard({ data, currentUserId, onActionDone }) {
     setFeedback("");
     try {
       const id = await resolveMeetupId(data);
-      if (!id) { setFeedback("❌ ไม่พบรหัสนัดหมาย กรุณารีเฟรชแล้วลองใหม่"); return; }
+      if (!id) { setFeedback("ไม่พบรหัสนัดหมาย กรุณารีเฟรชแล้วลองใหม่"); return; }
       // เซิร์ฟเวอร์จะส่งข้อความสรุปนัดรับ (สินค้า ราคา วัน เวลา จุดนัด) ลงห้องแชทให้อัตโนมัติผ่าน Socket.IO
       await api.acceptMeetup(id);
       setLocalStatus("confirmed");
-      setFeedback("✅ ยืนยันนัดรับเรียบร้อยแล้ว");
+      setFeedback("ยืนยันนัดรับเรียบร้อยแล้ว");
       onActionDone?.();
     } catch (e) {
-      setFeedback(`❌ ${e?.message || "ยืนยันไม่สำเร็จ กรุณาลองใหม่"}`);
+      setFeedback(e?.message || "ยืนยันไม่สำเร็จ กรุณาลองใหม่");
     } finally {
       setBusy(null);
     }
@@ -244,14 +254,14 @@ export function MeetupAppointmentCard({ data, currentUserId, onActionDone }) {
     setFeedback("");
     try {
       const id = await resolveMeetupId(data);
-      if (!id) { setFeedback("❌ ไม่พบรหัสนัดหมาย กรุณารีเฟรชแล้วลองใหม่"); return; }
+      if (!id) { setFeedback("ไม่พบรหัสนัดหมาย กรุณารีเฟรชแล้วลองใหม่"); return; }
       await api.cancelMeetup(id, canAccept ? "ผู้ขายปฏิเสธคำขอนัดรับ" : "ผู้ซื้อยกเลิกคำขอนัดรับ");
       setLocalStatus("cancelled");
       setConfirmReject(false);
       setFeedback(canAccept ? "ปฏิเสธคำขอนัดรับแล้ว" : "ยกเลิกคำขอนัดรับแล้ว");
       onActionDone?.();
     } catch (e) {
-      setFeedback(`❌ ${e?.message || "ดำเนินการไม่สำเร็จ"}`);
+      setFeedback(e?.message || "ดำเนินการไม่สำเร็จ");
     } finally {
       setBusy(null);
     }
@@ -267,13 +277,15 @@ export function MeetupAppointmentCard({ data, currentUserId, onActionDone }) {
       <div className={`${wrapper} ${isCompleted ? "border-emerald-300" : confirmed ? "border-emerald-200" : "border-red-200"}`}>
         <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-3 mb-3">
           <h4 className={`font-extrabold text-sm flex items-center gap-1.5 ${confirmed ? "text-emerald-700" : "text-red-600"}`}>
-            {isCompleted
-              ? "✅ นัดรับสินค้าเสร็จสิ้นแล้ว"
-              : confirmed
-              ? "✅ นัดรับได้รับการยืนยันแล้ว"
-              : data.event === "rejected"
-              ? "❌ คำขอนัดรับถูกปฏิเสธ"
-              : "❌ นัดหมายถูกยกเลิกแล้ว"}
+            {isCompleted ? (
+              <><CheckCircle2 size={16} /> นัดรับสินค้าเสร็จสิ้นแล้ว</>
+            ) : confirmed ? (
+              <><CheckCircle2 size={16} /> นัดรับได้รับการยืนยันแล้ว</>
+            ) : data.event === "rejected" ? (
+              <><XCircle size={16} /> คำขอนัดรับถูกปฏิเสธ</>
+            ) : (
+              <><XCircle size={16} /> นัดหมายถูกยกเลิกแล้ว</>
+            )}
           </h4>
           <StatusBadge status={isCompleted ? "completed" : confirmed ? "confirmed" : "cancelled"} />
         </div>
@@ -281,13 +293,15 @@ export function MeetupAppointmentCard({ data, currentUserId, onActionDone }) {
         <div className="mt-3.5 pt-3 border-t border-gray-100 space-y-2">
           {isCompleted ? (
             <div className="space-y-2">
-              <p className="text-[11px] text-emerald-600 text-center font-bold">🎉 ซื้อขายและส่งมอบสินค้าเสร็จสมบูรณ์แล้ว</p>
+              <p className="text-[11px] text-emerald-600 text-center font-bold inline-flex items-center justify-center gap-1.5 w-full">
+                <PartyPopper size={14} /> ซื้อขายและส่งมอบสินค้าเสร็จสมบูรณ์แล้ว
+              </p>
               <button
                 type="button"
                 onClick={goCheckIn}
                 className="w-full py-2.5 px-4 rounded-xl border border-emerald-200 bg-white hover:bg-emerald-50 text-emerald-700 font-bold text-xs flex items-center justify-center gap-2 shadow-2xs transition-colors cursor-pointer"
               >
-                📍 ดู Safe Point และรายละเอียดนัดรับ
+                <MapPin size={14} /> ดู Safe Point และรายละเอียดนัดรับ
               </button>
             </div>
           ) : confirmed ? (
@@ -301,7 +315,7 @@ export function MeetupAppointmentCard({ data, currentUserId, onActionDone }) {
                   onClick={goCheckIn}
                   className="w-full py-2.5 px-4 rounded-xl border border-orange-200 bg-white hover:bg-orange-50 text-orange-600 font-bold text-xs flex items-center justify-center gap-2 shadow-2xs transition-colors cursor-pointer"
                 >
-                  📍 ดู Safe Point และเช็คอิน
+                  <MapPin size={14} /> ดู Safe Point และเช็คอิน
                 </button>
               </>
             )
@@ -323,15 +337,15 @@ export function MeetupAppointmentCard({ data, currentUserId, onActionDone }) {
       <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-3 mb-3">
         <h4 className="font-extrabold text-sm text-gray-900 flex items-center gap-1.5">
           {isCompleted ? (
-            <span className="text-emerald-700">✅ นัดรับสินค้าเสร็จสิ้นแล้ว</span>
+            <span className="text-emerald-700 inline-flex items-center gap-1.5"><CheckCircle2 size={16} /> นัดรับสินค้าเสร็จสิ้นแล้ว</span>
           ) : confirmedState ? (
-            <span className="text-emerald-700">✅ นัดรับได้รับการยืนยันแล้ว</span>
+            <span className="text-emerald-700 inline-flex items-center gap-1.5"><CheckCircle2 size={16} /> นัดรับได้รับการยืนยันแล้ว</span>
           ) : cancelledState ? (
-            <span className="text-red-600">❌ นัดหมายถูกยกเลิกแล้ว</span>
+            <span className="text-red-600 inline-flex items-center gap-1.5"><XCircle size={16} /> นัดหมายถูกยกเลิกแล้ว</span>
           ) : status === "no_show" ? (
-            <span className="text-rose-600">⚠️ ไม่มาตามนัด</span>
+            <span className="text-rose-600 inline-flex items-center gap-1.5"><AlertTriangle size={16} /> ไม่มาตามนัด</span>
           ) : (
-            <span>📅 คำขอนัดรับสินค้า</span>
+            <span className="inline-flex items-center gap-1.5"><Calendar size={16} className="text-orange-500" /> คำขอนัดรับสินค้า</span>
           )}
         </h4>
         <StatusBadge status={status} />
@@ -348,13 +362,15 @@ export function MeetupAppointmentCard({ data, currentUserId, onActionDone }) {
       <div className="mt-3.5 pt-3 border-t border-gray-100">
         {isCompleted ? (
           <div className="space-y-2">
-            <p className="text-[11px] text-emerald-600 text-center font-bold">🎉 ซื้อขายและส่งมอบสินค้าเสร็จสมบูรณ์แล้ว</p>
+            <p className="text-[11px] text-emerald-600 text-center font-bold inline-flex items-center justify-center gap-1.5 w-full">
+              <PartyPopper size={14} /> ซื้อขายและส่งมอบสินค้าเสร็จสมบูรณ์แล้ว
+            </p>
             <button
               type="button"
               onClick={goCheckIn}
               className="w-full py-2.5 px-4 rounded-xl border border-emerald-200 bg-white hover:bg-emerald-50 text-emerald-700 font-bold text-xs flex items-center justify-center gap-2 shadow-2xs transition-colors cursor-pointer"
             >
-              📍 ดู Safe Point และรายละเอียดนัดรับ
+              <MapPin size={14} /> ดู Safe Point และรายละเอียดนัดรับ
             </button>
           </div>
         ) : confirmedState ? (
@@ -365,13 +381,13 @@ export function MeetupAppointmentCard({ data, currentUserId, onActionDone }) {
               onClick={goCheckIn}
               className="w-full py-2.5 px-4 rounded-xl border border-orange-200 bg-white hover:bg-orange-50 text-orange-600 font-bold text-xs flex items-center justify-center gap-2 shadow-2xs transition-colors cursor-pointer"
             >
-              📍 ดู Safe Point และเช็คอิน
+              <MapPin size={14} /> ดู Safe Point และเช็คอิน
             </button>
           </div>
         ) : cancelledState || status === "no_show" ? (
           <div className="rounded-xl bg-red-50/70 p-2.5 border border-red-100 text-center space-y-1">
-            <p className="text-xs font-bold text-red-600">
-              {status === "no_show" ? "⚠️ นัดหมายนี้ถูกตัดจบเพราะไม่มาตามนัด" : "❌ นัดหมายนี้ถูกยกเลิกแล้ว"}
+            <p className="text-xs font-bold text-red-600 inline-flex items-center justify-center gap-1.5">
+              {status === "no_show" ? <><AlertTriangle size={14} /> นัดหมายนี้ถูกตัดจบเพราะไม่มาตามนัด</> : <><XCircle size={14} /> นัดหมายนี้ถูกยกเลิกแล้ว</>}
             </p>
             <p className="text-[11px] text-red-400">
               หากต้องการนัดใหม่ สามารถสร้างคำขอนัดรับใหม่ได้จากหน้ารายละเอียดสินค้า

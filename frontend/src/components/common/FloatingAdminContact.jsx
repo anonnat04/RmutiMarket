@@ -74,7 +74,7 @@ export function FloatingAdminContact() {
 
     addNotification({
       userId: 'me',
-      title: '📩 ส่งเรื่องถึงแอดมินเรียบร้อยแล้ว',
+      title: 'ส่งเรื่องถึงแอดมินเรียบร้อยแล้ว',
       message: `แอดมินได้รับเรื่องเกี่ยวกับ "${catLabel}" แล้ว จะตรวจสอบและติดต่อกลับโดยเร็ว`,
       type: 'security',
       link: '/notifications',

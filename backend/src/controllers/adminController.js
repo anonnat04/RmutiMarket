@@ -2,6 +2,7 @@ const { supabase } = require("../config/db");
 const { sendSuccess, sendError } = require("../utils/response");
 const { deleteConversations } = require("./chatController");
 const { formatUser, formatStatus, formatCategory, getStatusId } = require("../utils/statusHelper");
+const { resolveCategoryId } = require("../utils/categories");
 
 // Helper: บันทึกประวัติการทำงานของแอดมิน
 async function logAdminAction(adminId, action, targetType, targetId, details, ip) {
@@ -867,6 +868,185 @@ async function triggerWeeklyRecovery(req, res, next) {
   }
 }
 
+// ----------------------------------------------------------------
+// GET /api/admin/wanted-posts  — รายการโพสต์ตามหาสินค้าสำหรับแอดมิน
+// ----------------------------------------------------------------
+async function getAdminWantedPosts(req, res, next) {
+  try {
+    const { q = "", status = "", category = "", page = 1, limit = 20 } = req.query;
+    const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+
+    let query = supabase
+      .from("wanted_posts")
+      .select(`
+        id, buyer_id, category_id, title, description, budget_min, budget_max, status_id, created_at, updated_at,
+        categories(id, name),
+        wanted_post_status(id, name),
+        users!buyer_id(
+          id, username, full_name, university_email, phone, avatar_url, profile_image_url,
+          faculty_id, major_id, trust_score, faculties(name), majors(name)
+        )
+      `, { count: "exact" });
+
+    if (q) {
+      const cleanQ = q.trim();
+      const numQ = parseFloat(cleanQ);
+
+      // ค้นหา buyer ids ที่ชื่อหรืออีเมลตรงกับ cleanQ
+      let matchedBuyerIds = [];
+      try {
+        const { data: matchedUsers } = await supabase
+          .from("users")
+          .select("id")
+          .or(`username.ilike.%${cleanQ}%,full_name.ilike.%${cleanQ}%,university_email.ilike.%${cleanQ}%`)
+          .limit(50);
+        if (matchedUsers?.length) {
+          matchedBuyerIds = matchedUsers.map((u) => u.id);
+        }
+      } catch (err) {
+        console.warn("[getAdminWantedPosts] find buyers err:", err.message);
+      }
+
+      let orClauses = [`title.ilike.%${cleanQ}%`, `description.ilike.%${cleanQ}%`];
+      if (!isNaN(numQ)) {
+        orClauses.push(`budget_max.eq.${numQ}`, `budget_min.eq.${numQ}`);
+      }
+      if (matchedBuyerIds.length > 0) {
+        orClauses.push(`buyer_id.in.(${matchedBuyerIds.join(",")})`);
+      }
+      query = query.or(orClauses.join(","));
+    }
+
+    if (status && status !== "all") {
+      const statusId = getStatusId("wanted_post_status", status);
+      if (statusId) query = query.eq("status_id", statusId);
+    }
+
+    if (category && category !== "all") {
+      const catId = resolveCategoryId(category, null);
+      if (catId) query = query.eq("category_id", catId);
+    }
+
+    query = query.order("created_at", { ascending: false }).range(offset, offset + parseInt(limit, 10) - 1);
+
+    const { data, error, count } = await query;
+    if (error) throw error;
+
+    const posts = (data || []).map((w) => {
+      const postStatus = formatStatus("wanted_post_status", w.wanted_post_status || w.status_id);
+      const cat = formatCategory(w.categories);
+      const buyer = w.users ? formatUser(w.users) : {};
+      return {
+        id: w.id,
+        title: w.title,
+        description: w.description || "",
+        budgetMin: w.budget_min ? parseFloat(w.budget_min) : null,
+        budgetMax: w.budget_max ? parseFloat(w.budget_max) : null,
+        budget: w.budget_max || w.budget_min || 0,
+        categoryId: cat?.slug || (w.category_id ? `cat-${w.category_id}` : "others"),
+        categoryName: cat?.name || "ทั่วไป",
+        categories: cat,
+        status_id: w.status_id,
+        status: postStatus.ui,
+        statusCode: postStatus.code,
+        statusName: postStatus.name,
+        created_at: w.created_at,
+        updated_at: w.updated_at,
+        buyer_id: w.buyer_id,
+        buyer,
+        user: buyer,
+      };
+    });
+
+    res.json({ posts, total: count ?? posts.length });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ----------------------------------------------------------------
+// DELETE /api/admin/wanted-posts/:id  — ลบโพสต์ตามหาสินค้า
+// ----------------------------------------------------------------
+async function deleteWantedPost(req, res, next) {
+  try {
+    const { id } = req.params;
+    const postId = parseInt(id, 10);
+    const { reason = "ลบโดยผู้ดูแลระบบ" } = req.body || {};
+
+    if (isNaN(postId)) return res.status(400).json({ error: "รหัสโพสต์ไม่ถูกต้อง" });
+
+    // ลบรายงานที่เกี่ยวข้องกับโพสต์นี้ (ถ้ามี)
+    await supabase.from("reports").delete().eq("target_type", "wanted_post").eq("target_id", postId).catch(() => {});
+    await supabase.from("reports").delete().eq("target_type", "buyer_request").eq("target_id", postId).catch(() => {});
+
+    const { error } = await supabase.from("wanted_posts").delete().eq("id", postId);
+    if (error) throw error;
+
+    await logAdminAction(req.admin?.id, "wanted_post.delete", "wanted_post", postId, { reason }, req.ip);
+
+    res.json({ message: "ลบโพสต์ตามหาสินค้าสำเร็จ" });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ----------------------------------------------------------------
+// PATCH /api/admin/wanted-posts/:id/status  — เปลี่ยนสถานะโพสต์ตามหา
+// ----------------------------------------------------------------
+async function updateWantedPostStatus(req, res, next) {
+  try {
+    const { id } = req.params;
+    const postId = parseInt(id, 10);
+    const { statusId, status, reason = "" } = req.body || {};
+
+    if (isNaN(postId)) return res.status(400).json({ error: "รหัสโพสต์ไม่ถูกต้อง" });
+
+    const targetStatusId = getStatusId("wanted_post_status", statusId ?? status);
+    if (!targetStatusId) {
+      return res.status(400).json({ error: "สถานะไม่ถูกต้อง" });
+    }
+
+    const { data, error } = await supabase
+      .from("wanted_posts")
+      .update({
+        status_id: targetStatusId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", postId)
+      .select(`
+        id, buyer_id, category_id, title, description, budget_min, budget_max, status_id, created_at, updated_at,
+        categories(id, name),
+        wanted_post_status(id, name),
+        users!buyer_id(
+          id, username, full_name, university_email, phone, avatar_url, profile_image_url,
+          faculty_id, major_id, trust_score, faculties(name), majors(name)
+        )
+      `)
+      .single();
+
+    if (error) throw error;
+
+    await logAdminAction(req.admin?.id, "wanted_post.update_status", "wanted_post", postId, { targetStatusId, reason }, req.ip);
+
+    const postStatus = formatStatus("wanted_post_status", data.wanted_post_status || data.status_id);
+    const cat = formatCategory(data.categories);
+    const buyer = data.users ? formatUser(data.users) : {};
+
+    res.json({
+      message: "อัปเดตสถานะโพสต์เรียบร้อยแล้ว",
+      post: {
+        id: data.id,
+        title: data.title,
+        status: postStatus.ui,
+        statusName: postStatus.name,
+        buyer,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   adjustUserScore,
   triggerWeeklyRecovery,
@@ -890,4 +1070,7 @@ module.exports = {
   getPendingVerifications,
   approveVerification,
   rejectVerification,
+  getAdminWantedPosts,
+  deleteWantedPost,
+  updateWantedPostStatus,
 };

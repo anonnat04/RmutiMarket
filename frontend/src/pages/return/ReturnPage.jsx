@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, CheckCircle2, XCircle, RotateCcw, Clock, Calendar, ArrowLeft, ShieldCheck, HelpCircle, FileText, ChevronRight } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, RotateCcw, Clock, Calendar, ArrowLeft, ShieldCheck, HelpCircle, FileText, ChevronRight, MessageCircle } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { Button } from '@/components/common/Button';
 import { EmptyState } from '@/components/common/EmptyState';
@@ -195,7 +195,7 @@ export function ReturnPage() {
                             className="bg-green-600 hover:bg-green-700 text-white flex-1"
                             onClick={() => handleSellerRespond(m, 'accept')}
                           >
-                            ✅ ยอมรับการคืนสินค้า & คืนเงิน
+                            <CheckCircle2 size={14} /> ยอมรับการคืนสินค้า &amp; คืนเงิน
                           </Button>
                           <Button
                             size="sm"
@@ -203,7 +203,7 @@ export function ReturnPage() {
                             className="border-red-200 text-red-600 hover:bg-red-50 flex-1"
                             onClick={() => handleSellerRespond(m, 'reject')}
                           >
-                            ❌ ปฏิเสธคำร้อง
+                            <XCircle size={14} /> ปฏิเสธคำร้อง
                           </Button>
                         </div>
                       )}
@@ -340,7 +340,8 @@ export function ReturnPage() {
             className="flex items-center justify-between rounded-2xl border border-surface-border bg-white p-3.5 text-xs font-bold text-ink-800 hover:bg-surface-muted transition-colors shadow-sm"
           >
             <span className="flex items-center gap-2">
-              💬 แชตพูดคุยกับคู่ค้า
+              <MessageCircle size={15} className="text-brand-500" />
+              แชตพูดคุยกับคู่ค้า
             </span>
             <ChevronRight size={14} className="text-ink-400" />
           </Link>

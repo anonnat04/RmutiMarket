@@ -82,7 +82,7 @@ export function RecommendedProducts({ products = [], loading }) {
             </div>
             <div className="min-w-0">
               <p className="text-sm font-bold text-ink-800">
-                ฟีดของคุณถูกปรับตามความสนใจแล้ว ✨
+                ฟีดของคุณถูกปรับตามความสนใจแล้ว
               </p>
               <div className="flex flex-wrap gap-1.5 mt-1.5">
                 {interestLabels.map((cat) => (

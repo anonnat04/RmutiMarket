@@ -1,6 +1,11 @@
+import {
+  Building2, Zap, BookOpen, Utensils, FlaskConical, Store,
+  Trophy, BedDouble, Landmark, Cog, Dumbbell, MapPin
+} from 'lucide-react';
+
 // พิกัด lat/lng จริงของอาคารใน มทร.อีสาน นครราชสีมา (RMUTI Nakhon Ratchasima)
 
-export const CAMPUS_CENTER = { lat: 14.9860, lng: 102.1195 }; 
+export const CAMPUS_CENTER = { lat: 14.9860, lng: 102.1195 };
 export const CAMPUS_ZOOM = 17;
 
 // พิกัดขอบเขตมหาวิทยาลัย (6 จุดเชื่อมเส้นตรง)
@@ -14,6 +19,27 @@ export const CAMPUS_BOUNDARY = [
   [14.991394, 102.121167], // ปิดกลับจุดเริ่มต้น
 ];
 
+const POINT_ICON_MAP = {
+  'civil-eng': Building2,
+  'ee-building18': Zap,
+  'library-cl': BookOpen,
+  'canteen39': Utensils,
+  'sci-arts': FlaskConical,
+  'seven-eleven': Store,
+  'stadium': Trophy,
+  'business-admin': Building2,
+  'dormitory': BedDouble,
+  'student-dev': Landmark,
+  'eng-tech': Cog,
+  'boxing-gym': Dumbbell,
+};
+
+export function MeetupPointIcon({ id, point, size = 18, className = '' }) {
+  const pointId = id || point?.id;
+  const Icon = POINT_ICON_MAP[pointId] || MapPin;
+  return <Icon size={size} className={className} strokeWidth={2} />;
+}
+
 export const meetupPoints = [
   {
     id: 'civil-eng',
@@ -21,7 +47,6 @@ export const meetupPoints = [
     description: 'อาคารเรียนและห้องปฏิบัติการวิศวกรรมโยธา',
     lat: 14.98889,
     lng: 102.11899,
-    icon: '🏗️',
     category: 'building',
   },
   {
@@ -30,7 +55,6 @@ export const meetupPoints = [
     description: 'อาคารปฏิบัติการวิศวกรรมไฟฟ้า',
     lat: 14.98947,
     lng: 102.11947,
-    icon: '⚡',
     category: 'building',
   },
   {
@@ -39,7 +63,6 @@ export const meetupPoints = [
     description: 'สำนักวิทยบริการและเทคโนโลยีสารสนเทศ (ศูนย์เรียนรู้กลาง)',
     lat: 14.98758,
     lng: 102.11992,
-    icon: '📚',
     category: 'building',
   },
   {
@@ -48,7 +71,6 @@ export const meetupPoints = [
     description: 'โรงอาหารกลางขนาดใหญ่ มีคนเดินผ่านตลอด ปลอดภัย',
     lat: 14.98478,
     lng: 102.12052,
-    icon: '🍜',
     category: 'food',
   },
   {
@@ -57,7 +79,6 @@ export const meetupPoints = [
     description: 'อาคารเรียนใหญ่ ใกล้โรงอาหาร 39',
     lat: 14.98476,
     lng: 102.12112,
-    icon: '🔬',
     category: 'building',
   },
   {
@@ -66,7 +87,6 @@ export const meetupPoints = [
     description: 'ร้านสะดวกซื้อ 24 ชม. จุดนัดรับยอดนิยม สว่างและปลอดภัยสูง',
     lat: 14.98545,
     lng: 102.12037,
-    icon: '🏪',
     category: 'food',
   },
   {
@@ -75,7 +95,6 @@ export const meetupPoints = [
     description: 'พื้นที่โล่งกว้าง มีคนสัญจรตลอดเวลา เหมาะนัดรับช่วงเย็น',
     lat: 14.984514,
     lng: 102.118941,
-    icon: '⚽',
     category: 'landmark',
   },
   {
@@ -84,7 +103,6 @@ export const meetupPoints = [
     description: 'อยู่ใจกลางมหาวิทยาลัย ใกล้สระน้ำ',
     lat: 14.986591,
     lng: 102.119614,
-    icon: '🏢',
     category: 'building',
   },
   {
@@ -93,7 +111,6 @@ export const meetupPoints = [
     description: 'โซนหอพักนักศึกษา มีความปลอดภัยสูง',
     lat: 14.982492,
     lng: 102.118994,
-    icon: '🛏️',
     category: 'building',
   },
   {
@@ -102,7 +119,6 @@ export const meetupPoints = [
     description: 'ฝ่ายวิชาการ มีเจ้าหน้าที่และ รปภ. คอยดูแล',
     lat: 14.985330,
     lng: 102.117517,
-    icon: '🏛️',
     category: 'building',
   },
   {
@@ -111,7 +127,6 @@ export const meetupPoints = [
     description: 'โซนวิศวกรรม มีโรงฝึกงานและม้านั่งจำนวนมาก',
     lat: 14.988946,
     lng: 102.120314,
-    icon: '⚙️',
     category: 'building',
   },
   {
@@ -120,7 +135,6 @@ export const meetupPoints = [
     description: 'ยิมมวยไทย จุดสังเกตชัดเจน',
     lat: 14.985602,
     lng: 102.119012,
-    icon: '🥊',
     category: 'landmark',
   },
 ];

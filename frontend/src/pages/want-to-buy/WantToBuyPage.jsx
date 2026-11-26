@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   PlusCircle, Search, MessageCircle, Clock, Banknote,
-  Edit3, Trash2, CheckCircle2, User, Sparkles, ArrowLeft, Flag
+  Edit3, Trash2, CheckCircle2, User, Sparkles, ArrowLeft, Flag, ArrowDown, ArrowUp
 } from 'lucide-react';
 import { useWantToBuyStore } from '@/store/wantToBuyStore';
 import { useAuthStore } from '@/store/authStore';
@@ -391,7 +391,7 @@ export function WantToBuyPage() {
                 : 'bg-white text-gray-600 border border-surface-border hover:bg-orange-50 hover:text-[#f95721]'
             }`}
           >
-            <span>⬇️ งบสูงสุด → ต่ำสุด</span>
+            <span className="inline-flex items-center gap-1"><ArrowDown size={12} /> งบสูงสุด → ต่ำสุด</span>
           </button>
           <button
             onClick={() => setSortBy('budget_asc')}
@@ -401,7 +401,7 @@ export function WantToBuyPage() {
                 : 'bg-white text-gray-600 border border-surface-border hover:bg-orange-50 hover:text-[#f95721]'
             }`}
           >
-            <span>⬆️ งบต่ำสุด → สูงสุด</span>
+            <span className="inline-flex items-center gap-1"><ArrowUp size={12} /> งบต่ำสุด → สูงสุด</span>
           </button>
           <button
             onClick={() => setSortBy('newest')}
@@ -411,7 +411,7 @@ export function WantToBuyPage() {
                 : 'bg-white text-gray-600 border border-surface-border hover:bg-orange-50 hover:text-[#f95721]'
             }`}
           >
-            <span>🕒 ล่าสุด</span>
+            <span className="inline-flex items-center gap-1"><Clock size={12} /> ล่าสุด</span>
           </button>
         </div>
       </div>
@@ -520,8 +520,8 @@ export function WantToBuyPage() {
                           <CheckCircle2 size={13} /> ได้ของแล้ว
                         </button>
                       ) : (
-                        <div className="rounded-xl bg-emerald-50 py-1.5 text-center text-xs font-bold text-emerald-600">
-                          ✅ ได้ของเรียบร้อยแล้ว
+                        <div className="rounded-xl bg-emerald-50 py-1.5 text-center text-xs font-bold text-emerald-600 inline-flex items-center justify-center gap-1.5 w-full">
+                          <CheckCircle2 size={13} /> ได้ของเรียบร้อยแล้ว
                         </div>
                       )}
                     </div>

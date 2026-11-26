@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Modal } from '@/components/common/Modal';
 import { Button } from '@/components/common/Button';
-import { ShieldAlert, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
+import { ShieldAlert, CheckCircle2, Loader2, AlertCircle, Flag } from 'lucide-react';
 import { api } from '@/lib/api';
 
 const PRODUCT_CATEGORIES = [
@@ -76,7 +76,12 @@ export function ReportModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={isPost ? '🚩 รายงานโพสต์ตามหาที่ไม่เหมาะสม' : '🚩 รายงานสินค้าที่ไม่เหมาะสม'}
+      title={
+        <span className="inline-flex items-center gap-2">
+          <Flag size={16} className="text-red-500" />
+          {isPost ? 'รายงานโพสต์ตามหาที่ไม่เหมาะสม' : 'รายงานสินค้าที่ไม่เหมาะสม'}
+        </span>
+      }
     >
       {submitted ? (
         <div className="py-8 text-center space-y-3">

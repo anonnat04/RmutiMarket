@@ -3,7 +3,8 @@ import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Heart, ImageOff, MessageCircle, ShieldCheck, Star,
   CalendarClock, ShieldAlert, ChevronLeft,
-  CheckCircle2, ShoppingBag, MapPin, Clock, ArrowRight, Flag, X, ChevronDown
+  CheckCircle2, ShoppingBag, MapPin, Clock, ArrowRight, Flag, X, ChevronDown,
+  Ban, Tag, Lightbulb, Pin, Zap
 } from 'lucide-react';
 import { fetchProductDetail } from '@/services/productService';
 import { formatCurrency } from '@/utils/formatCurrency';
@@ -13,7 +14,7 @@ import { useWishlistStore } from '@/store/cartWishlistStore';
 import { useAuthStore } from '@/store/authStore';
 import { useMeetupStore } from '@/store/meetupStore'; // ใช้ทั้ง hook และ useMeetupStore.getState() สำหรับ rollback
 import { useNotificationStore } from '@/store/notificationStore';
-import { meetupPoints } from '@/constants/meetupPoints';
+import { meetupPoints, MeetupPointIcon } from '@/constants/meetupPoints';
 import { api } from '@/lib/api';
 
 // ─── ช่วงเวลาที่อนุญาตให้นัดรับ ─────────────────────────────────────────────
@@ -231,7 +232,7 @@ export function ProductDetailPage() {
       // Send notifications
       addNotification({
         userId: product.seller?.id,
-        title: '🛒 มีคำขอซื้อและนัดรับสินค้าใหม่!',
+        title: 'มีคำขอซื้อและนัดรับสินค้าใหม่',
         message: `${user?.name || 'ผู้ซื้อ'} ขอซื้อและนัดรับ "${product.title}" วันที่ ${meetupDate} เวลา ${meetupTime} น. ณ ${selectedLocation}`,
         type: 'meetup',
         link: '/meetups',
@@ -239,7 +240,7 @@ export function ProductDetailPage() {
 
       addNotification({
         userId: user?.id || 'me',
-        title: '📤 ส่งคำขอนัดรับสินค้าแล้ว',
+        title: 'ส่งคำขอนัดรับสินค้าแล้ว',
         message: `ส่งคำขอนัดรับ "${product.title}" ให้ผู้ขายแล้ว กรุณารอการตอบรับ`,
         type: 'meetup',
         link: '/meetups',
@@ -334,7 +335,9 @@ export function ProductDetailPage() {
 
   const sellerSuspendedNotice = (
     <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-center">
-      <p className="text-sm font-extrabold text-red-700">⛔ สินค้านี้ถูกระงับการทำธุรกรรมชั่วคราว</p>
+      <p className="text-sm font-extrabold text-red-700 inline-flex items-center justify-center gap-1.5">
+        <Ban size={15} /> สินค้านี้ถูกระงับการทำธุรกรรมชั่วคราว
+      </p>
       <p className="mt-1 text-xs text-red-600">
         ผู้ขายมีคะแนนความน่าเชื่อถือต่ำกว่า 50 คะแนน (Trust Score: {sellerTrustScore}/100) จึงยังไม่สามารถทำการซื้อขายหรือนัดรับได้
       </p>
@@ -344,8 +347,9 @@ export function ProductDetailPage() {
   // กล่องแจ้งสถานะแทนปุ่มซื้อ เมื่อสินค้าขายแล้ว/ติดจอง
   const unavailableNotice = (
     <div className={`rounded-2xl border p-4 text-center ${isSold ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
-      <p className={`text-sm font-extrabold ${isSold ? 'text-red-700' : 'text-amber-800'}`}>
-        {isSold ? '🔴 สินค้านี้ขายแล้ว' : '🟡 สินค้านี้ติดจองอยู่'}
+      <p className={`text-sm font-extrabold inline-flex items-center justify-center gap-1.5 ${isSold ? 'text-red-700' : 'text-amber-800'}`}>
+        <span className={`h-2.5 w-2.5 rounded-full ${isSold ? 'bg-red-500' : 'bg-amber-500'}`} />
+        {isSold ? 'สินค้านี้ขายแล้ว' : 'สินค้านี้ติดจองอยู่'}
       </p>
       <p className="mt-1 text-xs text-ink-500">
         {isSold ? 'ไม่สามารถสั่งซื้อหรือขอนัดรับได้ ลองดูสินค้าอื่นๆ ของผู้ขายหรือหมวดหมู่เดียวกัน' : 'มีผู้ซื้อกำลังนัดรับอยู่ หากนัดไม่สำเร็จสินค้าจะกลับมาว่างอีกครั้ง'}
@@ -450,7 +454,7 @@ export function ProductDetailPage() {
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {categoryLabel && (
                 <span className="inline-flex items-center gap-1 rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-bold text-brand-700">
-                  🏷️ ประเภท: {categoryLabel}
+                  <Tag size={12} className="text-brand-600" /> ประเภท: {categoryLabel}
                 </span>
               )}
               {conditionBadge && (
@@ -607,12 +611,13 @@ export function ProductDetailPage() {
             </Link>
           </div>
         ) : isSellerSuspended ? (
-          <p className="py-1 text-center text-xs font-bold text-red-600">
-            ⛔ ระงับการทำธุรกรรมชั่วคราว (Trust Score ผู้ขายต่ำกว่า 50)
+          <p className="py-1 text-center text-xs font-bold text-red-600 inline-flex items-center justify-center gap-1.5 w-full">
+            <Ban size={13} /> ระงับการทำธุรกรรมชั่วคราว (Trust Score ผู้ขายต่ำกว่า 50)
           </p>
         ) : isUnavailable ? (
-          <p className={`py-1 text-center text-sm font-extrabold ${isSold ? 'text-red-600' : 'text-amber-700'}`}>
-            {isSold ? '🔴 สินค้านี้ขายแล้ว' : '🟡 สินค้านี้ติดจองอยู่'}
+          <p className={`py-1 text-center text-sm font-extrabold inline-flex items-center justify-center gap-1.5 w-full ${isSold ? 'text-red-600' : 'text-amber-700'}`}>
+            <span className={`h-2 w-2 rounded-full ${isSold ? 'bg-red-500' : 'bg-amber-500'}`} />
+            {isSold ? 'สินค้านี้ขายแล้ว' : 'สินค้านี้ติดจองอยู่'}
           </p>
         ) : (
           <div className="flex items-center gap-2">
@@ -708,7 +713,7 @@ export function ProductDetailPage() {
 
             {/* Advice notice */}
             <div className="mb-4 rounded-xl bg-amber-50/80 border border-amber-200/80 p-3 text-xs text-amber-900 flex items-start gap-2.5">
-              <span className="text-base leading-none">💡</span>
+              <Lightbulb size={16} className="shrink-0 text-amber-600 mt-0.5" />
               <p className="leading-relaxed">
                 แนะนำให้<strong>ทักแชทคุยกับผู้ขายก่อน</strong> เพื่อสอบถามรายละเอียด และตกลงวัน-เวลาและจุดนัดรับที่สะดวกทั้ง 2 ฝ่าย
               </p>
@@ -848,8 +853,9 @@ export function ProductDetailPage() {
 
                 {/* Safe Point Location */}
                 <div>
-                  <label htmlFor="meetup-location" className="mb-1.5 block text-xs font-bold text-ink-800">
-                    📍 เลือกจุดนัดรับปลอดภัยใน มทร.อีสาน
+                  <label htmlFor="meetup-location" className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-ink-800">
+                    <MapPin size={14} className="text-brand-500" />
+                    เลือกจุดนัดรับปลอดภัยใน มทร.อีสาน
                   </label>
                   {/* ตัวเลือกจุดนัดรับแบบกำหนดเอง: รายการขยายอยู่ในหน้าต่างเลย (เลื่อนได้)
                       ไม่ใช้ <select> ของเบราว์เซอร์ เพราะเมนูของมันลอยทะลุขอบจอบนมือถือ */}
@@ -863,8 +869,9 @@ export function ProductDetailPage() {
                       locationOpen ? 'border-brand-500 ring-2 ring-brand-100' : 'border-gray-200 hover:border-orange-300'
                     }`}
                   >
-                    <span className="min-w-0 flex-1 truncate">
-                      {selectedPoint?.icon || '📍'} {selectedLocation}
+                    <span className="min-w-0 flex-1 truncate inline-flex items-center gap-2">
+                      <MeetupPointIcon point={selectedPoint} size={15} className="text-brand-500 shrink-0" />
+                      <span className="truncate">{selectedLocation}</span>
                     </span>
                     <ChevronDown
                       size={16}
@@ -892,7 +899,7 @@ export function ProductDetailPage() {
                                   : 'font-medium text-ink-800 hover:bg-gray-50'
                               }`}
                             >
-                              <span className="shrink-0">{point.icon || '📍'}</span>
+                              <MeetupPointIcon point={point} size={15} className={active ? 'text-brand-500 shrink-0' : 'text-gray-400 shrink-0'} />
                               <span className="min-w-0 flex-1 break-words">{point.name}</span>
                               {active && <CheckCircle2 size={15} className="shrink-0 text-brand-500" />}
                             </button>
@@ -921,8 +928,9 @@ export function ProductDetailPage() {
                 </div>
 
                 <div>
-                  <label htmlFor="instant-location-detail" className="mb-1.5 block text-xs font-bold text-ink-800">
-                    📌 ระบุรายละเอียดจุดเพิ่มเติม <span className="font-normal text-ink-400">(ไม่บังคับ)</span>
+                  <label htmlFor="instant-location-detail" className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-ink-800">
+                    <Pin size={13} className="text-brand-500" />
+                    ระบุรายละเอียดจุดเพิ่มเติม <span className="font-normal text-ink-400">(ไม่บังคับ)</span>
                   </label>
                   <textarea
                     id="instant-location-detail"
@@ -939,8 +947,9 @@ export function ProductDetailPage() {
                 {/* Date & Time */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-1 text-xs font-bold text-ink-800">
-                      📅 วันและเวลานัดรับ
+                    <span className="flex items-center gap-1.5 text-xs font-bold text-ink-800">
+                      <CalendarClock size={14} className="text-brand-500" />
+                      วันและเวลานัดรับ
                     </span>
                     <button
                       type="button"
@@ -952,12 +961,12 @@ export function ProductDetailPage() {
                           setMeetupTime(nowTime);
                           setTimeError('');
                         } else {
-                          setTimeError(`⏰ ตอนนี้อยู่นอกเวลานัดรับ — ${MEETUP_HOURS_TEXT}`);
+                          setTimeError(`ตอนนี้อยู่นอกเวลานัดรับ — ${MEETUP_HOURS_TEXT}`);
                         }
                       }}
                       className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-orange-200/70 bg-orange-50 px-2.5 py-1 text-[11px] font-bold text-orange-600 transition-colors hover:bg-orange-100"
                     >
-                      ⚡ นัดตอนนี้เลย
+                      <Zap size={12} /> นัดตอนนี้เลย
                     </button>
                   </div>
 

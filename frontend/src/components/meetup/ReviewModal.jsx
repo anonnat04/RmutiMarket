@@ -80,7 +80,16 @@ export function ReviewModal({ open, onClose, onSubmit, revieweeName }) {
   };
 
   return (
-    <Modal open={open} onClose={handleClose} title={`⭐ ให้คะแนน ${revieweeName ?? 'อีกฝ่าย'}`}>
+    <Modal
+      open={open}
+      onClose={handleClose}
+      title={
+        <span className="inline-flex items-center gap-2">
+          <Star size={17} className="fill-brand-500 text-brand-500" />
+          ให้คะแนน {revieweeName ?? 'อีกฝ่าย'}
+        </span>
+      }
+    >
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         {/* Star Rating */}
         <div className="flex flex-col items-center gap-1.5 py-1">
@@ -101,11 +110,11 @@ export function ReviewModal({ open, onClose, onSubmit, revieweeName }) {
             ))}
           </div>
           <span className="text-xs font-bold text-ink-600">
-            {rating === 5 && 'ยอดเยี่ยมมาก ⭐⭐⭐⭐⭐'}
-            {rating === 4 && 'ดีมาก ⭐⭐⭐⭐'}
-            {rating === 3 && 'ปานกลาง ⭐⭐⭐'}
-            {rating === 2 && 'ต้องปรับปรุง ⭐⭐'}
-            {rating === 1 && 'ไม่ประทับใจ ⭐'}
+            {rating === 5 && 'ยอดเยี่ยมมาก (5/5)'}
+            {rating === 4 && 'ดีมาก (4/5)'}
+            {rating === 3 && 'ปานกลาง (3/5)'}
+            {rating === 2 && 'ต้องปรับปรุง (2/5)'}
+            {rating === 1 && 'ไม่ประทับใจ (1/5)'}
           </span>
         </div>
 
@@ -164,7 +173,7 @@ export function ReviewModal({ open, onClose, onSubmit, revieweeName }) {
             )}
           </div>
           <p className="text-[11px] text-ink-400">
-            📸 สามารถถ่ายรูปขณะส่งมอบสินค้า หรือสภาพของที่ได้รับเพื่อเป็นหลักฐานและแสดงในหน้ารีวิว
+            สามารถถ่ายรูปขณะส่งมอบสินค้า หรือสภาพของที่ได้รับเพื่อเป็นหลักฐานและแสดงในหน้ารีวิว
           </p>
         </div>
 

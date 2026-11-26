@@ -15,6 +15,8 @@ import {
   ArrowRight,
   ArrowLeft,
   Loader2,
+  GraduationCap,
+  ShoppingBag,
 } from "lucide-react";
 import { useAuthStore } from "@/store/authStore";
 import { useFeedStore } from "@/store/feedStore";
@@ -147,26 +149,27 @@ export function InterestPickerPage() {
               คุณสนใจสินค้า<span className="bg-gradient-to-r from-[#E8631C] to-[#FF7A30] bg-clip-text text-transparent">ประเภทไหน?</span>
             </h1>
             <p className="mt-2.5 text-sm sm:text-base text-slate-500 leading-relaxed">
-              เลือกหมวดหมู่ที่คุณสนใจตั้งแต่ 1 รายการขึ้นไป เพื่อให้เราจัดสรรสินค้าและสิทธิพิเศษที่ตรงใจคุณมากที่สุด ✨
+              เลือกหมวดหมู่ที่คุณสนใจตั้งแต่ 1 รายการขึ้นไป เพื่อให้เราจัดสรรสินค้าและสิทธิพิเศษที่ตรงใจคุณมากที่สุด
             </p>
           </div>
 
-          {/* 3D Mascot Banner Container */}
+          {/* Mascot Banner Container */}
           <div className="hidden md:flex items-center justify-end shrink-0">
-            <div className="relative flex items-center bg-white/60 backdrop-blur-md p-4 rounded-3xl border border-orange-100/80 shadow-xl shadow-orange-950/5">
+            <div className="relative flex items-center bg-white/80 backdrop-blur-sm p-4 rounded-2xl border border-orange-100 shadow-sm">
               {/* Speech bubble */}
-              <div className="absolute -top-3 -left-12 bg-slate-900 text-white rounded-2xl px-3.5 py-1.5 text-[11px] font-bold shadow-md z-10 whitespace-nowrap animate-bounce">
-                เลือกอันที่ใช่ได้เลย! 🛍️
+              <div className="absolute -top-3 -left-12 bg-slate-900 text-white rounded-xl px-3 py-1.5 text-[11px] font-bold shadow-md z-10 whitespace-nowrap flex items-center gap-1.5">
+                <ShoppingBag size={12} className="text-orange-400" />
+                เลือกอันที่ใช่ได้เลย!
                 <div className="absolute -bottom-1 right-5 w-2.5 h-2.5 bg-slate-900 rotate-45" />
               </div>
 
               {/* Mascot graphics */}
               <div className="flex items-center gap-2">
-                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-orange-100 to-amber-100 flex items-center justify-center text-3xl shadow-inner border border-white">
-                  🧑‍🎓
+                <div className="w-14 h-14 rounded-2xl bg-orange-50 flex items-center justify-center text-orange-600 border border-orange-100">
+                  <GraduationCap size={28} strokeWidth={1.75} />
                 </div>
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-[#E8631C] to-[#FF7A30] flex items-center justify-center text-2xl shadow-md text-white border-2 border-white rotate-6">
-                  ✨
+                <div className="w-11 h-11 rounded-xl bg-brand-500 flex items-center justify-center text-white shadow-sm rotate-6">
+                  <Sparkles size={20} />
                 </div>
               </div>
             </div>
@@ -279,7 +282,7 @@ export function InterestPickerPage() {
                 )}
               </div>
               <p className="text-[11px] sm:text-xs text-slate-400 mt-0.5">
-                คุณสามารถเปลี่ยนหมวดหมู่ที่สนใจได้ตลอดเวลาในโปรไฟล์ของคุณ 🧡
+                คุณสามารถเปลี่ยนหมวดหมู่ที่สนใจได้ตลอดเวลาในโปรไฟล์ของคุณ
               </p>
             </div>
           </div>

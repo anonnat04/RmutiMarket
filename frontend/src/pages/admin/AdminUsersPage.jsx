@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Users, ShieldCheck, Search, Ban, CheckCircle, Loader2, ChevronLeft, ChevronRight,
-  Phone, Star, RefreshCw, CheckCircle2, X,
+  Phone, Star, RefreshCw, CheckCircle2, X, SlidersHorizontal,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAdminStore } from '@/store/adminStore';
@@ -339,7 +339,7 @@ export function AdminUsersPage() {
                         className="flex items-center gap-1 rounded-xl bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-[11px] font-bold text-amber-700 hover:bg-amber-500 hover:text-white hover:border-amber-500 transition-all disabled:opacity-50"
                         title="ตัดหรือปรับคะแนนความน่าเชื่อถือ"
                       >
-                        ⚡ ตัด/ปรับคะแนน
+                        <SlidersHorizontal size={12} /> ตัด/ปรับคะแนน
                       </button>
 
                       {banned ? (

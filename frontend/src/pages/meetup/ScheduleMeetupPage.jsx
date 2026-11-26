@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { CalendarClock, MapPin, ShoppingBag, ChevronRight, ArrowLeft, AlertTriangle } from 'lucide-react';
+import {
+  CalendarClock, MapPin, ShoppingBag, ChevronRight, ArrowLeft, AlertTriangle,
+  Check, Ban, ShieldCheck, Calendar, Zap, Map, Pin
+} from 'lucide-react';
 import { fetchProductDetail } from '@/services/productService';
 import { useAuthStore } from '@/store/authStore';
 import { CampusMapPicker } from '@/components/meetup/CampusMapPicker';
@@ -66,7 +69,7 @@ function StepBar({ current }) {
                   boxShadow: active ? '0 0 0 4px rgba(249,115,22,0.18)' : 'none',
                 }}
               >
-                {done ? '✓' : i + 1}
+                {done ? <Check size={14} strokeWidth={2.5} /> : i + 1}
               </div>
               <span style={{ fontSize: 10, fontWeight: 600, color: active ? '#f97316' : '#9ca3af', whiteSpace: 'nowrap' }}>
                 {label}
@@ -176,7 +179,7 @@ export function ScheduleMeetupPage() {
     if (lat && lng) {
       const isInside = isPointInPolygon([lat, lng], CAMPUS_BOUNDARY);
       if (!isInside) {
-        setErrors((prev) => ({ ...prev, location: '❌ จุดนัดรับอยู่นอกเขตมหาวิทยาลัย กรุณาเลือกจุดนัดรับที่อยู่ในกรอบสีแดงเท่านั้น' }));
+        setErrors((prev) => ({ ...prev, location: 'จุดนัดรับอยู่นอกเขตมหาวิทยาลัย กรุณาเลือกจุดนัดรับที่อยู่ในกรอบสีแดงเท่านั้น' }));
         return;
       }
     }
@@ -214,14 +217,14 @@ export function ScheduleMeetupPage() {
       import('@/store/notificationStore').then(({ useNotificationStore }) => {
         useNotificationStore.getState().addNotification({
           userId: product.seller.id,
-          title: '📅 มีคำขอนัดรับสินค้าใหม่',
+          title: 'มีคำขอนัดรับสินค้าใหม่',
           message: `${user?.name || 'ผู้ซื้อ'} ขอนัดรับสินค้า "${product.title}" วันที่ ${date} เวลา ${time} น. ณ ${locationName}`,
           type: 'meetup',
           link: '/meetups',
         });
         useNotificationStore.getState().addNotification({
           userId: user?.id ?? 'me',
-          title: '📤 ส่งคำขอนัดรับสินค้าแล้ว',
+          title: 'ส่งคำขอนัดรับสินค้าแล้ว',
           message: `ส่งคำขอนัดรับ "${product.title}" ให้ผู้ขายแล้ว กรุณารอการตอบรับ`,
           type: 'meetup',
           link: '/meetups',
@@ -280,7 +283,9 @@ export function ScheduleMeetupPage() {
         <div className="mb-5 flex items-start gap-3 rounded-2xl bg-red-50 p-4 border border-red-200 text-xs text-red-900 leading-relaxed shadow-xs">
           <AlertTriangle size={20} className="shrink-0 text-red-600 mt-0.5" />
           <div>
-            <p className="font-bold text-red-950 text-sm">⛔ ระงับการทำธุรกรรม (Trust Score: {userTrustScore}/100)</p>
+            <p className="font-bold text-red-950 text-sm inline-flex items-center gap-1.5">
+              <Ban size={15} className="text-red-600" /> ระงับการทำธุรกรรม (Trust Score: {userTrustScore}/100)
+            </p>
             <p className="mt-1 text-red-800">
               คะแนนความน่าเชื่อถือของคุณต่ำกว่า 50 คะแนน จึงยังไม่สามารถส่งคำขอนัดรับ ซื้อ หรือขายสินค้าได้ตามกฎความปลอดภัยของระบบ คะแนนจะได้รับคืนอัตโนมัติทุกสัปดาห์
             </p>
@@ -291,7 +296,9 @@ export function ScheduleMeetupPage() {
         <div className="mb-5 flex items-start gap-3 rounded-2xl bg-red-50 p-4 border border-red-200 text-xs text-red-900 leading-relaxed shadow-xs">
           <AlertTriangle size={20} className="shrink-0 text-red-600 mt-0.5" />
           <div>
-            <p className="font-bold text-red-950 text-sm">⛔ ไม่สามารถนัดรับสินค้ากับผู้ขายรายนี้ได้</p>
+            <p className="font-bold text-red-950 text-sm inline-flex items-center gap-1.5">
+              <Ban size={15} className="text-red-600" /> ไม่สามารถนัดรับสินค้ากับผู้ขายรายนี้ได้
+            </p>
             <p className="mt-1 text-red-800">
               ผู้ขายรายนี้มีคะแนน Trust Score ต่ำกว่า 50 คะแนน จึงถูกระงับการทำธุรกรรมชั่วคราว
             </p>
@@ -342,12 +349,14 @@ export function ScheduleMeetupPage() {
       <div className="mb-6 flex items-start gap-3 rounded-2xl bg-orange-50/90 p-4 border border-orange-200 text-xs text-orange-900 leading-relaxed">
         <MapPin size={20} className="shrink-0 text-orange-600 mt-0.5" />
         <div>
-          <p className="font-bold text-orange-950 text-sm">🛡️ ระบบการนัดรับปลอดภัยในมหาวิทยาลัย</p>
+          <p className="font-bold text-orange-950 text-sm inline-flex items-center gap-1.5">
+            <ShieldCheck size={15} className="text-orange-600" /> ระบบการนัดรับปลอดภัยในมหาวิทยาลัย
+          </p>
           <p className="mt-1">
             สามารถนัดรับสินค้าได้เฉพาะพื้นที่ภายในมหาวิทยาลัย (กรอบสีแดง) เท่านั้น ไม่อนุญาตนัดรับนอกเขตมหาวิทยาลัยเพื่อความปลอดภัยของทั้งผู้ซื้อและผู้ขาย โปรดเลือกจุดปักหมุดที่ระบบจัดเตรียมไว้
           </p>
-          <p className="mt-1 font-semibold text-orange-950">
-            ⏰ {MEETUP_HOURS_TEXT}
+          <p className="mt-1 font-semibold text-orange-950 inline-flex items-center gap-1.5">
+            <CalendarClock size={13} className="text-orange-600" /> {MEETUP_HOURS_TEXT}
           </p>
         </div>
       </div>
@@ -356,7 +365,9 @@ export function ScheduleMeetupPage() {
       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-6">
         {/* ─── วันที่และเวลา ──────────────────────────────────── */}
         <div className="cm-card p-4">
-          <p className="mb-3 text-sm font-bold text-ink-900">📅 วันที่และเวลานัดรับ</p>
+          <p className="mb-3 text-sm font-bold text-ink-900 flex items-center gap-1.5">
+            <Calendar size={16} className="text-brand-500" /> วันที่และเวลานัดรับ
+          </p>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {/* วันที่ */}
             <div>
@@ -385,12 +396,12 @@ export function ScheduleMeetupPage() {
                       setTime(nowTime);
                       setErrors((prev) => ({ ...prev, time: null }));
                     } else {
-                      setErrors((prev) => ({ ...prev, time: `⏰ ตอนนี้อยู่นอกเวลานัดรับ — ${MEETUP_HOURS_TEXT}` }));
+                      setErrors((prev) => ({ ...prev, time: `ตอนนี้อยู่นอกเวลานัดรับ — ${MEETUP_HOURS_TEXT}` }));
                     }
                   }}
-                  className="text-[11px] font-bold text-orange-600 hover:underline"
+                  className="text-[11px] font-bold text-orange-600 hover:underline inline-flex items-center gap-1"
                 >
-                  ⚡ นัดตอนนี้เลย
+                  <Zap size={12} /> นัดตอนนี้เลย
                 </button>
               </div>
               <input
@@ -404,7 +415,7 @@ export function ScheduleMeetupPage() {
                   // เลือกเวลานอกช่วงที่กำหนด → แจ้งทันทีเป็นภาษาไทย
                   setErrors((prev) => ({
                     ...prev,
-                    time: v && !isWithinMeetupHours(v) ? `⏰ ${MEETUP_HOURS_TEXT}` : null,
+                    time: v && !isWithinMeetupHours(v) ? MEETUP_HOURS_TEXT : null,
                   }));
                 }}
                 className="block w-full rounded-xl border border-surface-border bg-white px-3 py-2.5 text-sm text-ink-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
@@ -419,7 +430,9 @@ export function ScheduleMeetupPage() {
           {/* Time Slot แนะนำ (08:00 – 20:00) */}
           {date && (
             <div className="mt-4">
-              <p className="text-xs font-bold text-ink-700">⏰ เวลาที่แนะนำ</p>
+              <p className="text-xs font-bold text-ink-700 flex items-center gap-1.5">
+                <CalendarClock size={13} className="text-brand-500" /> เวลาที่แนะนำ
+              </p>
               <p className="mb-2 mt-0.5 text-[11px] text-gray-400">{MEETUP_HOURS_TEXT}</p>
               <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
                 {TIME_SLOTS.map((t) => {
@@ -450,7 +463,9 @@ export function ScheduleMeetupPage() {
 
         {/* ─── แผนที่ ──────────────────────────────────────────── */}
         <div className="cm-card p-4">
-          <p className="mb-3 text-sm font-bold text-ink-900">🗺️ เลือกจุดนัดรับในมหาวิทยาลัย</p>
+          <p className="mb-3 text-sm font-bold text-ink-900 flex items-center gap-1.5">
+            <Map size={16} className="text-brand-500" /> เลือกจุดนัดรับในมหาวิทยาลัย
+          </p>
           <CampusMapPicker value={locationValue} onChange={setLocationValue} />
           {errors.location && (
             <p className="mt-2 text-xs font-medium text-red-500">{errors.location}</p>
@@ -458,8 +473,9 @@ export function ScheduleMeetupPage() {
         </div>
 
         <div className="cm-card p-4">
-          <label htmlFor="location-detail" className="mb-1.5 block text-sm font-bold text-ink-900">
-            📌 ระบุรายละเอียดจุดเพิ่มเติม <span className="text-xs font-normal text-ink-400">(ไม่บังคับ)</span>
+          <label htmlFor="location-detail" className="mb-1.5 flex items-center gap-1.5 text-sm font-bold text-ink-900">
+            <Pin size={14} className="text-brand-500" />
+            ระบุรายละเอียดจุดเพิ่มเติม <span className="text-xs font-normal text-ink-400">(ไม่บังคับ)</span>
           </label>
           <textarea
             id="location-detail"

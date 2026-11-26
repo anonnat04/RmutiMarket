@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Receipt, Search, Filter, Calendar, MapPin, CheckCircle2, XCircle, RotateCcw, Clock, ArrowLeft, ArrowUpRight, Star } from 'lucide-react';
+import { Receipt, Search, Filter, Calendar, MapPin, CheckCircle2, XCircle, RotateCcw, Clock, ArrowLeft, ArrowUpRight, Star, ShoppingBag, Tag, Pin } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { EmptyState } from '@/components/common/EmptyState';
 import { Button } from '@/components/common/Button';
@@ -202,8 +202,8 @@ export function TransactionHistoryPage() {
               >
                 <div className="space-y-1.5 flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold ${isBuyer ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
-                      {isBuyer ? '🛒 ซื้อสินค้า' : '🏷️ ขายสินค้า'}
+                    <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold ${isBuyer ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                      {isBuyer ? <><ShoppingBag size={11} /> ซื้อสินค้า</> : <><Tag size={11} /> ขายสินค้า</>}
                     </span>
                     <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold border ${statusConfig.color}`}>
                       {statusConfig.label}
@@ -234,8 +234,9 @@ export function TransactionHistoryPage() {
                     </p>
                   )}
                   {item.locationDetail && (
-                    <p className="text-xs text-orange-800 bg-orange-50/70 p-2 rounded-lg border border-orange-100 break-words">
-                      📌 รายละเอียดจุดเพิ่มเติม: {item.locationDetail}
+                    <p className="text-xs text-orange-800 bg-orange-50/70 p-2 rounded-lg border border-orange-100 break-words flex items-start gap-1.5">
+                      <Pin size={12} className="shrink-0 text-orange-600 mt-0.5" />
+                      <span>รายละเอียดจุดเพิ่มเติม: {item.locationDetail}</span>
                     </p>
                   )}
                 </div>
