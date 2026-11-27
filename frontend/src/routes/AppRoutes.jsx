@@ -20,7 +20,6 @@ import { MeetupCheckInPage } from '@/pages/meetup/MeetupCheckInPage';
 import { TransactionHistoryPage } from '@/pages/transaction/TransactionHistoryPage';
 import { WantToBuyPage } from '@/pages/want-to-buy/WantToBuyPage';
 import { CreateWantToBuyPage } from '@/pages/want-to-buy/CreateWantToBuyPage';
-import { ComingSoonPage } from '@/components/common/ComingSoonPage';
 
 // Auth Pages
 import { RegisterPage } from '@/pages/auth/RegisterPage';
