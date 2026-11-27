@@ -71,10 +71,10 @@ export function WantToBuyMarquee() {
     };
   }, []);
 
-  // ดึงโพสต์จริงจาก Database โดยกรองผู้โพสต์ที่ Trust Score < 50 ออก (รวมโพสต์ของผู้ใช้เองด้วยเพื่อให้เห็นสถานะโพสต์ของตน)
+  // ดึงโพสต์จริงจาก Database โดยกรองโพสต์ของตัวเองออก และกรองผู้โพสต์ที่ Trust Score < 50 ออก
   const realPosts = useMemo(() => {
-    return dbPosts.filter((p) => (p.author?.trustScore ?? p.author?.trust_score ?? 100) >= 50);
-  }, [dbPosts]);
+    return dbPosts.filter((p) => !isMyPost(p) && (p.author?.trustScore ?? p.author?.trust_score ?? 100) >= 50);
+  }, [dbPosts, myId, myUsername]);
 
   // สร้าง list ที่ยาวพอสำหรับ loop marquee ให้เลื่อนเนียนสนิทไร้รอยต่อ (Seamless Loop)
   // โดยวนซ้ำเฉพาะโพสต์จริงที่มีอยู่ใน Database
@@ -146,9 +146,7 @@ export function WantToBuyMarquee() {
               <Flame size={16} className="text-[#f95721] fill-[#f95721]" />
               ตามหาสินค้าด่วน
             </span>
-            <span className="hidden sm:inline-block text-[11px] font-semibold text-gray-500">
-              · มีของไม่ได้ใช้ ลองดูว่าเพื่อนกำลังตามหาอะไรอยู่
-            </span>
+
           </div>
         </div>
 
