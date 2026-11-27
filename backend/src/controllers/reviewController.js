@@ -1,6 +1,7 @@
 const { supabase } = require("../config/db");
 const { formatUser } = require("../utils/statusHelper");
 const { recoverScoreOnDeal } = require("./meetupController");
+const { sendUserNotification } = require("../utils/notify");
 
 // ----------------------------------------------------------------
 // GET /api/reviews/user/:userId  — รีวิวของผู้ใช้
@@ -175,15 +176,15 @@ async function createReview(req, res, next) {
     }
 
     const safeComment = comment ? String(comment) : "";
-    await supabase.from("notifications").insert({
-      user_id: revieweeId,
+    await sendUserNotification({
+      userId: revieweeId,
       type: "review_received",
-      title: `ได้รับรีวิวใหม่ ${"⭐".repeat(numRating)}`,
+      title: `ได้รับรีวิวใหม่ ${numRating} ดาว`,
       message: safeComment
         ? `"${safeComment.substring(0, 60)}${safeComment.length > 60 ? "..." : ""}"`
         : `ได้รับ ${numRating} ดาว`,
-      reference_type: "review",
-      reference_id: review.id,
+      referenceType: "review",
+      referenceId: review.id,
     });
 
     res.status(201).json({

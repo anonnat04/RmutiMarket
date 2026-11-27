@@ -1,4 +1,5 @@
 const { supabase } = require("../config/db");
+const { sendUserNotification } = require("../utils/notify");
 
 // ----------------------------------------------------------------
 // POST /api/returns  — ขอคืนสินค้า
@@ -49,13 +50,13 @@ async function createReturnRequest(req, res, next) {
 
     if (error) throw error;
 
-    await supabase.from("notifications").insert({
-      user_id: txn.seller_id,
+    await sendUserNotification({
+      userId: txn.seller_id,
       type: "return_request",
       title: "มีคำขอคืนสินค้า",
       message: `ผู้ซื้อขอคืนสินค้า เหตุผล: ${reason.substring(0, 80)}`,
-      reference_type: "transaction",
-      reference_id: transactionId,
+      referenceType: "transaction",
+      referenceId: transactionId,
     });
 
     res.status(201).json({ message: "ส่งคำขอคืนสินค้าแล้ว รอการตรวจสอบจากทีมงาน", returnId: ret.id });
@@ -126,11 +127,13 @@ async function respondToReturnRequest(req, res, next) {
     if (!updated?.length) return res.status(409).json({ error: "คำขอนี้ถูกดำเนินการไปแล้ว" });
 
     const title = action === "accept" ? "ผู้ขายยอมรับคำขอคืนสินค้า" : "ผู้ขายปฏิเสธคำขอคืนสินค้า";
-    await supabase.from("notifications").insert({
-      user_id: requestRow.transactions.buyer_id,
-      type: "return_response", title,
+    await sendUserNotification({
+      userId: requestRow.transactions.buyer_id,
+      type: "return_response",
+      title,
       message: action === "accept" ? "โปรดติดต่อผู้ขายเพื่อนัดคืนสินค้าและรับเงินคืน" : "โปรดติดต่อผู้ขายผ่านแชตหากต้องการข้อมูลเพิ่มเติม",
-      reference_type: "return", reference_id: requestRow.id,
+      referenceType: "return",
+      referenceId: requestRow.id,
     });
     res.json({ message: title });
   } catch (err) {

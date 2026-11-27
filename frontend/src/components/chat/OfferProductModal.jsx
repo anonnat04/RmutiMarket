@@ -102,6 +102,9 @@ export function OfferProductModal({ isOpen, onClose, onSelectProduct, wantToBuyP
     return false;
   };
 
+  const myTrustScore = Number(user?.trust_score ?? user?.trustScore ?? 100);
+  const isTrustScoreLow = myTrustScore < 50;
+
   // แยกสินค้าเป็น: 1) หมวดหมู่ตรง (เสนอขายได้) และ 2) หมวดหมู่อื่น (ไม่ตรงเงื่อนไข กดไม่ได้)
   const matchedListings = myActiveListings.filter((p) => isCategoryMatched(p, wantToBuyPost));
   const unmatchedListings = myActiveListings.filter((p) => !isCategoryMatched(p, wantToBuyPost));
@@ -111,6 +114,17 @@ export function OfferProductModal({ isOpen, onClose, onSelectProduct, wantToBuyP
   return (
     <Modal open={isOpen} onClose={onClose} title="เลือกสินค้าที่ต้องการเสนอขาย">
       <div className="flex flex-col gap-4">
+        {isTrustScoreLow && (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3.5 text-xs text-red-700 flex items-start gap-2.5">
+            <Lock size={16} className="shrink-0 text-red-500 mt-0.5" />
+            <div>
+              <p className="font-bold text-sm text-red-800">ไม่สามารถเสนอขายสินค้าได้</p>
+              <p className="mt-0.5 leading-relaxed">
+                คะแนนความน่าเชื่อถือของคุณต่ำกว่า 50 คะแนน (ปัจจุบัน {myTrustScore}/100) จึงถูกจำกัดสิทธิ์ในการเสนอขายสินค้าชั่วคราว
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* ข้อมูลโพสที่กำลังจะเสนอขายให้ */}
         {wantToBuyPost && (
@@ -161,7 +175,8 @@ export function OfferProductModal({ isOpen, onClose, onSelectProduct, wantToBuyP
                       key={product.id}
                       product={product}
                       onSelect={onSelectProduct}
-                      canOffer={true}
+                      canOffer={!isTrustScoreLow}
+                      reason={isTrustScoreLow ? 'Trust Score < 50' : undefined}
                       isSubmitting={isSubmitting}
                     />
                   ))}

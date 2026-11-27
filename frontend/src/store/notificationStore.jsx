@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '@/lib/api';
-import { getSocket } from '@/services/socket';
+import { getSocket, authenticateSocketNow } from '@/services/socket';
 import { useAuthStore } from '@/store/authStore';
 
 // แปลง type/reference ของแจ้งเตือนจาก backend ให้เป็นลิงก์ที่กดแล้วพาไปหน้าที่เกี่ยวข้องแบบตรงจุด
@@ -93,14 +93,9 @@ export function buildNotificationLink(n) {
 
 function dedupeNotifications(list) {
   const seenIds = new Set();
-  const seenContent = new Set();
   return (list || []).filter((n) => {
     if (!n) return false;
-    const contentKey = `${(n.title || '').trim()}|||${(n.message || '').trim()}`;
-    if (seenContent.has(contentKey)) return false;
-    seenContent.add(contentKey);
-
-    if (n.id) {
+    if (n.id != null) {
       if (seenIds.has(String(n.id))) return false;
       seenIds.add(String(n.id));
     }
@@ -156,13 +151,10 @@ export const useNotificationStore = create()(
         const mapped = mapBackendNotification(rawNotif);
         set((state) => {
           if (
-            state.notifications.some(
-              (n) =>
-                String(n.id) === String(mapped.id) ||
-                (n.title === mapped.title && n.message === mapped.message)
-            )
+            mapped.id != null &&
+            state.notifications.some((n) => String(n.id) === String(mapped.id))
           ) {
-            return state; // กันซ้ำ
+            return state; // กันซ้ำด้วย id เท่านั้น
           }
           return { notifications: [mapped, ...state.notifications] };
         });
@@ -219,16 +211,28 @@ socket.on('new_notification', (rawNotif) => {
 });
 
 socket.on('connect', () => {
+  authenticateSocketNow();
   useNotificationStore.getState().fetchNotifications();
 });
 
-// ── เพิ่ม: ดึงแจ้งเตือนอีกครั้งทันทีที่ authStore โหลด token จาก localStorage เสร็จ (rehydration) ──
-// เดิมพึ่งพา socket 'connect' อย่างเดียว ซึ่งอาจ fire เร็วกว่าที่ token จะโหลดจาก localStorage เสร็จ
-// ทำให้ fetchNotifications() ครั้งแรกสุดหลัง refresh หน้าเว็บได้ 401 เพราะยังไม่มี token ตอนนั้น
+// ยืนยันตัวตน socket และโหลดแจ้งเตือนทันทีเมื่อ token โหลดเสร็จหรือมีการเปลี่ยนบัญชี
 if (useAuthStore.persist?.hasHydrated?.()) {
+  authenticateSocketNow();
   useNotificationStore.getState().fetchNotifications();
 } else {
   useAuthStore.persist?.onFinishHydration?.(() => {
+    authenticateSocketNow();
     useNotificationStore.getState().fetchNotifications();
   });
 }
+
+let prevAuthToken = useAuthStore.getState().token;
+useAuthStore.subscribe((state) => {
+  if (state.token !== prevAuthToken) {
+    prevAuthToken = state.token;
+    if (state.token) {
+      authenticateSocketNow();
+      useNotificationStore.getState().fetchNotifications();
+    }
+  }
+});

@@ -8,6 +8,7 @@ import {
   Image as ImageIcon, Send, CheckCircle2
 } from "lucide-react";
 import { formatCurrency } from "@/utils/formatCurrency";
+import { parseTimestamp, formatThaiTime, formatThaiDate, formatThaiDateKey } from "@/utils/dateTime";
 import { useAuthStore } from "@/store/authStore";
 import {
   getSocket,
@@ -78,23 +79,22 @@ function isConversationEnded(room) {
   );
 }
 
-const fmtTime = (iso) =>
-  iso ? new Date(iso).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" }) : "";
+const fmtTime = (iso) => formatThaiTime(iso);
 
 function dayLabel(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
-  if (d.toDateString() === today.toDateString()) return "วันนี้";
-  if (d.toDateString() === yesterday.toDateString()) return "เมื่อวาน";
-  return d.toLocaleDateString("th-TH", { day: "numeric", month: "long", year: "numeric" });
+  const key = formatThaiDateKey(iso);
+  if (!key) return "";
+  const now = new Date();
+  const todayKey = formatThaiDateKey(now);
+  const yesterdayKey = formatThaiDateKey(new Date(now.getTime() - 86400000));
+  if (key === todayKey) return "วันนี้";
+  if (key === yesterdayKey) return "เมื่อวาน";
+  return formatThaiDate(iso);
 }
 
 const byTime = (a, b) =>
-  (a.created_at ? new Date(a.created_at).getTime() : 0) -
-  (b.created_at ? new Date(b.created_at).getTime() : 0);
+  (parseTimestamp(a.created_at)?.getTime() || 0) -
+  (parseTimestamp(b.created_at)?.getTime() || 0);
 
 function mapBackendMessage(m, currentUserId) {
   return {
@@ -390,7 +390,7 @@ export function ChatPage() {
               text: msg.text || msg.content,
               type: msg.message_type || msg.type || "TEXT",
               image: msg.imageUrl || null,
-              time: msg.time || fmtTime(new Date().toISOString()),
+              time: fmtTime(msg.createdAt || msg.created_at || new Date().toISOString()),
               created_at: msg.createdAt || msg.created_at || new Date().toISOString(),
             },
           ],
@@ -705,7 +705,13 @@ export function ChatPage() {
         ...prev,
         [roomId]: (prev[roomId] || []).map((m) =>
           m.id === tempId
-            ? { ...m, id: saved.id, pending: false, time: saved.time || m.time, created_at: saved.createdAt || saved.created_at || m.created_at }
+            ? {
+                ...m,
+                id: saved.id,
+                pending: false,
+                time: fmtTime(saved.createdAt || saved.created_at || m.created_at),
+                created_at: saved.createdAt || saved.created_at || m.created_at,
+              }
             : m
         ),
       }));
@@ -823,7 +829,7 @@ export function ChatPage() {
   let lastDay = "";
 
   return (
-    <div className="grid h-[calc(100vh-9.5rem)] grid-cols-1 gap-4 md:h-[calc(100vh-6.5rem)] md:grid-cols-[320px_1fr]">
+    <div className="grid h-[calc(100dvh-9rem)] grid-cols-1 gap-4 md:h-[calc(100vh-6.5rem)] md:grid-cols-[320px_1fr]">
       {/* ───────── รายการแชท ───────── */}
       <aside className={`cm-card flex-col overflow-hidden ${activeId ? "hidden md:flex" : "flex"}`}>
         <div className="flex shrink-0 items-center justify-between border-b border-surface-border bg-white px-4 py-3.5">

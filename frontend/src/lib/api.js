@@ -285,6 +285,10 @@ export const api = {
   },
   adminDeleteListing: (token, id, reason = "") =>
     request(`/api/admin/listings/${id}`, { method: "DELETE", token, body: { reason } }),
+  adminHideListing: (token, id, reason = "") =>
+    request(`/api/admin/listings/${id}/hide`, { method: "POST", token, body: { reason } }),
+  adminRestoreListing: (token, id) =>
+    request(`/api/admin/listings/${id}/restore`, { method: "POST", token }),
 
   // ── Wanted Posts (โพสต์ตามหาสินค้า) ──
   adminGetWantedPosts: (token, { q = "", status = "", category = "", page = 1, limit = 20 } = {}) => {

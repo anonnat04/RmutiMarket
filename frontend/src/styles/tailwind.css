@@ -10,6 +10,8 @@ body {
   background-color: #f7f7f8;
   color: #1a1a1a;
   scroll-behavior: smooth;
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 /* visible keyboard focus everywhere */

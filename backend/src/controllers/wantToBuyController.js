@@ -43,6 +43,10 @@ async function getWantToBuyPosts(req, res, next) {
   try {
     const { q, category, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    // ลบโพสต์ตามหาที่อายุครบ 7 วันทิ้งอัตโนมัติ
+    await supabase.from("wanted_posts").delete().lt("created_at", sevenDaysAgo);
 
     let query = supabase
       .from("wanted_posts")
@@ -51,11 +55,12 @@ async function getWantToBuyPosts(req, res, next) {
         categories(id, name),
         wanted_post_status(id, name),
         users!buyer_id(
-          id, username, full_name, avatar_url, profile_image_url,
+          id, username, full_name, avatar_url, profile_image_url, trust_score,
           faculty_id, major_id, email_verified_at, faculties(name), majors(name)
         )
       `, { count: "exact" })
-      .neq("status_id", 3); // 3 = ยกเลิกโพสต์ (CANCELLED)
+      .eq("status_id", 1) // แสดงเฉพาะโพสต์ที่กำลังตามหา (ไม่รวมที่ได้รับของแล้ว/ยกเลิก/หมดอายุ)
+      .gte("created_at", sevenDaysAgo);
 
     // ถ้าส่ง exclude_mine="true" และผู้ใช้ล็อกอินอยู่ ให้ซ่อนโพสต์ตามหาของตัวเอง
     if (req.query.exclude_mine === "true" && req.user?.id) {

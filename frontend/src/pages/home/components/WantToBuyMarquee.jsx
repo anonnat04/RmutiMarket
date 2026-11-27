@@ -10,18 +10,9 @@ import {
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 import { formatCurrency } from '@/utils/formatCurrency';
+import { formatTimeAgo } from '@/utils/dateTime';
 
-function timeAgo(dateStr) {
-  if (!dateStr) return 'เมื่อสักครู่';
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return 'เมื่อสักครู่';
-  if (minutes < 60) return `${minutes} นาทีที่แล้ว`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} ชม. ที่แล้ว`;
-  const days = Math.floor(hours / 24);
-  return `${days} วันที่แล้ว`;
-}
+const timeAgo = formatTimeAgo;
 
 export function WantToBuyMarquee() {
   const navigate = useNavigate();

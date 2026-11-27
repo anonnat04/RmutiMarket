@@ -81,8 +81,32 @@ export function AdminLayout() {
         </div>
       </header>
 
+      {/* Mobile Admin Navigation */}
+      <nav className="md:hidden flex items-center gap-1.5 overflow-x-auto scrollbar-hide border-b border-gray-200 bg-white px-3 py-2">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.path}
+              to={item.path}
+              end={item.end}
+              className={({ isActive }) =>
+                `flex items-center gap-1.5 shrink-0 rounded-xl px-3 py-1.5 text-xs font-semibold transition-all ${
+                  isActive
+                    ? 'bg-orange-500 text-white shadow-xs'
+                    : 'bg-gray-50 text-gray-600 hover:bg-orange-50 hover:text-orange-600'
+                }`
+              }
+            >
+              <Icon size={14} />
+              <span>{item.label}</span>
+            </NavLink>
+          );
+        })}
+      </nav>
+
       {/* Main Admin Workspace */}
-      <div className="flex flex-1">
+      <div className="flex flex-1 min-w-0">
         {/* Admin Sidebar */}
         <aside className="hidden w-64 shrink-0 border-r border-gray-200 bg-white p-4 md:flex flex-col justify-between shadow-sm">
           <div>
@@ -131,7 +155,7 @@ export function AdminLayout() {
         </aside>
 
         {/* Content View */}
-        <main className="flex-1 p-4 md:p-6 overflow-y-auto bg-gray-50">
+        <main className="flex-1 min-w-0 p-3 sm:p-4 md:p-6 overflow-y-auto bg-gray-50">
           <Outlet />
         </main>
       </div>
