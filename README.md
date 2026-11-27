@@ -170,10 +170,6 @@ GET http://localhost:4000/api/health
 
 ## ผู้พัฒนา
 
-ทีมพัฒนาระบบ RMUTI Market — มหาวิทยาลัยเทคโนโลยีราชมงคลอีสาน
-
+นักศึกษา มทร.อีสาน
 ---
 
-## License
-
-MIT License
