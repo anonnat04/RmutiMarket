@@ -129,6 +129,7 @@ function setupChatSocket(httpServer, allowedOrigin) {
 
   io.on("connection", (socket) => {
     socket.data.pendingConversationJoins = new Set();
+    socket.data.pendingMeetupJoins = new Set();
     socket.data.joinedConversations = new Set();
     socket.data.meetupTargets = new Map();
     // ฟังก์ชันช่วย join ห้องส่วนตัวของ user
@@ -178,6 +179,10 @@ function setupChatSocket(httpServer, allowedOrigin) {
         const pending = [...socket.data.pendingConversationJoins];
         socket.data.pendingConversationJoins.clear();
         pending.forEach((conversationId) => joinConversationRoom(conversationId));
+        const pendingMeetups = [...socket.data.pendingMeetupJoins];
+        socket.data.pendingMeetupJoins.clear();
+        pendingMeetups.forEach((meetupId) => joinMeetupRoom(meetupId));
+        socket.emit("authenticated", { userId: payload.sub });
       });
     });
 
@@ -203,45 +208,62 @@ function setupChatSocket(httpServer, allowedOrigin) {
     });
 
     // ── Live GPS Meetup Tracking (FREE OpenStreetMap + Geolocation) ──
-    socket.on("join_meetup_tracking", async ({ meetupId }) => {
+    const joinMeetupRoom = async (meetupId) => {
+      const mKey = String(meetupId || "");
       const userId = socket.data.userId;
-      if (!meetupId || !userId) return;
-      const target = await getMeetupAccess(Number(meetupId), userId);
+      if (!mKey) return;
+      if (!userId) {
+        socket.data.pendingMeetupJoins.add(mKey);
+        return;
+      }
+      const target = await getMeetupAccess(Number(mKey), userId);
       if (!target) return;
-      const room = `meetup_${meetupId}`;
+      const room = `meetup_${mKey}`;
       socket.join(room);
-      socket.data.meetupTargets.set(String(meetupId), target);
+      socket.data.meetupTargets.set(mKey, target);
 
-      const currentLocs = activeMeetupLocations.get(meetupId) || {};
+      const currentLocs = activeMeetupLocations.get(mKey) || {};
       socket.emit("meetup_current_locations", currentLocs);
+    };
+    socket.on("join_meetup_tracking", ({ meetupId } = {}) => joinMeetupRoom(meetupId));
+
+    const stopSharingInMeetup = (meetupId) => {
+      const mKey = String(meetupId || "");
+      const userId = socket.data.userId;
+      if (!mKey || !userId) return;
+      const room = `meetup_${mKey}`;
+      const currentLocs = activeMeetupLocations.get(mKey);
+      if (currentLocs && currentLocs[String(userId)]) {
+        delete currentLocs[String(userId)];
+        io.to(room).emit("user_stopped_sharing_location", { meetupId: mKey, userId });
+      }
+    };
+
+    socket.on("stop_live_location", ({ meetupId } = {}) => {
+      stopSharingInMeetup(meetupId);
     });
 
-    socket.on("leave_meetup_tracking", ({ meetupId }) => {
-      if (!meetupId) return;
-      const room = `meetup_${meetupId}`;
-      socket.leave(room);
-
-      const currentLocs = activeMeetupLocations.get(meetupId);
-      const userId = socket.data.userId;
-      if (currentLocs && userId) {
-        delete currentLocs[userId];
-        io.to(room).emit("user_stopped_sharing_location", { userId });
-      }
-      socket.data.meetupTargets.delete(String(meetupId));
+    socket.on("leave_meetup_tracking", ({ meetupId } = {}) => {
+      const mKey = String(meetupId || "");
+      if (!mKey) return;
+      stopSharingInMeetup(mKey);
+      socket.leave(`meetup_${mKey}`);
+      socket.data.meetupTargets.delete(mKey);
     });
 
     // สถานะเช็คอินส่งจาก backend หลังฐานข้อมูลยืนยันเท่านั้น
     socket.on("meetup_checkin", () => {});
 
-    socket.on("send_live_location", ({ meetupId, lat, lng, accuracy }) => {
+    socket.on("send_live_location", ({ meetupId, lat, lng, accuracy } = {}) => {
+      const mKey = String(meetupId || "");
       const userId = socket.data.userId;
-      const targetPoint = socket.data.meetupTargets.get(String(meetupId));
-      if (!meetupId || !userId || !targetPoint || lat === undefined || lng === undefined) return;
+      const targetPoint = socket.data.meetupTargets.get(mKey);
+      if (!mKey || !userId || !targetPoint || lat === undefined || lng === undefined) return;
       if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) return;
 
-      const room = `meetup_${meetupId}`;
-      if (!activeMeetupLocations.has(meetupId)) {
-        activeMeetupLocations.set(meetupId, {});
+      const room = `meetup_${mKey}`;
+      if (!activeMeetupLocations.has(mKey)) {
+        activeMeetupLocations.set(mKey, {});
       }
 
       let distanceToPointMeters = null;
@@ -252,6 +274,7 @@ function setupChatSocket(httpServer, allowedOrigin) {
       }
 
       const locationPayload = {
+        meetupId: mKey,
         userId,
         userName: socket.data.userName || "ผู้ใช้",
         role: "participant",
@@ -262,7 +285,7 @@ function setupChatSocket(httpServer, allowedOrigin) {
         updatedAt: new Date().toISOString(),
       };
 
-      activeMeetupLocations.get(meetupId)[userId] = locationPayload;
+      activeMeetupLocations.get(mKey)[String(userId)] = locationPayload;
       socket.to(room).emit("live_location_update", locationPayload);
 
       if (distanceToPointMeters !== null && distanceToPointMeters <= 30) {
@@ -394,9 +417,15 @@ function setupChatSocket(httpServer, allowedOrigin) {
         imageUrl,
         sender: { id: senderId, name: socket.data.userName || "ผู้ใช้" },
         createdAt: savedMsg.created_at,
-        time: new Date(savedMsg.created_at).toLocaleTimeString("th-TH", {
+        time: new Date(
+          typeof savedMsg.created_at === "string" && /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(savedMsg.created_at) && !/[Z+-]\d{2}:?\d{2}$|Z$/.test(savedMsg.created_at)
+            ? savedMsg.created_at.replace(" ", "T") + "Z"
+            : savedMsg.created_at
+        ).toLocaleTimeString("th-TH", {
           hour: "2-digit",
           minute: "2-digit",
+          hour12: false,
+          timeZone: "Asia/Bangkok",
         }),
       };
 
@@ -457,11 +486,19 @@ function setupChatSocket(httpServer, allowedOrigin) {
       onlineUsers.delete(socket.id);
       io.emit("online_users", Array.from(onlineUsers.values()));
 
-      if (userData?.userId) {
+      const uid = userData?.userId || socket.data.userId;
+      if (uid) {
+        for (const mKey of socket.data.meetupTargets.keys()) {
+          const locs = activeMeetupLocations.get(mKey);
+          if (locs && locs[String(uid)]) {
+            delete locs[String(uid)];
+            io.to(`meetup_${mKey}`).emit("user_stopped_sharing_location", { meetupId: mKey, userId: uid });
+          }
+        }
         supabase
           .from("users")
           .update({ updated_at: new Date().toISOString() })
-          .eq("id", userData.userId)
+          .eq("id", uid)
           .then(() => {});
       }
     });

@@ -1,5 +1,4 @@
 import { api } from "@/lib/api";
-import { mockProducts, getProductById } from "@/data/mockProducts";
 import { useMyListingsStore } from "@/store/myListingsStore";
 
 const DB_TO_UI_CONDITION = {
@@ -20,12 +19,6 @@ const DB_TO_UI_CONDITION = {
   "1": "new",
   "2": "used_normal",
 };
-
-// ID ของสินค้าจริงจาก Supabase เป็นตัวเลขล้วน (BIGSERIAL) เช่น "1", "2", "3"
-// ส่วน ID ของ mock data จะขึ้นต้นด้วย "p-" เช่น "p-hoodie" — ใช้เช็คแยกกันไม่ให้ยิง API ผิดๆ
-function isMockId(id) {
-  return typeof id === "string" && id.startsWith("p-");
-}
 
 export function formatListing(item) {
   if (!item) return null;
@@ -217,69 +210,21 @@ export async function fetchProducts(params) {
 
     return results;
   } catch (err) {
-    // Backend ล่มจริงๆ เท่านั้นถึงจะ fallback ไปใช้ mock/local เพื่อให้หน้าเว็บยังพอใช้งานได้
-    console.warn("fetchProducts backend error, falling back to local/mock:", err);
-    let results = [...(useMyListingsStore.getState().listings || []), ...mockProducts].filter((p) => p.status === "active");
-    if (params?.categoryId && params.categoryId !== "cat-1" && params.categoryId !== "all") {
-      const cleanTarget = params.categoryId.replace(/^cat-/, "");
-      results = results.filter((p) => (p.categoryId || "").replace(/^cat-/, "") === cleanTarget);
-    }
-    if (params?.q) {
-      const q = params.q.toLowerCase().trim();
-      const numQ = parseFloat(q);
-      results = results.filter((p) => {
-        const titleMatch = (p.title || "").toLowerCase().includes(q);
-        const descMatch = (p.description || "").toLowerCase().includes(q);
-        const priceMatch = !isNaN(numQ) && (p.price === numQ || String(p.price).includes(q));
-        return titleMatch || descMatch || priceMatch;
-      });
-    }
-    if (params?.min_price) {
-      const min = parseFloat(params.min_price);
-      if (!isNaN(min)) results = results.filter((p) => p.price >= min);
-    }
-    if (params?.max_price) {
-      const max = parseFloat(params.max_price);
-      if (!isNaN(max)) results = results.filter((p) => p.price <= max);
-    }
-    if (params?.condition && params.condition !== "all") {
-      const isNewTarget = params.condition === "new" || params.condition === "1" || params.condition === "มือหนึ่ง";
-      results = results.filter((p) => {
-        const isNew = p.condition === "new" || p.condition_id === 1 || String(p.conditionName).includes("หนึ่ง");
-        return isNewTarget ? isNew : !isNew;
-      });
-    }
-
-    if (params?.sort === "price_desc") {
-      results.sort((a, b) => b.price - a.price);
-    } else if (params?.sort === "price_asc") {
-      results.sort((a, b) => a.price - b.price);
-    } else if (params?.sort === "popular") {
-      results.sort((a, b) => (b.viewCount || 0) - (a.viewCount || 0));
-    } else {
-      // ค่าเริ่มต้น: เรียงตามเวลาที่ลงขาย ล่าสุดขึ้นก่อนเสมอ (Newest first)
-      results.sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0));
-    }
-    return results;
+    console.warn("fetchProducts error:", err);
+    return [];
   }
 }
 
 export async function fetchProductDetail(id) {
-  // ถ้าเป็น mock id (ขึ้นต้นด้วย "p-") ไม่ต้องยิง API เลย เพราะรู้อยู่แล้วว่า backend หาไม่เจอแน่ๆ (404)
-  if (isMockId(id)) {
-    const localListings = useMyListingsStore.getState().listings || [];
-    return localListings.find((p) => String(p.id) === String(id)) ?? getProductById(id);
-  }
-
   try {
     const res = await api.getListingDetail(id);
     if (res?.listing) {
       return formatListing(res.listing);
     }
   } catch (err) {
-    console.warn("fetchProductDetail backend error, trying fallback:", err);
+    console.warn("fetchProductDetail error:", err);
   }
 
   const localListings = useMyListingsStore.getState().listings || [];
-  return localListings.find((p) => String(p.id) === String(id)) ?? getProductById(id);
+  return localListings.find((p) => String(p.id) === String(id)) ?? null;
 }

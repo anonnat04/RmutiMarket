@@ -32,6 +32,7 @@ const PRODUCT_STATUS = {
   AVAILABLE: { id: 1, code: "AVAILABLE", name: "ว่าง", ui: "active" },
   RESERVED: { id: 2, code: "RESERVED", name: "ติดจอง", ui: "reserved" },
   SOLD: { id: 3, code: "SOLD", name: "ขายแล้ว", ui: "sold" },
+  HIDDEN: { id: 4, code: "HIDDEN", name: "ถูกซ่อนโดยแอดมิน", ui: "hidden" },
 };
 
 const TRANSACTION_STATUS = {

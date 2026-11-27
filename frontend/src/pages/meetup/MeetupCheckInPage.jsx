@@ -13,7 +13,7 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { ReviewModal } from '@/components/meetup/ReviewModal';
 import { CAMPUS_CENTER, meetupPoints } from '@/constants/meetupPoints';
 import { api } from '@/lib/api';
-import { getSocket, joinMeetupTracking, leaveMeetupTracking, emitLiveLocation } from '@/services/socket';
+import { getSocket, joinMeetupTracking, leaveMeetupTracking, emitLiveLocation, stopLiveLocation } from '@/services/socket';
 
 // ────────────────────────────────
 // ค่าคงที่เช็คอิน (ต้องตรงกับ backend)
@@ -381,21 +381,6 @@ function MiniMap({ meetup, myCoords, peerCoords, role, myName, otherName }) {
         map.removeLayer(store[p.key]);
         delete store[p.key];
       }
-    }
-
-    // วงความแม่นยำของ GPS ตัวเอง (สีน้ำเงินจาง)
-    if (hasPoint(myCoords) && Number.isFinite(myCoords.accuracy)) {
-      const ll = [myCoords.lat, myCoords.lng];
-      const r = Math.min(myCoords.accuracy, 300);
-      if (!store.acc) {
-        store.acc = L.circle(ll, { radius: r, color: '#2563eb', weight: 1, fillColor: '#3b82f6', fillOpacity: 0.1, interactive: false }).addTo(map);
-      } else {
-        store.acc.setLatLng(ll);
-        store.acc.setRadius(r);
-      }
-    } else if (store.acc) {
-      map.removeLayer(store.acc);
-      delete store.acc;
     }
   };
 
@@ -823,12 +808,22 @@ export function MeetupCheckInPage() {
     }
   }, []);
 
+  const gpsStorageKey = id && myId ? `cm_gps_active_${id}_${myId}` : null;
+  const myCoordsRef = useRef(null);
+
   const stopGps = useCallback(() => {
     clearGpsWatch();
     setGpsActive(false);
     setMyCoords(null);
+    myCoordsRef.current = null;
     setMyDistance(null);
-  }, [clearGpsWatch]);
+    if (gpsStorageKey) {
+      try { localStorage.setItem(gpsStorageKey, 'false'); } catch (_) {}
+    }
+    if (id && myId) {
+      stopLiveLocation({ meetupId: id, userId: myId });
+    }
+  }, [clearGpsWatch, gpsStorageKey, id, myId]);
 
   const startGps = useCallback(() => {
     if (!navigator.geolocation) {
@@ -837,35 +832,54 @@ export function MeetupCheckInPage() {
     }
     if (watchIdRef.current !== null) return;
     setGpsActive(true);
+    if (gpsStorageKey) {
+      try { localStorage.setItem(gpsStorageKey, 'true'); } catch (_) {}
+    }
+    const sendPos = (pos) => {
+      const { latitude, longitude, accuracy } = pos.coords;
+      const coordsObj = { lat: latitude, lng: longitude, accuracy };
+      setMyCoords(coordsObj);
+      myCoordsRef.current = coordsObj;
+      const m = meetupRef.current;
+      emitLiveLocation({
+        meetupId: id,
+        userId: myId,
+        userName: user?.username || user?.display_name || 'ผู้ใช้',
+        role: m && String(m.buyerId) === String(myId) ? 'buyer' : 'seller',
+        lat: latitude,
+        lng: longitude,
+        accuracy,
+        targetPoint: { lat: targetRef.current.lat, lng: targetRef.current.lng },
+      });
+    };
     watchIdRef.current = navigator.geolocation.watchPosition(
-      (pos) => {
-        const { latitude, longitude, accuracy } = pos.coords;
-        setMyCoords({ lat: latitude, lng: longitude, accuracy });
-        const m = meetupRef.current;
-        emitLiveLocation({
-          meetupId: id,
-          userId: myId,
-          userName: user?.username || user?.display_name || 'ผู้ใช้',
-          role: m && String(m.buyerId) === String(myId) ? 'buyer' : 'seller',
-          lat: latitude,
-          lng: longitude,
-          accuracy,
-          targetPoint: { lat: targetRef.current.lat, lng: targetRef.current.lng },
-        });
-      },
+      sendPos,
       (err) => {
         console.warn('GPS error:', err.message);
         if (err.code === 1) {
           clearGpsWatch();
           setGpsActive(false);
+          if (gpsStorageKey) {
+            try { localStorage.setItem(gpsStorageKey, 'false'); } catch (_) {}
+          }
           showFeedback('warning', 'ไม่ได้รับอนุญาตใช้ตำแหน่ง', 'กรุณาอนุญาตให้เว็บไซต์เข้าถึงตำแหน่ง แล้วกดเปิด GPS ใหม่');
         }
       },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
-  }, [id, myId, user, showFeedback, clearGpsWatch]);
+  }, [id, myId, user, showFeedback, clearGpsWatch, gpsStorageKey]);
 
-  // ปิด GPS เมื่อออกจากหน้า (เฉพาะตอน unmount เท่านั้น)
+  // คืนค่าสถานะการเปิด-ปิด GPS เดิมหลังรีเฟรชหน้า
+  useEffect(() => {
+    if (!gpsStorageKey) return;
+    try {
+      if (localStorage.getItem(gpsStorageKey) === 'true') {
+        startGps();
+      }
+    } catch (_) {}
+  }, [gpsStorageKey, startGps]);
+
+  // ปิด GPS watcher เมื่อออกจากหน้า (เฉพาะตอน unmount เท่านั้น)
   useEffect(() => () => {
     if (watchIdRef.current !== null && navigator.geolocation) {
       navigator.geolocation.clearWatch(watchIdRef.current);
@@ -897,11 +911,48 @@ export function MeetupCheckInPage() {
     joinMeetupTracking({ meetupId: id, userId: myId });
 
     const handleLocationUpdate = (data) => {
-      if (String(data.userId) === String(myId)) return;
+      if (!data || String(data.userId) === String(myId)) return;
       const lat = Number(data.lat);
       const lng = Number(data.lng);
       if (Number.isFinite(lat) && Number.isFinite(lng)) {
         setPeerCoords({ lat, lng, accuracy: Number.isFinite(Number(data.accuracy)) ? Number(data.accuracy) : undefined });
+      }
+    };
+
+    const handleCurrentLocations = (locsMap) => {
+      if (!locsMap || typeof locsMap !== 'object') return;
+      const peerEntry = Object.values(locsMap).find((loc) => loc && String(loc.userId) !== String(myId));
+      if (peerEntry) {
+        const lat = Number(peerEntry.lat);
+        const lng = Number(peerEntry.lng);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          setPeerCoords({ lat, lng, accuracy: Number.isFinite(Number(peerEntry.accuracy)) ? Number(peerEntry.accuracy) : undefined });
+        }
+      } else {
+        setPeerCoords(null);
+      }
+    };
+
+    const handlePeerStopped = (data) => {
+      if (!data || String(data.userId) === String(myId)) return;
+      setPeerCoords(null);
+      setPeerDistance(null);
+    };
+
+    const handleReauthenticated = () => {
+      joinMeetupTracking({ meetupId: id, userId: myId });
+      if (myCoordsRef.current) {
+        const m = meetupRef.current;
+        emitLiveLocation({
+          meetupId: id,
+          userId: myId,
+          userName: user?.username || user?.display_name || 'ผู้ใช้',
+          role: m && String(m.buyerId) === String(myId) ? 'buyer' : 'seller',
+          lat: myCoordsRef.current.lat,
+          lng: myCoordsRef.current.lng,
+          accuracy: myCoordsRef.current.accuracy,
+          targetPoint: { lat: targetRef.current.lat, lng: targetRef.current.lng },
+        });
       }
     };
 
@@ -922,11 +973,17 @@ export function MeetupCheckInPage() {
     };
 
     socket?.on('live_location_update', handleLocationUpdate);
+    socket?.on('meetup_current_locations', handleCurrentLocations);
+    socket?.on('user_stopped_sharing_location', handlePeerStopped);
+    socket?.on('authenticated', handleReauthenticated);
     socket?.on('peer_checked_in', handlePeerCheckIn);
     socket?.on('meetup_status_update', handlePeerCheckIn);
     socket?.on('meetup_updated', handlePeerCheckIn);
     return () => {
       socket?.off('live_location_update', handleLocationUpdate);
+      socket?.off('meetup_current_locations', handleCurrentLocations);
+      socket?.off('user_stopped_sharing_location', handlePeerStopped);
+      socket?.off('authenticated', handleReauthenticated);
       socket?.off('peer_checked_in', handlePeerCheckIn);
       socket?.off('meetup_status_update', handlePeerCheckIn);
       socket?.off('meetup_updated', handlePeerCheckIn);
@@ -1168,7 +1225,10 @@ export function MeetupCheckInPage() {
     });
 
     setShowReviewModal(false);
-    showFeedback('success', 'ส่งรีวิวสำเร็จ', 'คุณได้รับคะแนนความสำเร็จและคะแนนความน่าเชื่อถือเรียบร้อยแล้ว');
+    showFeedback('success', 'ส่งรีวิวสำเร็จ', 'คุณได้รับคะแนนความสำเร็จและคะแนนความน่าเชื่อถือเรียบร้อยแล้ว กำลังพากลับหน้าปิดการขาย...');
+    setTimeout(() => {
+      navigate('/meetups?tab=completed', { replace: true });
+    }, 800);
   };
 
   const openCancelDialog = () => {
@@ -1690,6 +1750,9 @@ export function MeetupCheckInPage() {
         open={showReviewModal}
         onClose={() => {
           setShowReviewModal(false);
+          if (myConfirmedDelivery) {
+            navigate('/meetups?tab=completed', { replace: true });
+          }
         }}
         revieweeName={role === 'buyer' ? meetup.sellerName : meetup.buyerName}
         onSubmit={handleReviewSubmit}

@@ -30,6 +30,7 @@ router.post("/verifications/:id/reject", adminController.rejectVerification);
 // Listings
 router.get("/listings", adminController.getAdminListings);
 router.delete("/listings/:id", adminController.deleteListing);
+router.post("/listings/:id/hide", adminController.hideListing);
 router.post("/listings/:id/remove", adminController.removeListing);
 router.post("/listings/:id/restore", adminController.restoreListing);
 

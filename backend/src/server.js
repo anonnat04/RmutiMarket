@@ -99,21 +99,15 @@ app.use("/api/upload", uploadRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/me", myRecordsRoutes);
 app.use("/api/support", supportRoutes);
-// ── Health Check & Debug Error Test ──────────────────────────────
+// ── Health Check ─────────────────────────────────────────────────
 app.get("/api/health", (_req, res) => res.json({
   ok: true,
   service: "campus-market-backend",
   version: "2.0.0",
   database: "Supabase PostgreSQL",
   realtimeChat: "Socket.IO Enabled",
-  errorMonitoring: "Active (Terminal Logger)",
   timestamp: new Date().toISOString(),
 }));
-
-// Route พิเศษสำหรับทดสอบการตรวจจับ Error
-app.get("/api/test-error", () => {
-  throw new Error("🚨 ทดสอบระบบตรวจจับ Error: ระบบสามารถดักจับข้อผิดพลาดและแสดงรายละเอียดใน Terminal ได้อย่างสมบูรณ์แบบ!");
-});
 
 // ── Realtime Chat Socket.IO ──────────────────────────────────────
 const io = setupChatSocket(server, checkOrigin);
@@ -166,6 +160,5 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log("   /api/profile       → โปรไฟล์ & Wishlist");
   console.log("   /api/returns       → คืนสินค้า");
   console.log("   /api/want-to-buy   → โพสต์ \"อยากได้\"");
-  console.log("   /api/test-error    → ทดสอบตัวตรวจจับ Error");
   console.log("─────────────────────────────────────────────────────");
 });

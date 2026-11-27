@@ -1,224 +1,175 @@
-# 🛒 RmutiMarket (ระบบตลาดซื้อขายสินค้าภายในมหาวิทยาลัย)
+# RMUTI Market
 
-<p align="center">
-  <b>แพลตฟอร์มตลาดซื้อขายและส่งต่อสินค้ามือหนึ่ง-มือสอง ปลอดภัยภายในมหาวิทยาลัยเทคโนโลยีราชมงคลอีสาน (มทร.อีสาน)</b>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Frontend-React%20%7C%20Vite%20%7C%20TailwindCSS-blue" alt="Frontend" />
-  <img src="https://img.shields.io/badge/Backend-Node.js%20%7C%20Express%20%7C%20Socket.IO-green" alt="Backend" />
-  <img src="https://img.shields.io/badge/Database-Supabase%20(PostgreSQL)-emerald" alt="Database" />
-  <img src="https://img.shields.io/badge/License-MIT-yellow" alt="License" />
-</p>
+ตลาดซื้อขายสินค้ามือหนึ่ง–มือสองสำหรับนักศึกษาและบุคลากร มหาวิทยาลัยเทคโนโลยีราชมงคลอีสาน (มทร.อีสาน) ลงขาย แชท นัดรับในจุดปลอดภัยภายในมหาวิทยาลัย และยืนยันการพบกันด้วย GPS พร้อมระบบคะแนนความน่าเชื่อถือ (Trust Score) เพื่อลดปัญหาการเบี้ยวนัด
 
 ---
 
-## 📖 เกี่ยวกับโปรเจกต์ (About Project)
+## ฟีเจอร์หลัก
 
-**RmutiMarket** เป็นเว็บแอปพลิเคชันตลาดกลางสำหรับนักศึกษาและบุคลากร มทร.อีสาน เพื่อใช้แลกเปลี่ยน ซื้อขาย และส่งต่อสิ่งของเครื่องใช้ เช่น หนังสือเรียน, อุปกรณ์การเรียน, เสื้อผ้า, เครื่องใช้ไฟฟ้า และของใช้หอพัก โดยเน้นการนัดรับสินค้าในพื้นที่ปลอดภัยภายในมหาวิทยาลัย (Campus Safe Zone) พร้อมระบบยืนยันตัวตนด้วยอีเมลสถาบัน เพื่อความปลอดภัยและความน่าเชื่อถือสูงสุดในการทำธุรกรรม
-
----
-
-## ✨ ฟีเจอร์เด่นของระบบ (Key Features)
-
-### 🛍️ 1. ระบบตลาดซื้อขายสินค้า (Marketplace & Listings)
-- **ค้นหาและกรองสินค้า**: ค้นหาตามชื่อสินค้า, รายละเอียด, ช่วงราคา (Min - Max Range), สภาพสินค้า (มือหนึ่ง / มือสอง) และหมวดหมู่
-- **จัดเรียงสินค้า**: เรียงตามสินค้าใหม่ล่าสุด, ราคาต่ำไปสูง, ราคาสูงไปต่ำ
-- **หน้ารายละเอียดสินค้า**: แสดงแกลเลอรีรูปภาพแบบคมชัด, ข้อมูลสภาพสินค้า, ราคา, ประวัติและคะแนนผู้ขาย, ปุ่มส่งข้อความ และปุ่มเริ่มนัดรับสินค้า
-- **รายการที่บันทึกไว้ (Wishlist)**: บันทึกสินค้าที่สนใจไว้ดูภายหลัง
-
-### 📸 2. ระบบลงขายและจัดการประกาศ (Product Management)
-- **ลงขายสินค้าสะดวกรวดเร็ว**: กรอกข้อมูลชื่อ หมวดหมู่ ราคา สภาพสินค้า และรายละเอียด
-- **อัปโหลดรูปภาพสูงสุด 5 รูป**:
-  - รองรับการอัปโหลดได้สูงสุด 5 รูป
-  - ระบบบีบอัดรูปภาพอัตโนมัติก่อนส่งขึ้นคลาวด์ เพื่อให้โหลดหน้าเว็บได้รวดเร็วและประหยัดพื้นที่
-  - กำหนดรูปภาพหน้าปก (Cover Image) และลากจัดลำดับรูปได้ง่ายดาย
-- **จัดการสินค้าของฉัน**: ติดตามสถานะสินค้า (กำลังขาย / ติดจอง / ขายแล้ว) พร้อมแก้ไขข้อมูลหรือลบประกาศได้ตลอดเวลา
-
-### 🙋‍♂️ 3. ระบบตามหาสินค้า (Want to Buy - WTB)
-- โพสต์แจ้งความต้องการสินค้าที่กำลังตามหา พร้อมระบุงบประมาณที่ต้องการ
-- แสดงแถบประกาศตามหาสินค้าล่าสุด (Marquee) บนหน้าแรก
-- ผู้ขายสามารถกดส่งข้อเสนอสินค้าที่ตรงตามความต้องการให้กับผู้โพสต์ได้โดยตรงผ่านแชท
-
-### 💬 4. ระบบแชทแบบเรียลไทม์ (Real-time Chat)
-- สนทนาระหว่างผู้ซื้อและผู้ขายแบบ 1 ต่อ 1 ผ่าน **Socket.IO**
-- ส่งข้อความและแนบรูปภาพในห้องแชทได้ทันที
-- มีปุ่มลัดสำหรับส่งข้อเสนอซื้อขาย และนัดหมายส่งมอบสินค้าได้จากหน้าต่างแชท
-
-### 📍 5. ระบบนัดรับสินค้าและจุดปลอดภัย (Meetup & Campus Safe Zone)
-- กำหนดวัน เวลา และจุดนัดรับที่ปลอดภัยภายในมหาวิทยาลัย
-- **Interactive Campus Map**: แสดงแผนที่และตำแหน่งจุดนัดรับยอดนิยมภายใน มทร.อีสาน (ด้วย Leaflet Map)
-- **ระบบ Check-in**: ยืนยันเมื่อเดินทางถึงจุดนัดรับ
-- ระบบยืนยันปิดการขายเมื่อได้รับสินค้าเรียบร้อย
-
-### ⭐ 6. ระบบรีวิวและคะแนนความน่าเชื่อถือ (Reviews & Trust Score)
-- ให้คะแนน (1-5 ดาว) เขียนรีวิว และแนบรูปภาพหลังจากการซื้อขายสำเร็จ
-- ระบบคำนวณ **Trust Score** ของผู้ขายแบบไดนามิก เพื่อสร้างความมั่นใจให้กับผู้ซื้อ
-- แสดงป้ายระดับความน่าเชื่อถือและสถานะการยืนยันตัวตนของนักศึกษา
-
-### 🔔 7. ระบบการแจ้งเตือน (Notifications)
-- แจ้งเตือนข้อความแชทใหม่
-- แจ้งเตือนการนัดหมายและอัปเดตสถานะการซื้อขาย
-
-### 🛡️ 8. ระบบผู้ดูแลระบบ (Admin Dashboard)
-- แดชบอร์ดสรุปสถิติภาพรวม (จำนวนผู้ใช้, สินค้าที่ลงขาย, ธุรกรรมที่สำเร็จ, รายงานปัญหา)
-- จัดการผู้ใช้งาน (ดูประวัติ, ระงับการใช้งานบัญชี / ปลดแบน)
-- ตรวจสอบและจัดการรายงานปัญหา (Reports) จากผู้ใช้งาน
-- จัดการหมวดหมู่สินค้าในระบบ
-
-### 🔐 9. ความปลอดภัยและการยืนยันตัวตน (Authentication & Security)
-- สมัครและเข้าสู่ระบบด้วยอีเมลมหาวิทยาลัย (`@rmuti.ac.th`, `@korat.rmuti.ac.th` ฯลฯ)
-- ยืนยันรหัส OTP ผ่านอีเมล (Mailjet API)
-- จัดเก็บรหัสผ่านอย่างปลอดภัยด้วยการเข้ารหัส Bcrypt
-- ยืนยันความปลอดภัยด้วย JWT Authentication
-- ป้องกันสแปมและบอทด้วย Cloudflare Turnstile
+- **สมัครและยืนยันตัวตน**: สมัครด้วยอีเมลมหาวิทยาลัย (`@rmuti.ac.th` / `@korat.rmuti.ac.th`) พร้อมยืนยันรหัส OTP ทางอีเมล (Mailjet) และป้องกันบอทด้วย Cloudflare Turnstile
+- **ลงประกาศและค้นหาสินค้า**: อัปโหลดรูปภาพได้สูงสุด 5 รูป (บีบอัดอัตโนมัติและจัดเก็บใน Supabase Storage) ค้นหาและกรองตามหมวดหมู่ ช่วงราคา สภาพสินค้า และเรียงลำดับ พร้อมระบบ Wishlist
+- **โพสต์ตามหาสินค้า (Want to Buy)**: ประกาศตามหาสินค้าพร้อมงบประมาณ ให้ผู้ขายเสนอสินค้าตรงเข้าห้องแชทได้ทันที
+- **แชทเรียลไทม์ (Socket.IO)**: ห้องแชท 1 ต่อ 1 ที่ผูกกับรายการสินค้า รองรับการส่งรูปภาพ ข้อเสนอสินค้า และการ์ดนัดหมาย
+- **นัดรับและเช็คอินด้วย GPS**: เลือกจุดนัดรับภายในมหาวิทยาลัยบนแผนที่ (Leaflet) และยืนยันตัวตนเมื่อถึงจุดนัดด้วย GPS (รัศมีไม่เกิน **50 เมตร**, ความแม่นยำ GPS ไม่เกิน **35 เมตร**)
+- **คะแนนความน่าเชื่อถือ (Trust Score)**: เริ่มต้นที่ **100 คะแนน** มีระบบตัดคะแนนเมื่อยกเลิกกระชั้นชิดหรือไม่มาตามนัด (No-Show เกิน **45 นาที** หลังเวลานัด) จำกัดสิทธิ์การขาย/เสนอขายเมื่อคะแนนต่ำกว่า **50 คะแนน** และมีระบบฟื้นฟูคะแนนรายสัปดาห์
+- **รีวิวและคืนสินค้า**: ให้คะแนน 1–5 ดาว เขียนรีวิวพร้อมรูปภาพหลังจบธุรกรรม และรองรับคำขอคืนสินค้า/ข้อพิพาท
+- **ระบบผู้ดูแลระบบ (Admin Console)**: แดชบอร์ดสถิติภาพรวม จัดการผู้ใช้ ซ่อน/ตรวจสอบประกาศที่ผิดระเบียบ จัดการหมวดหมู่ รีวิว และรายงานปัญหา
 
 ---
 
-## 🛠️ เทคโนโลยีที่ใช้ (Tech Stack)
+## Tech Stack
 
-### **Frontend**
-- **Core**: React 18, Vite
-- **Styling**: Tailwind CSS
-- **Icons**: Lucide React
-- **Maps**: Leaflet, React-Leaflet
-- **State Management & Store**: Zustand / React Context
-
-### **Backend**
-- **Runtime & Framework**: Node.js, Express.js
-- **Real-time Engine**: Socket.IO
-- **Database Client**: `@supabase/supabase-js` (PostgreSQL)
-- **File Upload**: Multer, Supabase Storage
-- **Security & Auth**: JWT (jsonwebtoken), Bcrypt, Turnstile
-
-### **Database & Cloud Services**
-- **Database**: Supabase (PostgreSQL พร้อม Trigger & Stored Procedures)
-- **Storage**: Supabase Storage Buckets
-- **Email Service**: Mailjet SMTP / REST API
+| ส่วน | เทคโนโลยี |
+|---|---|
+| **Frontend** | React 18, Vite, Tailwind CSS, Zustand, React Router, Lucide React, Leaflet (`react-leaflet`), Socket.IO Client |
+| **Backend** | Node.js, Express.js, Socket.IO, JWT, Bcrypt, Multer, Express Rate Limit, Helmet |
+| **Database & Storage** | Supabase (PostgreSQL + Supabase Storage) |
+| **Email & Security** | Mailjet API (ส่ง OTP), Cloudflare Turnstile |
 
 ---
 
-## 📂 โครงสร้างโปรเจกต์ (Project Structure)
+## โครงสร้างโปรเจกต์
 
 ```text
 campusmarket-frontend/
-├── frontend/                     # ซอร์สโค้ดฝั่งหน้าบ้าน (Client)
+├── frontend/                   # React + Vite + Tailwind CSS + Zustand
+│   ├── public/
 │   ├── src/
-│   │   ├── assets/              # รูปภาพ โลโก้ และไอคอนต่างๆ
-│   │   ├── components/          # Reusable Components (UI, Chat, Meetup, Product)
-│   │   ├── layouts/             # โครงสร้าง Layout (MainLayout, AdminLayout)
-│   │   ├── pages/               # หน้าเว็บต่างๆ (Home, Product, Chat, Meetup, Admin, Auth)
-│   │   ├── routes/              # จัดการ Routing และ PrivateRoute
-│   │   ├── services/            # API Services และ Socket connection
-│   │   ├── store/               # State Store (Auth, Chat, Listings, ฯลฯ)
-│   │   └── utils/               # ฟังก์ชันช่วยเหลือ (บีบอัดรูป, แปลงค่าเงิน, วันที่)
-│   ├── package.json
-│   └── vite.config.js
-│
-├── backend/                      # ซอร์สโค้ดฝั่งหลังบ้าน (API Server)
+│   │   ├── assets/             # รูปภาพและไฟล์ประกอบ
+│   │   ├── components/         # UI, Layout, Chat, Meetup, Product Components
+│   │   ├── constants/          # หมวดหมู่สินค้า และจุดนัดรับในมหาวิทยาลัย
+│   │   ├── layouts/            # MainLayout, AuthLayout, AdminLayout
+│   │   ├── lib/                # Axios API client และ utilities
+│   │   ├── pages/              # หน้าเว็บทั้งหมด (Home, Product, Chat, Meetup, Profile, Admin, Auth)
+│   │   ├── routes/             # AppRoutes และ PrivateRoute
+│   │   ├── services/           # productService และ Socket.IO client
+│   │   ├── store/              # Zustand stores
+│   │   ├── styles/             # Tailwind CSS และ theme
+│   │   └── utils/              # บีบอัดรูป, วันที่/เวลา, ระยะทาง, แปลงค่าเงิน
+│   ├── .env
+│   └── package.json
+├── backend/                    # Node.js + Express + Socket.IO + Supabase
 │   ├── src/
-│   │   ├── config/              # ตั้งค่า Database Supabase และ Constants
-│   │   ├── controllers/         # ควบคุม Logic การทำงาน (Auth, Listings, Chat, Admin ฯลฯ)
-│   │   ├── middleware/          # ตรวจสอบสิทธิ์ (userAuth, adminAuth, rateLimiter)
-│   │   ├── routes/              # กำหนด API Endpoints
-│   │   ├── services/            # บริการภายนอก (Socket.IO, MailService, OTP)
-│   │   └── utils/               # ตัวช่วยตรวจสอบข้อมูล (Validators, Status Helper)
-│   ├── package.json
-│   └── server.js
-│
+│   │   ├── config/             # ตั้งค่า Supabase client และ constants
+│   │   ├── controllers/        # Business logic ของแต่ละโมดูล
+│   │   ├── middleware/         # userAuth, adminAuth, trustGuard, rateLimiter, errorHandler
+│   │   ├── routes/             # Express API routes
+│   │   ├── scripts/            # สคริปต์สร้าง Admin และ SQL migrations
+│   │   ├── services/           # Socket.IO, Mailjet, OTP
+│   │   ├── utils/              # response helper, status helper, validators, notify
+│   │   └── server.js           # Entry point (Express + Socket.IO + Background Jobs)
+│   ├── .env.example
+│   └── package.json
 ├── .gitignore
 └── README.md
 ```
 
 ---
 
-## 🚀 วิธีการติดตั้งและรันในเครื่อง (Getting Started)
+## เริ่มต้นใช้งาน
 
-### 1. โคลน Repository
+**สิ่งที่ต้องมี:** Node.js 18+ (แนะนำ 20+), บัญชี Supabase (PostgreSQL + Storage) และ Mailjet API Key
+
 ```bash
 git clone https://github.com/anonnat04/RmutiMarket.git
 cd RmutiMarket
 ```
 
----
-
-### 2. ติดตั้งและเริ่มทำงาน Backend
+### 1. ติดตั้งและรัน Backend
 
 ```bash
 cd backend
+cp .env.example .env      # แก้ไขค่า Supabase, JWT และ Mailjet ใน .env
 npm install
+npm run dev               # รันเซิร์ฟเวอร์ที่ http://localhost:4000
 ```
 
-สร้างไฟล์ `.env` ในโฟลเดอร์ `backend/` โดยอ้างอิงจาก `.env.example`:
-```env
-PORT=5000
-NODE_ENV=development
-CLIENT_ORIGIN=http://localhost:5173
+> สามารถสร้างบัญชีผู้ดูแลระบบเริ่มต้นได้ด้วยคำสั่ง `npm run seed:admin`
 
-# Supabase Credentials
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_KEY=your-supabase-service-key
-SUPABASE_ANON_KEY=your-supabase-anon-key
-SUPABASE_STORAGE_BUCKET=campus-market
+### 2. ติดตั้งและรัน Frontend (เปิดอีก Terminal)
 
-# JWT Secret
-JWT_SECRET=your-secret-key-here
-
-# Mailjet API (สำหรับส่ง OTP)
-MAILJET_API_KEY=your-mailjet-api-key
-MAILJET_SECRET_KEY=your-mailjet-secret-key
-MAILJET_SENDER_EMAIL=your-sender-email@example.com
-```
-
-เริ่มรันเซิร์ฟเวอร์ Backend:
-```bash
-npm run dev
-# เซิร์ฟเวอร์จะเปิดทำงานที่ http://localhost:5000
-```
-
----
-
-### 3. ติดตั้งและเริ่มทำงาน Frontend
-
-เปิด Terminal ใหม่อีกหน้าต่างหนึ่ง:
 ```bash
 cd frontend
 npm install
 ```
 
-สร้างไฟล์ `.env` ในโฟลเดอร์ `frontend/`:
+สร้างไฟล์ `frontend/.env` แล้วกำหนด URL ของ Backend:
+
 ```env
-VITE_API_BASE_URL=http://localhost:5000
+VITE_API_BASE_URL=http://localhost:4000
 ```
 
-เริ่มรัน Frontend:
+จากนั้นรัน Frontend:
+
 ```bash
-npm run dev
-# เปิดใช้งานหน้าเว็บที่ http://localhost:5173
+npm run dev               # เปิดใช้งานที่ http://localhost:5173
+```
+
+### ตั้งค่าฐานข้อมูล (Supabase PostgreSQL)
+
+1. สร้างโปรเจกต์บน [Supabase](https://supabase.com) และสร้าง Storage Bucket ชื่อ `campus-market` (ตั้งค่าให้ตรงกับ `SUPABASE_STORAGE_BUCKET`)
+2. นำ `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` และ `SUPABASE_ANON_KEY` จาก Project Settings → API มาใส่ใน `backend/.env`
+3. หากต้องการอัปเดตสคีมาเพิ่มเติม สามารถรันไฟล์ SQL ใน `backend/src/scripts/` (เช่น `add_appointment_meeting_detail.sql`, `add_unconfirmed_status.sql`, `fix_cascade_delete.sql`) ผ่าน Supabase SQL Editor
+
+---
+
+## Environment Variables
+
+### Backend (`backend/.env`)
+
+| ตัวแปร | ใช้ทำอะไร | ตัวอย่าง |
+|---|---|---|
+| `PORT` | พอร์ตของ Backend API และ Socket.IO | `4000` |
+| `NODE_ENV` | โหมดการทำงาน (`development` / `production`) | `development` |
+| `CLIENT_ORIGIN` | Origin ของ Frontend สำหรับ CORS (คั่นหลายค่าด้วย `,`) | `http://localhost:5173` |
+| `SUPABASE_URL` | URL ของโปรเจกต์ Supabase | `https://your-project.supabase.co` |
+| `SUPABASE_SERVICE_KEY` | Service Role Key สำหรับเชื่อมต่อ DB จากฝั่ง Server | `(จาก Supabase Dashboard)` |
+| `SUPABASE_ANON_KEY` | Anon Key ของ Supabase | `(จาก Supabase Dashboard)` |
+| `SUPABASE_STORAGE_BUCKET` | ชื่อ Bucket สำหรับเก็บรูปสินค้า/แชท/รีวิว | `campus-market` |
+| `JWT_SECRET` | คีย์สำหรับเซ็น User Access Token (`JWT_EXPIRES_IN=7d`) | `(สุ่มเอง)` |
+| `ADMIN_JWT_SECRET` | คีย์สำหรับเซ็น Admin Token (`ADMIN_JWT_EXPIRES_IN=8h`) | `(สุ่มเอง)` |
+| `MAILJET_API_KEY` | API Key ของ Mailjet สำหรับส่งอีเมล OTP | `(จาก Mailjet)` |
+| `MAILJET_SECRET_KEY` | Secret Key ของ Mailjet | `(จาก Mailjet)` |
+| `MAILJET_SENDER_EMAIL` | อีเมลผู้ส่ง OTP | `noreply@rmuti.ac.th` |
+| `MAILJET_SENDER_NAME` | ชื่อผู้ส่งในอีเมล | `RMUTI Market` |
+| `TURNSTILE_SECRET` | Secret Key ของ Cloudflare Turnstile (เว้นว่างได้ใน dev) | |
+| `MAX_FILE_SIZE` | ขนาดไฟล์อัปโหลดสูงสุด (bytes) | `5242880` |
+
+### Frontend (`frontend/.env`)
+
+| ตัวแปร | ใช้ทำอะไร | ตัวอย่าง |
+|---|---|---|
+| `VITE_API_BASE_URL` | URL หลักของ Backend API และ Socket.IO | `http://localhost:4000` |
+
+---
+
+## การตรวจสอบสถานะเซิร์ฟเวอร์
+
+สามารถตรวจสอบการทำงานของ Backend หลังรันได้ผ่าน Health Check Endpoint:
+
+```bash
+GET http://localhost:4000/api/health
 ```
 
 ---
 
-## 🧑‍💻 การนำโค้ดขึ้น GitHub (Git Workflow)
+## ข้อจำกัดที่ทราบ
 
-หากต้องการบันทึกการแก้ไขและส่งขึ้น GitHub ให้เป็นเวอร์ชันล่าสุด ใช้คำสั่งดังนี้:
-
-```bash
-# 1. ตรวจสอบไฟล์ที่แก้ไข
-git status
-
-# 2. เพิ่มไฟล์ทั้งหมดเข้า Staging
-git add .
-
-# 3. บันทึก Commit พร้อมข้อความอธิบายการแก้ไข
-git commit -m "feat: limit product images to 5 and update project documentation"
-
-# 4. ส่งขึ้น GitHub ไปยัง Branch main
-git push origin main
-```
+- ยังไม่มีระบบชำระเงินออนไลน์ (เป็นการตกลงซื้อขายและนัดรับสินค้าด้วยตนเองภายในมหาวิทยาลัย)
+- การเช็คอิน GPS ขึ้นอยู่กับความแม่นยำของสัญญาณอุปกรณ์ โดยเฉพาะเมื่ออยู่ภายในอาคาร (ระบบจำกัดความคลาดเคลื่อนไม่เกิน 35 เมตร และรัศมีจุดนัดรับ 50 เมตร)
 
 ---
 
-## 📄 ใบอนุญาต (License)
+## Roadmap
 
-โปรเจกต์นี้จัดทำขึ้นเพื่อการศึกษาและการใช้งานภายในมหาวิทยาลัยเทคโนโลยีราชมงคลอีสาน ภายใต้สัญญาอนุญาต [MIT License](LICENSE)
+- [ ] Web Push Notification นอกเหนือจากการแจ้งเตือนเรียลไทม์บนหน้าเว็บ
+- [ ] ปรับโครงสร้างโปรเจกต์ตามแผน Refactor (Layered Architecture & Feature-based Modules)
+- [ ] รองรับการใช้งานแบบ PWA / แอปมือถือเต็มรูปแบบ
+
+---
+
+## ผู้พัฒนา
+
+นักศึกษา มทร.อีสาน
+---
+

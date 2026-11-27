@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  ShoppingBag, Search, Trash2, RefreshCw, Eye, X, Loader2, ChevronLeft, ChevronRight,
+  ShoppingBag, Search, Trash2, RefreshCw, Eye, EyeOff, RotateCcw, Star, X, Loader2, ChevronLeft, ChevronRight,
   ImageOff, Info, CheckCircle2,
 } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -13,6 +13,7 @@ const STATUS_META = {
   active: { label: 'ลงขายอยู่', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   reserved: { label: 'ติดจอง', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
   sold: { label: 'ขายแล้ว', cls: 'bg-gray-100 text-gray-600 border-gray-200' },
+  hidden: { label: 'ถูกซ่อน (ผิดระเบียบ)', cls: 'bg-red-50 text-red-700 border-red-200' },
 };
 
 const fmtDate = (d) =>
@@ -44,9 +45,11 @@ function StatusBadge({ status, label }) {
 }
 
 // ───────────── Modal: รายละเอียดสินค้า ─────────────
-function DetailModal({ item, onClose, onDelete }) {
+function DetailModal({ item, onClose, onDelete, onHide, onRestore }) {
   const [idx, setIdx] = useState(0);
   const imgs = (item.images || []).map(imageSrc).filter(Boolean);
+  const reviews = item.reviews || [];
+  const isHidden = item.status === 'hidden';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
@@ -104,24 +107,16 @@ function DetailModal({ item, onClose, onDelete }) {
                 <dd className="font-semibold text-gray-800">{item.product_conditions?.name || item.condition_name || item.conditionName || (item.condition === 'new' ? 'มือหนึ่ง' : (item.condition === 'used_good' || item.condition === 'used_normal' ? 'มือสอง' : item.condition)) || '-'}</dd>
               </div>
               <div>
-                <dt className="text-gray-400">ยอดเข้าชม</dt>
-                <dd className="font-semibold text-gray-800">{(item.view_count ?? 0).toLocaleString()} ครั้ง</dd>
+                <dt className="text-gray-400">รหัสสินค้า</dt>
+                <dd className="font-mono font-semibold text-gray-800">#{item.id}</dd>
               </div>
               <div>
                 <dt className="text-gray-400">ลงประกาศเมื่อ</dt>
                 <dd className="font-semibold text-gray-800">{fmtDate(item.created_at)}</dd>
               </div>
               <div>
-                <dt className="text-gray-400">แก้ไขล่าสุด</dt>
-                <dd className="font-semibold text-gray-800">{fmtDate(item.updated_at)}</dd>
-              </div>
-              <div>
                 <dt className="text-gray-400">ธุรกรรมที่เกี่ยวข้อง</dt>
-                <dd className="font-semibold text-gray-800">{item.transaction_count} รายการ</dd>
-              </div>
-              <div>
-                <dt className="text-gray-400">รหัสสินค้า</dt>
-                <dd className="font-mono font-semibold text-gray-800">#{item.id}</dd>
+                <dd className="font-semibold text-gray-800">{item.transaction_count ?? 0} รายการ</dd>
               </div>
             </dl>
 
@@ -152,13 +147,111 @@ function DetailModal({ item, onClose, onDelete }) {
               </div>
             </div>
 
-            <button
-              onClick={() => onDelete(item)}
-              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-red-50 py-2 text-xs font-bold text-red-600 hover:bg-red-500 hover:text-white hover:border-red-500 transition-colors"
-            >
-              <Trash2 size={13} /> ลบประกาศนี้
-            </button>
+            {/* รีวิวเฉพาะของสินค้านี้ */}
+            <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+              <p className="mb-2 text-xs font-bold text-gray-600 flex items-center gap-1.5">
+                <Star size={13} className="fill-amber-400 text-amber-500" />
+                รีวิวของสินค้านี้ ({reviews.length})
+              </p>
+              {reviews.length === 0 ? (
+                <p className="text-[11px] text-gray-400">ยังไม่มีรีวิวสำหรับสินค้านี้</p>
+              ) : (
+                <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                  {reviews.map((r) => (
+                    <div key={r.id} className="rounded-lg bg-white p-2.5 border border-gray-100 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-gray-800">{r.reviewer_name}</span>
+                        <span className="inline-flex items-center gap-0.5 text-amber-500 font-bold">
+                          {Array.from({ length: r.rating || 0 }).map((_, idx2) => (
+                            <Star key={idx2} size={11} className="fill-amber-400 text-amber-500" />
+                          ))}
+                        </span>
+                      </div>
+                      {r.comment && <p className="mt-1 text-gray-600 text-[11px]">{r.comment}</p>}
+                      <p className="mt-1 text-[10px] text-gray-400">{fmtDate(r.created_at)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {isHidden ? (
+                <button
+                  onClick={() => onRestore(item)}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-500 hover:text-white hover:border-emerald-500 transition-colors"
+                >
+                  <RotateCcw size={13} /> แสดงประกาศอีกครั้ง
+                </button>
+              ) : (
+                <button
+                  onClick={() => onHide(item)}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 py-2 text-xs font-bold text-amber-700 hover:bg-amber-500 hover:text-white hover:border-amber-500 transition-colors"
+                >
+                  <EyeOff size={13} /> ซ่อนประกาศ (แจ้งเตือน)
+                </button>
+              )}
+              <button
+                onClick={() => onDelete(item)}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-red-50 py-2 text-xs font-bold text-red-600 hover:bg-red-500 hover:text-white hover:border-red-500 transition-colors"
+              >
+                <Trash2 size={13} /> ลบประกาศนี้
+              </button>
+            </div>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ───────────── Modal: ยืนยันการซ่อนประกาศ ─────────────
+function HideModal({ item, busy, onCancel, onConfirm }) {
+  const [reason, setReason] = useState('');
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+      onClick={busy ? undefined : onCancel}
+    >
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-100">
+            <EyeOff size={18} className="text-amber-600" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-gray-900">ซ่อนประกาศสินค้า</h3>
+            <p className="text-xs text-gray-500 line-clamp-1">{item.title}</p>
+          </div>
+        </div>
+
+        <p className="mt-4 text-xs text-gray-600">
+          ประกาศจะถูกซ่อนออกจากตลาดชั่วคราว และระบบจะส่งแจ้งเตือนไปยังเจ้าของประกาศทันทีพร้อมเหตุผล
+        </p>
+
+        <label className="mt-4 block text-xs font-semibold text-gray-700">เหตุผลในการซ่อนประกาศ</label>
+        <textarea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          rows={3}
+          placeholder="เช่น รูปภาพไม่เหมาะสม, รายละเอียดไม่ชัดเจน, ขัดต่อระเบียบมหาวิทยาลัย"
+          className="mt-1 w-full resize-none rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs outline-none focus:border-amber-400 focus:bg-white"
+        />
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            disabled={busy}
+            onClick={onCancel}
+            className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            ยกเลิก
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => onConfirm(reason.trim())}
+            className="flex items-center gap-1.5 rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-white hover:bg-amber-600 disabled:opacity-60"
+          >
+            {busy ? <Loader2 size={13} className="animate-spin" /> : <EyeOff size={13} />} ยืนยันซ่อนประกาศ
+          </button>
         </div>
       </div>
     </div>
@@ -242,6 +335,9 @@ export function AdminListingsPage() {
   const [detail, setDetail] = useState(null);
   const [toDelete, setToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [toHide, setToHide] = useState(null);
+  const [hiding, setHiding] = useState(false);
+  const [restoringId, setRestoringId] = useState(null);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -284,7 +380,7 @@ export function AdminListingsPage() {
     setErr('');
     try {
       const r = await api.adminDeleteListing(token, toDelete.id, reason);
-      setNotice(r.message || 'ลบประกาศเรียบร้อยแล้ว');
+      setNotice(r.message || 'ลบประกาศและแจ้งเตือนผู้ขายเรียบร้อยแล้ว');
       setToDelete(null);
       setDetail(null);
       await load();
@@ -293,6 +389,39 @@ export function AdminListingsPage() {
       setToDelete(null);
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const confirmHide = async (reason) => {
+    if (!toHide) return;
+    setHiding(true);
+    setErr('');
+    try {
+      const r = await api.adminHideListing(token, toHide.id, reason);
+      setNotice(r.message || 'ซ่อนประกาศและแจ้งเตือนเจ้าของประกาศเรียบร้อยแล้ว');
+      setToHide(null);
+      setDetail(null);
+      await load();
+    } catch (e) {
+      setErr(e.message);
+      setToHide(null);
+    } finally {
+      setHiding(false);
+    }
+  };
+
+  const handleRestore = async (item) => {
+    setRestoringId(item.id);
+    setErr('');
+    try {
+      const r = await api.adminRestoreListing(token, item.id);
+      setNotice(r.message || 'กู้คืนประกาศเรียบร้อยแล้ว');
+      setDetail(null);
+      await load();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setRestoringId(null);
     }
   };
 
@@ -319,7 +448,7 @@ export function AdminListingsPage() {
 
       <div className="flex items-center gap-2 rounded-2xl border border-orange-200 bg-orange-50 p-3.5 text-xs text-orange-800">
         <Info size={15} className="shrink-0" />
-        <span>แอดมินลบประกาศที่ผิดระเบียบได้ แต่ไม่สามารถเปลี่ยนสถานะเป็น "จอง" หรือ "ขายแล้ว" ได้</span>
+        <span>แอดมินสามารถตรวจสอบเนื้อหาและรูปภาพ ซ่อนประกาศที่ผิดระเบียบ หรือลบประกาศพร้อมแจ้งเตือนเจ้าของประกาศได้ทันที</span>
       </div>
 
       {notice && (
@@ -357,6 +486,7 @@ export function AdminListingsPage() {
           <option value="active">ลงขายอยู่</option>
           <option value="reserved">ติดจอง</option>
           <option value="sold">ขายแล้ว</option>
+          <option value="hidden">ถูกซ่อนโดยแอดมิน</option>
         </select>
       </div>
 
@@ -414,7 +544,7 @@ export function AdminListingsPage() {
                         <p className="mt-0.5 max-w-xs text-[11px] text-gray-400 line-clamp-2">{l.description}</p>
                       )}
                       <p className="mt-0.5 text-[10px] text-gray-400">
-                        {fmtDate(l.created_at)} · {(l.view_count ?? 0).toLocaleString()} views
+                        {fmtDate(l.created_at)}
                       </p>
                     </div>
                   </div>
@@ -429,16 +559,32 @@ export function AdminListingsPage() {
                   <StatusBadge status={l.status} label={l.status_label} />
                 </td>
                 <td className="p-4">
-                  <div className="flex justify-end gap-2">
+                  <div className="flex justify-end gap-1.5">
                     <button
                       onClick={() => setDetail(l)}
-                      className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[11px] font-bold text-gray-600 hover:border-orange-300 hover:text-orange-500 transition-colors"
+                      className="flex items-center gap-1 rounded-xl border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-600 hover:border-orange-300 hover:text-orange-500 transition-colors"
                     >
-                      <Eye size={12} /> ดูรายละเอียด
+                      <Eye size={12} /> ตรวจสอบ
                     </button>
+                    {l.status === 'hidden' ? (
+                      <button
+                        disabled={restoringId === l.id}
+                        onClick={() => handleRestore(l)}
+                        className="flex items-center gap-1 rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-500 hover:text-white hover:border-emerald-500 transition-colors disabled:opacity-50"
+                      >
+                        <RotateCcw size={12} /> แสดง
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setToHide(l)}
+                        className="flex items-center gap-1 rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-bold text-amber-700 hover:bg-amber-500 hover:text-white hover:border-amber-500 transition-colors"
+                      >
+                        <EyeOff size={12} /> ซ่อน
+                      </button>
+                    )}
                     <button
                       onClick={() => setToDelete(l)}
-                      className="flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-bold text-red-600 hover:bg-red-500 hover:text-white hover:border-red-500 transition-colors"
+                      className="flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-bold text-red-600 hover:bg-red-500 hover:text-white hover:border-red-500 transition-colors"
                     >
                       <Trash2 size={12} /> ลบ
                     </button>
@@ -477,7 +623,21 @@ export function AdminListingsPage() {
       </div>
 
       {detail && (
-        <DetailModal item={detail} onClose={() => setDetail(null)} onDelete={(it) => setToDelete(it)} />
+        <DetailModal
+          item={detail}
+          onClose={() => setDetail(null)}
+          onDelete={(it) => setToDelete(it)}
+          onHide={(it) => setToHide(it)}
+          onRestore={handleRestore}
+        />
+      )}
+      {toHide && (
+        <HideModal
+          item={toHide}
+          busy={hiding}
+          onCancel={() => setToHide(null)}
+          onConfirm={confirmHide}
+        />
       )}
       {toDelete && (
         <DeleteModal

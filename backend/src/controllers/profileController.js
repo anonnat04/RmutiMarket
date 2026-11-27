@@ -128,7 +128,7 @@ async function getPublicProfile(req, res, next) {
     if (error || !rawUser) return res.status(404).json({ error: "ไม่พบผู้ใช้" });
     const user = formatUser(rawUser);
 
-    // สินค้าของผู้ใช้นี้
+    // สินค้าของผู้ใช้นี้ (ไม่รวมที่ถูกแอดมินซ่อน status_id = 4)
     const { data: prods } = await supabase
       .from("products")
       .select(`
@@ -139,6 +139,7 @@ async function getPublicProfile(req, res, next) {
         product_images(id, image_url, is_primary)
       `)
       .eq("seller_id", targetUid)
+      .neq("status_id", 4)
       .order("created_at", { ascending: false });
 
     const listings = (prods || []).map((p) => {
@@ -162,13 +163,17 @@ async function getPublicProfile(req, res, next) {
         condition_name: conditionName,
         product_conditions: p.product_conditions || { id: p.condition_id, name: conditionName },
         status: st.ui,
+        status_id: p.status_id,
+        statusName: st.name,
         created_at: p.created_at,
+        createdAt: p.created_at,
         images,
         listing_images: images,
       };
     });
 
-    // โพสต์ตามหาสินค้าของผู้ใช้นี้
+    // โพสต์ตามหาสินค้าของผู้ใช้นี้ (แสดงเฉพาะที่ยังตามหาอยู่ และไม่เกิน 7 วัน)
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const { data: wantedPosts } = await supabase
       .from("wanted_posts")
       .select(`
@@ -177,7 +182,8 @@ async function getPublicProfile(req, res, next) {
         wanted_post_status(id, name)
       `)
       .eq("buyer_id", targetUid)
-      .neq("status_id", 3) // 3 = ยกเลิกโพสต์
+      .eq("status_id", 1)
+      .gte("created_at", sevenDaysAgo)
       .order("created_at", { ascending: false });
 
     const formattedWantedPosts = (wantedPosts || []).map((w) => {

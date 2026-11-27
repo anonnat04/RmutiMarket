@@ -131,6 +131,14 @@ export function leaveMeetupTracking({ meetupId, userId }) {
 }
 
 /**
+ * หยุดแชร์พิกัด GPS ชั่วคราว (ยังอยู่ในห้องเพื่อดูพิกัดอีกฝ่ายได้)
+ */
+export function stopLiveLocation({ meetupId, userId }) {
+  const s = getSocket();
+  if (s && s.connected) s.emit("stop_live_location", { meetupId, userId });
+}
+
+/**
  * ส่งพิกัด GPS สดของตนเองให้อีกฝ่ายเห็นบนแผนที่
  */
 export function emitLiveLocation({ meetupId, userId, userName, role, lat, lng, accuracy, targetPoint }) {

@@ -3,6 +3,7 @@ const { sendSuccess, sendError } = require("../utils/response");
 const { deleteConversations } = require("./chatController");
 const { formatUser, formatStatus, formatCategory, getStatusId } = require("../utils/statusHelper");
 const { resolveCategoryId } = require("../utils/categories");
+const { sendUserNotification } = require("../utils/notify");
 
 // Helper: บันทึกประวัติการทำงานของแอดมิน
 async function logAdminAction(adminId, action, targetType, targetId, details, ip) {
@@ -497,6 +498,45 @@ async function getAdminListings(req, res, next) {
     const { data, error, count } = await query;
     if (error) throw error;
 
+    // ดึงธุรกรรมและรีวิวที่ตรงกับสินค้าแต่ละชิ้นเท่านั้น
+    const prodIds = (data || []).map((p) => p.id);
+    const txnCountByProd = {};
+    const reviewsByProd = {};
+    if (prodIds.length > 0) {
+      const { data: txns } = await supabase
+        .from("transactions")
+        .select("id, product_id")
+        .in("product_id", prodIds);
+      const txnToProd = {};
+      (txns || []).forEach((t) => {
+        txnCountByProd[t.product_id] = (txnCountByProd[t.product_id] || 0) + 1;
+        txnToProd[t.id] = t.product_id;
+      });
+      const txnIds = (txns || []).map((t) => t.id);
+      if (txnIds.length > 0) {
+        const { data: prodReviews } = await supabase
+          .from("reviews")
+          .select(`
+            id, transaction_id, rating, comment, created_at,
+            reviewer:users!reviewer_id(id, username, full_name, avatar_url, profile_image_url)
+          `)
+          .in("transaction_id", txnIds)
+          .order("created_at", { ascending: false });
+        (prodReviews || []).forEach((r) => {
+          const pid = txnToProd[r.transaction_id];
+          if (!pid) return;
+          (reviewsByProd[pid] ||= []).push({
+            id: r.id,
+            transaction_id: r.transaction_id,
+            rating: r.rating,
+            comment: r.comment || "",
+            created_at: r.created_at,
+            reviewer_name: r.reviewer?.full_name || r.reviewer?.username || "ผู้ซื้อ",
+          });
+        });
+      }
+    }
+
     // แปลง URL รูปที่เป็น path สัมพัทธ์ให้เป็น URL เต็ม (URL เต็มปล่อยตามเดิม)
     const publicBase = (
       process.env.API_PUBLIC_URL ||
@@ -573,6 +613,8 @@ async function getAdminListings(req, res, next) {
         category_id: p.category_id,
         categories: cat,
         view_count: p.view_count || 0,
+        transaction_count: txnCountByProd[p.id] || 0,
+        reviews: reviewsByProd[p.id] || [],
         created_at: p.created_at,
         seller_id: p.seller_id,
         seller_name: sellerName,
@@ -603,8 +645,15 @@ async function getAdminListings(req, res, next) {
 async function deleteListing(req, res, next) {
   try {
     const { id } = req.params;
-    const prodId = parseInt(id);
-    const { reason = "ลบโดยผู้ดูแลระบบ" } = req.body;
+    const prodId = parseInt(id, 10);
+    const reason = String(req.body?.reason || "ละเมิดข้อกำหนดการใช้งาน").trim() || "ละเมิดข้อกำหนดการใช้งาน";
+
+    // ดึงข้อมูลสินค้าและเจ้าของก่อนลบ เพื่อส่งแจ้งเตือน
+    const { data: targetProd } = await supabase
+      .from("products")
+      .select("id, title, seller_id")
+      .eq("id", prodId)
+      .maybeSingle();
 
     const { data: convs } = await supabase.from("conversations").select("id").eq("product_id", prodId);
     if (convs?.length) await deleteConversations(convs.map((c) => c.id));
@@ -613,12 +662,84 @@ async function deleteListing(req, res, next) {
     await supabase.from("reports").delete().eq("target_type", "product").eq("target_id", prodId);
     await supabase.from("product_images").delete().eq("product_id", prodId);
 
+    let wasHiddenInstead = false;
     const { error } = await supabase.from("products").delete().eq("id", prodId);
+    if (error) {
+      // กรณีมีประวัติธุรกรรม (FK constraint) → ซ่อนประกาศถาวร (status_id = 4) แทน
+      await supabase.from("product_status").upsert({ id: 4, name: "ถูกซ่อนโดยแอดมิน" });
+      const { error: hideErr } = await supabase
+        .from("products")
+        .update({ status_id: 4, updated_at: new Date().toISOString() })
+        .eq("id", prodId);
+      if (hideErr) throw error;
+      wasHiddenInstead = true;
+    }
+
+    await logAdminAction(
+      req.admin?.id,
+      wasHiddenInstead ? "listing.hide_permanent" : "listing.delete",
+      "product",
+      prodId,
+      { reason, title: targetProd?.title },
+      req.ip
+    );
+
+    if (targetProd?.seller_id) {
+      await sendUserNotification({
+        userId: targetProd.seller_id,
+        type: "product",
+        title: "ประกาศสินค้าของคุณถูกลบโดยผู้ดูแลระบบ",
+        message: `ประกาศ "${targetProd.title}" ${wasHiddenInstead ? "ถูกซ่อนออกจากตลาดถาวร" : "ถูกลบออกจากระบบ"} เนื่องจาก: ${reason}`,
+        referenceType: "product",
+        referenceId: prodId,
+      });
+    }
+
+    res.json({
+      message: wasHiddenInstead
+        ? "สินค้ามีประวัติธุรกรรม จึงซ่อนออกจากตลาดถาวรและแจ้งเตือนผู้ขายแล้ว"
+        : "ลบสินค้าและแจ้งเตือนผู้ขายเรียบร้อยแล้ว",
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function hideListing(req, res, next) {
+  try {
+    const { id } = req.params;
+    const prodId = parseInt(id, 10);
+    const reason = String(req.body?.reason || "เนื้อหาหรือรูปภาพไม่เหมาะสม / ผิดระเบียบ").trim() || "เนื้อหาหรือรูปภาพไม่เหมาะสม / ผิดระเบียบ";
+
+    const { data: targetProd } = await supabase
+      .from("products")
+      .select("id, title, seller_id")
+      .eq("id", prodId)
+      .maybeSingle();
+
+    if (!targetProd) return res.status(404).json({ error: "ไม่พบประกาศสินค้า" });
+
+    await supabase.from("product_status").upsert({ id: 4, name: "ถูกซ่อนโดยแอดมิน" });
+    const { error } = await supabase
+      .from("products")
+      .update({ status_id: 4, updated_at: new Date().toISOString() })
+      .eq("id", prodId);
     if (error) throw error;
 
-    await logAdminAction(req.admin?.id, "listing.delete", "product", prodId, { reason }, req.ip);
+    await logAdminAction(req.admin?.id, "listing.hide", "product", prodId, { reason, title: targetProd.title }, req.ip);
 
-    res.json({ message: "ลบสินค้าสำเร็จ" });
+    if (targetProd.seller_id) {
+      await sendUserNotification({
+        userId: targetProd.seller_id,
+        type: "product",
+        title: "ประกาศสินค้าของคุณถูกซ่อนโดยผู้ดูแลระบบ",
+        message: `ประกาศ "${targetProd.title}" ถูกซ่อนชั่วคราวเนื่องจาก: ${reason} กรุณาแก้ไขให้ถูกต้องหรือติดต่อแอดมิน`,
+        referenceType: "product",
+        referenceId: prodId,
+      });
+    }
+
+    res.json({ message: "ซ่อนประกาศและแจ้งเตือนเจ้าของประกาศเรียบร้อยแล้ว" });
   } catch (err) {
     next(err);
   }
@@ -631,9 +752,32 @@ async function removeListing(req, res, next) {
 async function restoreListing(req, res, next) {
   try {
     const { id } = req.params;
-    const prodId = parseInt(id);
-    await supabase.from("products").update({ status_id: 1 }).eq("id", prodId);
-    res.json({ message: "กู้คืนสินค้าสำเร็จ" });
+    const prodId = parseInt(id, 10);
+    const { data: targetProd } = await supabase
+      .from("products")
+      .select("id, title, seller_id")
+      .eq("id", prodId)
+      .maybeSingle();
+
+    await supabase
+      .from("products")
+      .update({ status_id: 1, updated_at: new Date().toISOString() })
+      .eq("id", prodId);
+
+    await logAdminAction(req.admin?.id, "listing.restore", "product", prodId, { title: targetProd?.title }, req.ip);
+
+    if (targetProd?.seller_id) {
+      await sendUserNotification({
+        userId: targetProd.seller_id,
+        type: "product",
+        title: "ประกาศสินค้าของคุณกลับมาแสดงแล้ว",
+        message: `ผู้ดูแลระบบได้ปลดการซ่อนประกาศ "${targetProd.title}" แล้ว สินค้ากลับมาวางขายตามปกติ`,
+        referenceType: "product",
+        referenceId: prodId,
+      });
+    }
+
+    res.json({ message: "กู้คืนประกาศสินค้าเรียบร้อยแล้ว" });
   } catch (err) {
     next(err);
   }
@@ -644,7 +788,7 @@ async function restoreListing(req, res, next) {
 // ----------------------------------------------------------------
 async function getAdminReviews(req, res, next) {
   try {
-    const { q = "", rating = "", page = 1, limit = 20 } = req.query;
+    const { q = "", rating = "", userId = "", page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
     let query = supabase
@@ -656,6 +800,13 @@ async function getAdminReviews(req, res, next) {
         images:review_images(id, image_url),
         transactions(id, buyer_id, seller_id, products(id, title, price))
       `, { count: "exact" });
+
+    if (userId) {
+      const uid = parseInt(userId, 10);
+      if (!isNaN(uid)) {
+        query = query.or(`reviewee_id.eq.${uid},reviewer_id.eq.${uid}`);
+      }
+    }
 
     if (q) {
       query = query.ilike("comment", `%${q.trim()}%`);
@@ -834,17 +985,17 @@ async function adjustUserScore(req, res, next) {
     });
     if (histErr) console.warn("[adjustUserScore] history insert failed:", histErr.message);
 
-    // แจ้งเตือนผู้ใช้ (ตาราง notifications ไม่มีคอลัมน์ link)
     const notifTitle = delta < 0
-      ? `⚠️ คุณถูกตัดคะแนนความน่าเชื่อถือ ${delta} คะแนน`
-      : `🎉 คะแนนความน่าเชื่อถือของคุณเพิ่มขึ้น +${delta} คะแนน`;
-    const { error: notifErr } = await supabase.from("notifications").insert({
-      user_id: targetUid,
-      type: "system",
+      ? `คุณถูกตัดคะแนนความน่าเชื่อถือ ${delta} คะแนน`
+      : `คะแนนความน่าเชื่อถือของคุณเพิ่มขึ้น +${delta} คะแนน`;
+    await sendUserNotification({
+      userId: targetUid,
+      type: "score",
       title: notifTitle,
       message: `เหตุผล: ${reason} (คะแนนปัจจุบัน: ${newScore}/100)`,
+      referenceType: "user",
+      referenceId: targetUid,
     });
-    if (notifErr) console.warn("[adjustUserScore] notification insert failed:", notifErr.message);
 
     await logAdminAction(req.admin?.id, "user.adjust_score", "user", targetUid, { delta, newScore, reason }, req.ip);
 
@@ -975,6 +1126,12 @@ async function deleteWantedPost(req, res, next) {
 
     if (isNaN(postId)) return res.status(400).json({ error: "รหัสโพสต์ไม่ถูกต้อง" });
 
+    const { data: targetPost } = await supabase
+      .from("wanted_posts")
+      .select("id, title, buyer_id")
+      .eq("id", postId)
+      .maybeSingle();
+
     // ลบรายงานที่เกี่ยวข้องกับโพสต์นี้ (ถ้ามี)
     await supabase.from("reports").delete().eq("target_type", "wanted_post").eq("target_id", postId).catch(() => {});
     await supabase.from("reports").delete().eq("target_type", "buyer_request").eq("target_id", postId).catch(() => {});
@@ -983,6 +1140,17 @@ async function deleteWantedPost(req, res, next) {
     if (error) throw error;
 
     await logAdminAction(req.admin?.id, "wanted_post.delete", "wanted_post", postId, { reason }, req.ip);
+
+    if (targetPost?.buyer_id) {
+      await sendUserNotification({
+        userId: targetPost.buyer_id,
+        type: "system",
+        title: "โพสต์ตามหาสินค้าของคุณถูกลบโดยผู้ดูแลระบบ",
+        message: `โพสต์ "${targetPost.title}" ถูกลบออกจากระบบเนื่องจาก: ${reason}`,
+        referenceType: "wanted_post",
+        referenceId: postId,
+      });
+    }
 
     res.json({ message: "ลบโพสต์ตามหาสินค้าสำเร็จ" });
   } catch (err) {
@@ -1060,6 +1228,7 @@ module.exports = {
   deleteUserAccount,
   getAdminListings,
   deleteListing,
+  hideListing,
   removeListing,
   restoreListing,
   getAdminReviews,

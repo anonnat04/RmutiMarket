@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   PlusCircle, Search, MessageCircle, Clock, Banknote,
-  Edit3, Trash2, CheckCircle2, User, Sparkles, ArrowLeft, Flag, ArrowDown, ArrowUp
+  Edit3, Trash2, CheckCircle2, User, Sparkles, ArrowLeft, Flag, ArrowDown, ArrowUp, Lock
 } from 'lucide-react';
 import { useWantToBuyStore } from '@/store/wantToBuyStore';
 import { useAuthStore } from '@/store/authStore';
@@ -70,8 +70,15 @@ export function WantToBuyPage() {
       const res = await api.getWantToBuyPosts();
       if (res?.posts) {
         const mapped = res.posts.map((p) => {
-          const statusCode = p.wanted_post_status?.code?.toLowerCase();
-          const mappedStatus = statusCode === 'cancelled' ? 'cancelled' : (statusCode === 'completed' ? 'resolved' : 'active');
+          const statusCode = String(p.statusCode || p.status || p.wanted_post_status?.code || '').toLowerCase();
+          const mappedStatus =
+            statusCode === 'cancelled' || p.status_id === 3
+              ? 'cancelled'
+              : statusCode === 'matched' || statusCode === 'completed' || p.status_id === 2
+              ? 'resolved'
+              : statusCode === 'expired' || p.status_id === 4
+              ? 'expired'
+              : 'active';
           return {
             id: p.id,
             title: p.title,
@@ -129,14 +136,23 @@ export function WantToBuyPage() {
     return namesToCheck.includes(authorName);
   };
 
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+  const isWithin7Days = (r) => {
+    if (!r?.createdAt) return true;
+    const t = new Date(r.createdAt).getTime();
+    return Number.isNaN(t) || Date.now() - t <= SEVEN_DAYS_MS;
+  };
+  const myTrustScore = Number(user?.trust_score ?? user?.trustScore ?? 100);
+  const canOfferByScore = myTrustScore >= 50;
+
   const filtered = allRequests.filter((r) => {
-    if (r.status === 'cancelled') return false;
+    if (r.status !== 'active' || !isWithin7Days(r)) return false;
     if (activeTab === 'all') {
-      if (r.status !== 'active') return false;
+      if (isMinePost(r)) return false;
       const authorScore = r.author?.trustScore ?? r.author?.trust_score ?? 100;
       if (authorScore < 50) return false;
     }
-    if (activeTab === 'my' && (!isMinePost(r) || r.status === 'cancelled')) return false;
+    if (activeTab === 'my' && !isMinePost(r)) return false;
     if (selectedCategory !== 'all' && r.categoryId !== selectedCategory) return false;
     if (q) {
       const qLower = q.toLowerCase().trim();
@@ -153,8 +169,8 @@ export function WantToBuyPage() {
     return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
   });
 
-  // นับจาก allRequests (รวม DB) ไม่ใช่แค่ store
-  const myRequestsCount = allRequests.filter((r) => r.status !== 'cancelled' && isMinePost(r)).length;
+  // นับจาก allRequests (รวม DB) เฉพาะที่ยัง active และไม่หมดอายุ 7 วัน
+  const myRequestsCount = allRequests.filter((r) => r.status === 'active' && isWithin7Days(r) && isMinePost(r)).length;
 
   const handleOpenEdit = (req) => {
     setEditingReq(req);
@@ -343,7 +359,7 @@ export function WantToBuyPage() {
               : 'text-ink-500 hover:text-ink-700'
           }`}
         >
-          โพสทั้งหมด ({allRequests.filter((r) => r.status === 'active' && !isMinePost(r) && (r.author?.trustScore ?? r.author?.trust_score ?? 100) >= 50).length})
+          โพสทั้งหมด ({allRequests.filter((r) => r.status === 'active' && isWithin7Days(r) && !isMinePost(r) && (r.author?.trustScore ?? r.author?.trust_score ?? 100) >= 50).length})
         </button>
         <button
           onClick={() => setActiveTab('my')}
@@ -529,12 +545,26 @@ export function WantToBuyPage() {
                     <div className="space-y-1.5">
                       <div className="flex gap-2">
                         <button
-                          onClick={() => setOfferTarget(req)}
-                          disabled={offerLoading}
-                          className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-brand-200 bg-brand-50 py-2 text-xs sm:text-sm font-bold text-brand-700 hover:bg-brand-100 transition-colors disabled:opacity-60"
+                          onClick={() => canOfferByScore && setOfferTarget(req)}
+                          disabled={offerLoading || !canOfferByScore}
+                          title={!canOfferByScore ? `คะแนนความน่าเชื่อถือต่ำกว่า 50 (ปัจจุบัน ${myTrustScore}) จึงยังไม่สามารถเสนอขายได้` : 'ทักไปเสนอขายสินค้า'}
+                          className={`flex flex-1 items-center justify-center gap-2 rounded-xl border py-2 text-xs sm:text-sm font-bold transition-colors ${
+                            canOfferByScore
+                              ? 'border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 disabled:opacity-60'
+                              : 'border-red-200 bg-red-50 text-red-600 cursor-not-allowed opacity-85'
+                          }`}
                         >
-                          <MessageCircle size={15} />
-                          ทักไปเสนอขาย
+                          {canOfferByScore ? (
+                            <>
+                              <MessageCircle size={15} />
+                              ทักไปเสนอขาย
+                            </>
+                          ) : (
+                            <>
+                              <Lock size={14} />
+                              Trust Score &lt; 50 เสนอขายไม่ได้
+                            </>
+                          )}
                         </button>
                         {req.author?.id && (
                           <Link
