@@ -102,7 +102,7 @@ export function OfferProductModal({ isOpen, onClose, onSelectProduct, wantToBuyP
     return false;
   };
 
-  const myTrustScore = Number(user?.trust_score ?? user?.trustScore ?? 100);
+  const myTrustScore = Number(currentUser?.trust_score ?? currentUser?.trustScore ?? 100);
   const isTrustScoreLow = myTrustScore < 50;
 
   // แยกสินค้าเป็น: 1) หมวดหมู่ตรง (เสนอขายได้) และ 2) หมวดหมู่อื่น (ไม่ตรงเงื่อนไข กดไม่ได้)
