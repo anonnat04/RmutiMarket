@@ -19,7 +19,7 @@ import { getSocket, joinMeetupTracking, leaveMeetupTracking, emitLiveLocation, s
 // ค่าคงที่เช็คอิน (ต้องตรงกับ backend)
 // ────────────────────────────────
 const CHECKIN_RADIUS_M = 50;        // รัศมีวงสีเขียว/พื้นที่เช็คอิน
-const CHECKIN_MAX_ACCURACY_M = 35;  // ยอมรับ GPS มือถือได้ถึง ±35 ม. (กันเช็คอินไม่ได้ใกล้อาคาร แต่ยังกัน Wi-Fi/IP ที่คลาดเคลื่อนมาก)
+const CHECKIN_MAX_ACCURACY_M = 200; // ยอมรับความคลาดเคลื่อนถึง ±200 ม. (รองรับทั้งมือถือในอาคาร และ Chrome DevTools Sensors ±150 ม.)
 
 // ────────────────────────────────
 // ฟังก์ชัน Helper

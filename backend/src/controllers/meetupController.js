@@ -14,7 +14,7 @@ const MEETUP_HOURS_TEXT = "นัดรับได้เฉพาะเวล�
 // รัศมีเช็คอิน (เมตร) และความคลาดเคลื่อน GPS สูงสุดที่ยอมรับ
 // backend ตรวจรัศมีนี้เองก่อนเรียก DB จึงไม่ต้องแก้ค่า 200 ในฟังก์ชัน check_in_appointment()
 const CHECKIN_RADIUS_M = 50;
-const CHECKIN_MAX_ACCURACY_M = 35;
+const CHECKIN_MAX_ACCURACY_M = 200;
 
 // ค่า fallback ถ้าอ่านกฎจากตาราง penalty_rules ไม่ได้ (ค่าจริงอยู่ในตาราง penalty_rules)
 const NO_SHOW_GRACE_MINUTES = 45;
