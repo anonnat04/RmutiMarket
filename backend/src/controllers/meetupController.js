@@ -1,6 +1,6 @@
 const { supabase } = require("../config/db");
 const { sendNotificationToUser, emitMeetupUpdate } = require("../services/chatSocket");
-const { postMeetupChatMessage } = require("../services/meetupChat");
+const { postMeetupChatMessage, postMeetupCheckInChatMessage } = require("../services/meetupChat");
 const { formatUser, formatStatus, getStatusId } = require("../utils/statusHelper");
 
 // ----------------------------------------------------------------
@@ -1336,6 +1336,13 @@ async function checkInMeetup(req, res, next) {
       sellerId: appt.transactions?.seller_id,
     };
     emitMeetupUpdate(id, checkInData);
+
+    const bothCheckedIn = !!(r.buyer_checked_in && r.seller_checked_in);
+    await postMeetupCheckInChatMessage({
+      appointmentId: Number(id),
+      actorId: req.user.id,
+      bothCheckedIn,
+    });
 
     if (partnerId) {
       try {

@@ -153,7 +153,12 @@ async function getConversations(req, res, next) {
           : null,
         lastMessage: last
           ? {
-              content: String(last.message_type).toUpperCase() === "TEXT" ? last.content : `[${last.message_type}]`,
+              content:
+                String(last.message_type).toUpperCase() === "TEXT" ||
+                String(last.message_type).toUpperCase() === "MEETUP_SUMMARY"
+                  ? last.content
+                  : `[${last.message_type}]`,
+              messageType: last.message_type,
               createdAt: last.created_at,
               senderId: last.sender_id,
             }

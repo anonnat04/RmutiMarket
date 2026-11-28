@@ -19,7 +19,7 @@ import { getSocket, joinMeetupTracking, leaveMeetupTracking, emitLiveLocation, s
 // ค่าคงที่เช็คอิน (ต้องตรงกับ backend)
 // ────────────────────────────────
 const CHECKIN_RADIUS_M = 50;        // รัศมีวงสีเขียว/พื้นที่เช็คอิน
-const CHECKIN_MAX_ACCURACY_M = 35;  // ความคลาดเคลื่อน GPS สูงสุดที่ยอมให้เช็คอิน
+const CHECKIN_MAX_ACCURACY_M = 35;  // ยอมรับ GPS มือถือได้ถึง ±35 ม. (กันเช็คอินไม่ได้ใกล้อาคาร แต่ยังกัน Wi-Fi/IP ที่คลาดเคลื่อนมาก)
 
 // ────────────────────────────────
 // ฟังก์ชัน Helper
@@ -42,10 +42,14 @@ function formatTime(isoStr) {
   }
 }
 
-// อ่านตำแหน่ง GPS "ที่แม่นที่สุด" ภายในเวลาที่กำหนด (ไม่ใช้ค่าแคช)
-function getBestPosition({ maxWaitMs = 12000, goodAccuracy = 20 } = {}) {
+// อ่านตำแหน่ง GPS "ที่แม่นที่สุด" ภายในเวลาที่กำหนด (พร้อม fallback ไปยังพิกัดล่าสุด)
+function getBestPosition({ maxWaitMs = 8000, goodAccuracy = 5, fallbackCoords = null } = {}) {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
+      if (fallbackCoords && Number.isFinite(fallbackCoords.lat) && Number.isFinite(fallbackCoords.lng)) {
+        resolve({ coords: { latitude: fallbackCoords.lat, longitude: fallbackCoords.lng, accuracy: fallbackCoords.accuracy } });
+        return;
+      }
       reject(new Error('อุปกรณ์นี้ไม่รองรับ GPS กรุณาเปิดตำแหน่งที่ตั้งบนอุปกรณ์แล้วลองอีกครั้ง'));
       return;
     }
@@ -58,16 +62,43 @@ function getBestPosition({ maxWaitMs = 12000, goodAccuracy = 20 } = {}) {
       done = true;
       if (watchId !== null) navigator.geolocation.clearWatch(watchId);
       clearTimeout(timer);
-      if (best) resolve(best);
-      else reject(err || { code: 3 });
+      if (best) {
+        resolve(best);
+        return;
+      }
+      if (err?.code === 1) {
+        reject(err);
+        return;
+      }
+      // ลองอ่านแบบ standard accuracy เผื่อ high accuracy timeout (เช่น บนคอม/ในอาคาร)
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve(pos),
+        () => {
+          if (fallbackCoords && Number.isFinite(fallbackCoords.lat) && Number.isFinite(fallbackCoords.lng)) {
+            resolve({
+              coords: {
+                latitude: fallbackCoords.lat,
+                longitude: fallbackCoords.lng,
+                accuracy: fallbackCoords.accuracy,
+              },
+            });
+          } else {
+            reject(err || { code: 3 });
+          }
+        },
+        { enableHighAccuracy: false, timeout: 4000, maximumAge: 15000 }
+      );
     };
     watchId = navigator.geolocation.watchPosition(
       (pos) => {
         if (!best || pos.coords.accuracy < best.coords.accuracy) best = pos;
         if (pos.coords.accuracy <= goodAccuracy) finish();
       },
-      (err) => { if (!best) finish(err); },
-      { enableHighAccuracy: true, timeout: maxWaitMs, maximumAge: 0 }
+      (err) => {
+        // ยกเลิกทันทีเฉพาะกรณีไม่อนุญาตสิทธิ์ (code 1); error ชั่วคราวให้รอดูสัญญาณถัดไปจนครบเวลา
+        if (err?.code === 1) finish(err);
+      },
+      { enableHighAccuracy: true, timeout: maxWaitMs, maximumAge: 5000 }
     );
     timer = setTimeout(() => finish(), maxWaitMs);
   });
@@ -806,10 +837,15 @@ export function MeetupCheckInPage() {
       navigator.geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
     }
+    if (gpsIntervalRef.current !== null) {
+      clearInterval(gpsIntervalRef.current);
+      gpsIntervalRef.current = null;
+    }
   }, []);
 
   const gpsStorageKey = id && myId ? `cm_gps_active_${id}_${myId}` : null;
   const myCoordsRef = useRef(null);
+  const gpsIntervalRef = useRef(null);
 
   const stopGps = useCallback(() => {
     clearGpsWatch();
@@ -837,7 +873,19 @@ export function MeetupCheckInPage() {
     }
     const sendPos = (pos) => {
       const { latitude, longitude, accuracy } = pos.coords;
-      const coordsObj = { lat: latitude, lng: longitude, accuracy };
+      const prev = myCoordsRef.current;
+      // กันตำแหน่งจาก Wi-Fi/IP ที่คลาดเคลื่อนมากมาทับพิกัด GPS ที่แม่นยำกว่า (ภายใน 30 วินาทีล่าสุด)
+      if (
+        prev &&
+        Number.isFinite(prev.accuracy) &&
+        Number.isFinite(accuracy) &&
+        prev.accuracy <= 15 &&
+        accuracy > CHECKIN_MAX_ACCURACY_M &&
+        Date.now() - (prev.updatedAt || 0) < 30000
+      ) {
+        return;
+      }
+      const coordsObj = { lat: latitude, lng: longitude, accuracy, updatedAt: Date.now() };
       setMyCoords(coordsObj);
       myCoordsRef.current = coordsObj;
       const m = meetupRef.current;
@@ -867,6 +915,15 @@ export function MeetupCheckInPage() {
       },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
+    // จับตำแหน่งซ้ำทุกๆ 10 วินาที เพื่ออัปเดตพิกัดให้แม่นยำที่สุดอย่างต่อเนื่อง
+    if (gpsIntervalRef.current !== null) clearInterval(gpsIntervalRef.current);
+    gpsIntervalRef.current = setInterval(() => {
+      navigator.geolocation.getCurrentPosition(
+        sendPos,
+        () => {},
+        { enableHighAccuracy: true, timeout: 9000, maximumAge: 0 }
+      );
+    }, 10000);
   }, [id, myId, user, showFeedback, clearGpsWatch, gpsStorageKey]);
 
   // คืนค่าสถานะการเปิด-ปิด GPS เดิมหลังรีเฟรชหน้า
@@ -879,11 +936,15 @@ export function MeetupCheckInPage() {
     } catch (_) {}
   }, [gpsStorageKey, startGps]);
 
-  // ปิด GPS watcher เมื่อออกจากหน้า (เฉพาะตอน unmount เท่านั้น)
+  // ปิด GPS watcher และตัวจับทุก 10 วินาทีเมื่อออกจากหน้า
   useEffect(() => () => {
     if (watchIdRef.current !== null && navigator.geolocation) {
       navigator.geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
+    }
+    if (gpsIntervalRef.current !== null) {
+      clearInterval(gpsIntervalRef.current);
+      gpsIntervalRef.current = null;
     }
   }, []);
 
@@ -1092,8 +1153,12 @@ export function MeetupCheckInPage() {
     checkInInFlightRef.current = true;
     setCheckingIn(true);
     try {
-      // อ่านตำแหน่งสดที่แม่นที่สุด (สูงสุด 12 วินาที) ไม่ใช้ค่าแคช
-      const pos = await getBestPosition({ maxWaitMs: 12000, goodAccuracy: 20 });
+      // อ่านตำแหน่งสดที่แม่นที่สุด (สูงสุด 8 วินาที) พร้อม fallback ไปยังพิกัด GPS ล่าสุดที่หน้าเว็บอ่านไว้ได้แล้ว
+      const pos = await getBestPosition({
+        maxWaitMs: 8000,
+        goodAccuracy: 5,
+        fallbackCoords: myCoordsRef.current,
+      });
       const coordinates = {
         lat: pos.coords.latitude,
         lng: pos.coords.longitude,

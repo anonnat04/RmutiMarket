@@ -72,11 +72,23 @@ socket.on('new_message', (msg) => {
   }
 });
 
-// มีคนทักมา/ส่งข้อความมา ขณะที่ผู้ใช้ไม่ได้เปิดห้องนั้น
+// มีคนทักมา/ส่งข้อความมา หรือส่งคำขอนัดรับเข้าแชท ขณะที่ผู้ใช้ไม่ได้เปิดห้องนั้น
 socket.on('new_notification', (n) => {
-  if (['message', 'chat_message'].includes(String(n?.type || ''))) {
+  const t = String(n?.type || '').toLowerCase();
+  if (
+    ['message', 'chat_message', 'meetup_scheduled', 'meetup_confirmed', 'meetup_cancelled', 'deal_completed', 'transaction_update'].includes(t) ||
+    t.includes('meetup')
+  ) {
     useChatStore.getState().scheduleFetch(150);
   }
+});
+
+socket.on('meetup_updated', () => {
+  useChatStore.getState().scheduleFetch(200);
+});
+
+socket.on('meetup_status_update', () => {
+  useChatStore.getState().scheduleFetch(200);
 });
 
 // อ่านข้อความแล้ว (เช่น เปิดอ่านจากอีกแท็บ) ให้ลดยอดตาม

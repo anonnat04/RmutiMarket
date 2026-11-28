@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { EmptyState } from "@/components/common/EmptyState";
-import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import {
-  MessageCircle, Wifi, WifiOff, Trash2, ArrowLeft, BadgeCheck,
+  MessageCircle, Wifi, WifiOff, ArrowLeft, BadgeCheck,
   ChevronRight, CheckCheck, Calendar, AlertCircle, Maximize2, X,
   Image as ImageIcon, Send, CheckCircle2
 } from "lucide-react";
@@ -124,10 +123,11 @@ function mapBackendConversation(c) {
     productImage: product?.coverImage || FALLBACK_IMG,
     sellerId: product?.sellerId ?? product?.seller_id,
     statusId: product?.statusId ?? product?.status_id,
-    lastMessage: previewText(c.lastMessage?.content) || "เริ่มการสนทนา",
+    lastMessage: previewText(c.lastMessage?.content, c.lastMessage?.messageType) || "เริ่มการสนทนา",
     lastMessageAt: c.lastMessage?.createdAt || c.updatedAt || c.createdAt || null,
     createdAt: c.createdAt || null,
-    unread: (c.unreadCount || 0) > 0,
+    unreadCount: Number(c.unreadCount || 0),
+    unread: Number(c.unreadCount || 0) > 0,
     transactionStatusId: c.transactionStatusId ?? null,
     isDealClosed: c.isDealClosed ?? false,
     canScheduleMeetup: c.canScheduleMeetup,
@@ -187,8 +187,6 @@ export function ChatPage() {
   const [isConnected, setIsConnected] = useState(false);
   const [isOtherTyping, setIsOtherTyping] = useState(false);
   const [lightboxImage, setLightboxImage] = useState(null);
-  const [deleteTarget, setDeleteTarget] = useState(null);
-  const [deleting, setDeleting] = useState(false);
 
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -398,22 +396,24 @@ export function ChatPage() {
       });
       if (isActive) setMessageTotal((n) => n + 1);
 
+      const isFromMe = String(msg.sender?.id || msg.sender_id || "") === String(user?.id || "");
       let known = true;
       setConversations((prev) => {
         known = prev.some((c) => String(c.id) === cId);
         if (!known) return prev;
         return sortByActivity(
-          prev.map((c) =>
-            String(c.id) === cId
-              ? {
-                  ...c,
-                  lastMessage:
-                    previewText(msg.text || msg.content, msg.message_type || msg.type) || "ส่งรูปภาพ",
-                  lastMessageAt: new Date().toISOString(),
-                  unread: !isActive,
-                }
-              : c
-          )
+          prev.map((c) => {
+            if (String(c.id) !== cId) return c;
+            const nextUnreadCount = isActive ? 0 : isFromMe ? (c.unreadCount || 0) : (c.unreadCount || 0) + 1;
+            return {
+              ...c,
+              lastMessage:
+                previewText(msg.text || msg.content, msg.message_type || msg.type) || "ส่งรูปภาพ",
+              lastMessageAt: new Date().toISOString(),
+              unreadCount: nextUnreadCount,
+              unread: nextUnreadCount > 0,
+            };
+          })
         );
       });
       // ห้องใหม่ที่ยังไม่อยู่ในรายการ (มีคนทักมาครั้งแรก)
@@ -425,10 +425,11 @@ export function ChatPage() {
       if (String(conversationId) === String(activeIdRef.current)) setIsOtherTyping(!!isTyping);
     };
     const handleNotification = (n) => {
+      const t = String(n?.type || "").toLowerCase();
       if (
-        ["message", "chat_message", "meetup_scheduled", "meetup_cancelled", "deal_completed", "transaction_update"].includes(
-          String(n?.type || "")
-        )
+        ["message", "chat_message", "meetup_scheduled", "meetup_confirmed", "meetup_cancelled", "deal_completed", "transaction_update"].includes(t) ||
+        t.includes("meetup") ||
+        t.includes("appointment")
       ) {
         refreshRef.current();
       }
@@ -508,7 +509,7 @@ export function ChatPage() {
         });
 
         setConversations((prev) =>
-          prev.map((c) => (String(c.id) === String(activeId) ? { ...c, unread: false } : c))
+          prev.map((c) => (String(c.id) === String(activeId) ? { ...c, unread: false, unreadCount: 0 } : c))
         );
         markConversationAsRead(activeId, user?.id);
         useChatStore.getState().fetchUnreadCount();
@@ -763,30 +764,6 @@ export function ChatPage() {
     }
   };
 
-  /* ── ลบห้อง (เรียก API สำเร็จก่อนค่อยลบออกจากหน้าจอ) ── */
-  const handleConfirmDelete = async () => {
-    if (!deleteTarget) return;
-    setDeleting(true);
-    try {
-      await api.deleteConversation(deleteTarget);
-      setConversations((prev) => prev.filter((c) => String(c.id) !== String(deleteTarget)));
-      setLocalMessages((prev) => {
-        const next = { ...prev };
-        delete next[String(deleteTarget)];
-        return next;
-      });
-      if (String(activeId) === String(deleteTarget)) {
-        setActiveId(null);
-        navigate("/chat", { replace: true });
-      }
-      setDeleteTarget(null);
-    } catch (err) {
-      alert(err?.message || "ลบห้องแชทไม่สำเร็จ");
-    } finally {
-      setDeleting(false);
-    }
-  };
-
   /* ───────────────────────── render ───────────────────────── */
 
   if (loadingConvs && conversations.length === 0) {
@@ -826,6 +803,11 @@ export function ChatPage() {
     return { label: "ไม่พร้อมนัด", cls: "bg-gray-100 text-gray-500" };
   })();
 
+  const totalUnread = conversations.reduce(
+    (sum, c) => sum + (Number(c.unreadCount) || (c.unread ? 1 : 0)),
+    0
+  );
+
   let lastDay = "";
 
   return (
@@ -836,6 +818,11 @@ export function ChatPage() {
           <div className="flex items-center gap-2">
             <MessageCircle size={20} className="text-brand-500" strokeWidth={2.2} />
             <h2 className="text-base font-extrabold text-ink-900">ข้อความ</h2>
+            {totalUnread > 0 && (
+              <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-brand-500 px-1.5 text-[11px] font-extrabold text-white">
+                {totalUnread > 99 ? "99+" : totalUnread}
+              </span>
+            )}
           </div>
           <span
             title={isConnected ? "เชื่อมต่อแบบเรียลไทม์แล้ว" : "กำลังเชื่อมต่อ…"}
@@ -885,19 +872,11 @@ export function ChatPage() {
                     {c.lastMessage}
                   </p>
                 </div>
-                {c.unread && <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-brand-500" />}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDeleteTarget(c.id);
-                  }}
-                  aria-label="ลบห้องแชท"
-                  title="ลบห้องแชท"
-                  className="absolute right-2 top-2 hidden h-7 w-7 items-center justify-center rounded-lg bg-white/90 text-red-500 shadow-sm ring-1 ring-surface-border hover:bg-red-50 group-hover:flex"
-                >
-                  <Trash2 size={14} />
-                </button>
+                {(c.unreadCount > 0 || c.unread) && (
+                  <span className="flex h-5 min-w-[20px] shrink-0 items-center justify-center rounded-full bg-brand-500 px-1.5 text-[11px] font-extrabold text-white shadow-2xs">
+                    {c.unreadCount > 99 ? "99+" : c.unreadCount || 1}
+                  </span>
+                )}
               </div>
             );
           })}
@@ -1199,17 +1178,6 @@ export function ChatPage() {
         </div>
       )}
 
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onClose={() => setDeleteTarget(null)}
-        onConfirm={handleConfirmDelete}
-        title="ลบห้องแชทนี้?"
-        description="ข้อความทั้งหมดในห้องนี้จะถูกลบถาวร และคู่สนทนาจะไม่เห็นห้องนี้อีก"
-        confirmLabel="ลบห้องแชท"
-        cancelLabel="ยกเลิก"
-        variant="danger"
-        loading={deleting}
-      />
     </div>
   );
 }
