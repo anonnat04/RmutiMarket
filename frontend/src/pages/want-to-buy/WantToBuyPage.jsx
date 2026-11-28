@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   PlusCircle, Search, MessageCircle, Clock, Banknote,
-  Edit3, Trash2, CheckCircle2, User, Sparkles, ArrowLeft, Flag, ArrowDown, ArrowUp, Lock
+  Edit3, Trash2, CheckCircle2, User, Sparkles, ArrowLeft, Flag, ArrowDown, ArrowUp, Lock, RotateCcw
 } from 'lucide-react';
 import { useWantToBuyStore } from '@/store/wantToBuyStore';
 import { useAuthStore } from '@/store/authStore';
@@ -20,6 +20,13 @@ import { ReportModal } from '@/components/common/ReportModal';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { sendRealtimeMessage } from '@/services/socket';
 
+
+const STATUS_BADGE = {
+  active: { label: 'กำลังตามหา', className: 'bg-orange-50 text-orange-700 border-orange-200' },
+  resolved: { label: 'ได้ของแล้ว', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  cancelled: { label: 'ยกเลิกแล้ว', className: 'bg-red-50 text-red-600 border-red-200' },
+  expired: { label: 'หมดอายุ', className: 'bg-amber-50 text-amber-700 border-amber-200' },
+};
 
 function timeAgo(dateStr) {
   if (!dateStr) return '';
@@ -43,6 +50,7 @@ export function WantToBuyPage() {
 
   const [dbPosts, setDbPosts] = useState([]);
   const [activeTab, setActiveTab] = useState('all');
+  const [myStatusFilter, setMyStatusFilter] = useState('all');
   const [q, setQ] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [sortBy, setSortBy] = useState('newest'); // 'newest' | 'budget_desc' | 'budget_asc'
@@ -146,13 +154,16 @@ export function WantToBuyPage() {
   const canOfferByScore = myTrustScore >= 50;
 
   const filtered = allRequests.filter((r) => {
-    if (r.status !== 'active' || !isWithin7Days(r)) return false;
     if (activeTab === 'all') {
+      if (r.status !== 'active' || !isWithin7Days(r)) return false;
       if (isMinePost(r)) return false;
       const authorScore = r.author?.trustScore ?? r.author?.trust_score ?? 100;
       if (authorScore < 50) return false;
     }
-    if (activeTab === 'my' && !isMinePost(r)) return false;
+    if (activeTab === 'my') {
+      if (!isMinePost(r)) return false;
+      if (myStatusFilter !== 'all' && r.status !== myStatusFilter) return false;
+    }
     if (selectedCategory !== 'all' && r.categoryId !== selectedCategory) return false;
     if (q) {
       const qLower = q.toLowerCase().trim();
@@ -169,8 +180,15 @@ export function WantToBuyPage() {
     return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
   });
 
-  // นับจาก allRequests (รวม DB) เฉพาะที่ยัง active และไม่หมดอายุ 7 วัน
-  const myRequestsCount = allRequests.filter((r) => r.status === 'active' && isWithin7Days(r) && isMinePost(r)).length;
+  const myAllPosts = allRequests.filter((r) => isMinePost(r));
+  const myRequestsCount = myAllPosts.length;
+  const myStatusCounts = {
+    all: myAllPosts.length,
+    active: myAllPosts.filter((r) => r.status === 'active').length,
+    resolved: myAllPosts.filter((r) => r.status === 'resolved').length,
+    cancelled: myAllPosts.filter((r) => r.status === 'cancelled').length,
+    expired: myAllPosts.filter((r) => r.status === 'expired').length,
+  };
 
   const handleOpenEdit = (req) => {
     setEditingReq(req);
@@ -183,11 +201,13 @@ export function WantToBuyPage() {
   const handleSaveEdit = async (e) => {
     e.preventDefault();
     if (!editingReq || !editTitle.trim()) return;
+    const selectedCat = categories.find((c) => c.id === editCategoryId || c.slug === editCategoryId);
     const updated = {
       title: editTitle.trim(),
       description: editDescription.trim(),
       budget: Number(editBudget) || 0,
       categoryId: editCategoryId,
+      categoryName: selectedCat?.name || editingReq.categoryName,
     };
     updateRequest(editingReq.id, updated);
     setDbPosts((prev) =>
@@ -198,11 +218,24 @@ export function WantToBuyPage() {
         title: updated.title,
         description: updated.description,
         budgetMax: updated.budget,
+        categoryId: editCategoryId,
       });
     } catch (err) {
       console.warn("Backend update wtb error:", err);
     }
     setEditingReq(null);
+  };
+
+  const handleReopenPost = async (id) => {
+    updateRequest(id, { status: 'active' });
+    setDbPosts((prev) =>
+      prev.map((p) => (String(p.id) === String(id) ? { ...p, status: 'active' } : p))
+    );
+    try {
+      await api.updateWantToBuyPost(id, { statusCode: 'ACTIVE' });
+    } catch (err) {
+      console.warn("Backend reopen wtb error:", err);
+    }
   };
 
   const handleConfirmResolve = async () => {
@@ -373,6 +406,44 @@ export function WantToBuyPage() {
         </button>
       </div>
 
+      {/* My Posts Status Filter Bar */}
+      {activeTab === 'my' && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-surface-border bg-white px-4 py-2.5 shadow-2xs">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {[
+              { key: 'all', label: 'ทั้งหมด' },
+              { key: 'active', label: 'กำลังตามหา' },
+              { key: 'resolved', label: 'ได้ของแล้ว' },
+              { key: 'cancelled', label: 'ยกเลิกแล้ว' },
+              { key: 'expired', label: 'หมดอายุ' },
+            ].map((st) => (
+              <button
+                key={st.key}
+                onClick={() => setMyStatusFilter(st.key)}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition-all ${
+                  myStatusFilter === st.key
+                    ? 'bg-[#f95721] text-white shadow-xs'
+                    : 'bg-surface-muted/60 text-ink-600 hover:bg-orange-50 hover:text-[#f95721]'
+                }`}
+              >
+                <span>{st.label}</span>
+                <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                  myStatusFilter === st.key ? 'bg-white/25 text-white' : 'bg-white text-ink-500'
+                }`}>
+                  {myStatusCounts[st.key] ?? 0}
+                </span>
+              </button>
+            ))}
+          </div>
+          <Link
+            to="/my-want-to-buy"
+            className="text-xs font-bold text-brand-600 hover:text-brand-700 hover:underline whitespace-nowrap"
+          >
+            เปิดหน้าจัดการโพสของฉัน →
+          </Link>
+        </div>
+      )}
+
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
         <div className="flex w-full max-w-sm items-center gap-2 rounded-full border border-surface-border bg-white px-4 py-2 shadow-sm focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-100 transition-all sm:w-auto">
@@ -465,11 +536,18 @@ export function WantToBuyPage() {
                 }`}
               >
                 <div>
-                  <div className="mb-3 flex items-center justify-between">
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-50 border border-brand-100 px-2.5 py-1 text-xs font-bold text-brand-600">
-                      {catName}
-                    </span>
-                    <span className="flex items-center gap-1 text-xs text-ink-400">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-50 border border-brand-100 px-2.5 py-1 text-xs font-bold text-brand-600">
+                        {catName}
+                      </span>
+                      {isMine && (
+                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold ${(STATUS_BADGE[req.status] || STATUS_BADGE.active).className}`}>
+                          {(STATUS_BADGE[req.status] || STATUS_BADGE.active).label}
+                        </span>
+                      )}
+                    </div>
+                    <span className="flex items-center gap-1 text-xs text-ink-400 shrink-0">
                       <Clock size={11} />
                       {timeAgo(req.createdAt)}
                     </span>
@@ -513,12 +591,21 @@ export function WantToBuyPage() {
                   {isMine ? (
                     <div className="space-y-1.5">
                       <div className="flex gap-2">
-                        <button
-                          onClick={() => handleOpenEdit(req)}
-                          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-surface-border bg-white px-3 py-1.5 text-xs font-semibold text-ink-700 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 transition-colors"
-                        >
-                          <Edit3 size={12} /> แก้ไขโพส
-                        </button>
+                        {req.status === 'active' ? (
+                          <button
+                            onClick={() => handleOpenEdit(req)}
+                            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-surface-border bg-white px-3 py-1.5 text-xs font-semibold text-ink-700 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 transition-colors"
+                          >
+                            <Edit3 size={12} /> แก้ไขโพส
+                          </button>
+                        ) : req.status !== 'expired' ? (
+                          <button
+                            onClick={() => handleReopenPost(req.id)}
+                            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-brand-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 transition-colors"
+                          >
+                            <RotateCcw size={12} /> เปิดตามหาอีกครั้ง
+                          </button>
+                        ) : null}
                         <button
                           onClick={() => setDeleteTargetId(req.id)}
                           className="flex items-center justify-center rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100 transition-colors"
@@ -528,18 +615,18 @@ export function WantToBuyPage() {
                         </button>
                       </div>
 
-                      {!isResolved ? (
+                      {req.status === 'active' ? (
                         <button
                           onClick={() => setResolveTargetId(req.id)}
                           className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100 transition-colors"
                         >
                           <CheckCircle2 size={13} /> ได้ของแล้ว
                         </button>
-                      ) : (
+                      ) : isResolved ? (
                         <div className="rounded-xl bg-emerald-50 py-1.5 text-center text-xs font-bold text-emerald-600 inline-flex items-center justify-center gap-1.5 w-full">
-                          <CheckCircle2 size={13} /> ได้ของเรียบร้อยแล้ว
+                          <CheckCircle2 size={13} /> ได้ของเรียบร้อยแล้ว (ซ่อนจากผู้อื่นแล้ว)
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   ) : (
                     <div className="space-y-1.5">

@@ -233,6 +233,7 @@ export const api = {
   },
   createWantToBuyPost: (data) => request("/api/want-to-buy", { method: "POST", body: data }),
   deleteWantToBuyPost: (id) => request(`/api/want-to-buy/${id}`, { method: "DELETE" }),
+  updateWantToBuyPost: (id, data) => request(`/api/want-to-buy/${id}`, { method: "PUT", body: data }),
 
   // ─── Report & Moderation APIs ───
   createSupportTicket: (data) => request("/api/support", { method: "POST", body: data }),

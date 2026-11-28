@@ -20,6 +20,7 @@ import { MeetupCheckInPage } from '@/pages/meetup/MeetupCheckInPage';
 import { TransactionHistoryPage } from '@/pages/transaction/TransactionHistoryPage';
 import { WantToBuyPage } from '@/pages/want-to-buy/WantToBuyPage';
 import { CreateWantToBuyPage } from '@/pages/want-to-buy/CreateWantToBuyPage';
+import { MyWantToBuyPage } from '@/pages/want-to-buy/MyWantToBuyPage';
 
 // Auth Pages
 import { RegisterPage } from '@/pages/auth/RegisterPage';
@@ -76,6 +77,7 @@ export function AppRoutes() {
           <Route path="/meetups/:id/checkin" element={<MeetupCheckInPage />} />
           <Route path="/transactions" element={<TransactionHistoryPage />} />
           <Route path="/want-to-buy/create" element={<CreateWantToBuyPage />} />
+          <Route path="/my-want-to-buy" element={<MyWantToBuyPage />} />
         </Route>
       </Route>
 

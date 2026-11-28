@@ -146,7 +146,7 @@ export function ProductListPage() {
 
       // รวมโพสต์ตามหาจาก backend
       const dbList = (wtbRes?.posts || [])
-        .filter((p) => p.wanted_post_status?.code !== "CANCELLED")
+        .filter((p) => p.status_id === 1 || p.statusCode === "ACTIVE" || p.status === "active")
         .map((p) => ({
           id: p.id,
           title: p.title,

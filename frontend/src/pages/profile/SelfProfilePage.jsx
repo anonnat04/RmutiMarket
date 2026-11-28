@@ -394,7 +394,7 @@ export function SelfProfilePage({ user, logout, navigate }) {
   const sidebarLinks = [
     { label: 'หน้าหลักโปรไฟล์', icon: Home, path: '/profile' },
     { label: 'สินค้าของฉัน', icon: Store, path: '/my-products' },
-    { label: 'โพสตามหาสินค้าของฉัน', icon: Search, path: '/want-to-buy' },
+    { label: 'โพสตามหาสินค้าของฉัน', icon: Search, path: '/my-want-to-buy' },
     { label: 'แชท', icon: MessageCircle, path: '/chat' },
     { label: 'แจ้งเตือน', icon: Bell, path: '/notifications', badge: unread > 0 ? unread : null },
     { label: 'รายการโปรด', icon: Heart, path: '/wishlist' },
@@ -407,7 +407,7 @@ export function SelfProfilePage({ user, logout, navigate }) {
 
   const quickStats = [
     { label: 'สินค้าของฉัน', icon: Store, value: visibleListings.length, path: '/my-products' },
-    { label: 'โพสตามหาสินค้า', icon: Search, value: dbMyRequestsCount, path: '/want-to-buy' },
+    { label: 'โพสตามหาสินค้า', icon: Search, value: dbMyRequestsCount, path: '/my-want-to-buy' },
     { label: 'รายการโปรด', icon: Heart, value: wishlistIds.length, path: '/wishlist' },
     { label: 'การนัดรับสินค้า', icon: CalendarClock, value: myMeetupCount, unit: 'นัดหมาย', path: '/meetups' },
     { label: 'ประวัติการซื้อขาย', icon: Receipt, value: statsData?.transactionCount ?? 0, unit: 'รายการ', path: '/transactions' },

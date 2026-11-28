@@ -59,8 +59,7 @@ async function getWantToBuyPosts(req, res, next) {
           faculty_id, major_id, email_verified_at, faculties(name), majors(name)
         )
       `, { count: "exact" })
-      .eq("status_id", 1) // แสดงเฉพาะโพสต์ที่กำลังตามหา (ไม่รวมที่ได้รับของแล้ว/ยกเลิก/หมดอายุ)
-      .gte("created_at", sevenDaysAgo);
+            .gte("created_at", sevenDaysAgo);
 
     // ถ้าส่ง exclude_mine="true" และผู้ใช้ล็อกอินอยู่ ให้ซ่อนโพสต์ตามหาของตัวเอง
     if (req.query.exclude_mine === "true" && req.user?.id) {
@@ -97,7 +96,7 @@ async function getWantToBuyPosts(req, res, next) {
         return score >= 50;
       })
       .map(mapWantedPost);
-    res.json({ posts, total: count ?? posts.length });
+    res.json({ posts, total: posts.length });
   } catch (err) {
     next(err);
   }
@@ -143,7 +142,7 @@ async function updateWantToBuyPost(req, res, next) {
     const postId = parseInt(id);
     if (isNaN(postId)) return res.status(404).json({ error: "ไม่พบโพสต์" });
 
-    const { title, description, budgetMin, budgetMax, categoryId, statusId } = req.body;
+    const { title, description, budgetMin, budgetMax, categoryId, statusId, statusCode, status } = req.body;
     const updates = { updated_at: new Date().toISOString() };
 
     if (title) updates.title = String(title).trim();
@@ -151,17 +150,27 @@ async function updateWantToBuyPost(req, res, next) {
     if (budgetMin !== undefined) updates.budget_min = budgetMin ? parseFloat(budgetMin) : null;
     if (budgetMax !== undefined) updates.budget_max = budgetMax ? parseFloat(budgetMax) : null;
     if (categoryId) updates.category_id = resolveCategoryId(categoryId, 8);
-    if (statusId) updates.status_id = parseInt(statusId);
+    const resolvedStatusId = getStatusId("wanted_post_status", statusId ?? statusCode ?? status);
+    if (resolvedStatusId) updates.status_id = resolvedStatusId;
 
     const { data, error } = await supabase
       .from("wanted_posts")
       .update(updates)
       .eq("id", postId)
       .eq("buyer_id", req.user.id)
-      .select("*")
+      .select(`
+        id, buyer_id, category_id, title, description, budget_min, budget_max, status_id, created_at, updated_at,
+        categories(id, name),
+        wanted_post_status(id, name)
+      `)
       .single();
 
-    if (error) throw error;
+    if (error) {
+      if (error.code === "PGRST116") {
+        return res.status(404).json({ error: "เนเธกเนเธเธเนเธเธชเธ•เนเธซเธฃเธทเธญเนเธกเนเธกเธตเธชเธดเธ—เธเธดเนเนเธเนเนเธ" });
+      }
+      throw error;
+    }
     res.json({ message: "แก้ไขโพสต์สำเร็จ", post: data ? mapWantedPost(data) : null });
   } catch (err) {
     next(err);

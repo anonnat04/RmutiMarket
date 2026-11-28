@@ -39,7 +39,7 @@ export function WantToBuyMarquee() {
         if (!isMounted) return;
         if (res?.posts && res.posts.length > 0) {
           const mapped = res.posts
-            .filter((p) => p.wanted_post_status?.code !== 'CANCELLED')
+            .filter((p) => p.status_id === 1 || p.statusCode === 'ACTIVE' || p.status === 'active')
             .map((p) => ({
               id: p.id,
               title: p.title,
