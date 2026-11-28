@@ -1272,14 +1272,7 @@ async function checkInMeetup(req, res, next) {
       return res.status(400).json({ error: "ไม่พบพิกัด GPS กรุณาเปิด GPS แล้วลองใหม่" });
     }
 
-    // กันค่าตำแหน่งที่คลาดเคลื่อนมาก (เช่น เปิดบนคอมที่ใช้ Wi-Fi/IP)
-    if (Number.isFinite(accuracy) && accuracy > CHECKIN_MAX_ACCURACY_M) {
-      return res.status(400).json({
-        error: `สัญญาณ GPS ยังไม่แม่นยำพอ (คลาดเคลื่อน ±${Math.round(accuracy)} ม. ต้องไม่เกิน ${CHECKIN_MAX_ACCURACY_M} ม.) กรุณาออกที่โล่ง เปิด GPS แบบความแม่นยำสูง แล้วลองใหม่`,
-      });
-    }
-
-    // ตรวจระยะ 50 เมตรจากพิกัดจุดนัดใน DB
+    // ตรวจระยะ 50 เมตรจากพิกัดจุดนัดใน DB ก่อน
     const { data: pre } = await supabase
       .from("appointments")
       .select("id, locations(latitude, longitude), transactions(buyer_id, seller_id)")
@@ -1300,6 +1293,13 @@ async function checkInMeetup(req, res, next) {
           });
         }
       }
+    }
+
+    // กันค่าตำแหน่งที่คลาดเคลื่อนมาก (เช่น เปิดบนคอมที่ใช้ Wi-Fi/IP)
+    if (Number.isFinite(accuracy) && accuracy > CHECKIN_MAX_ACCURACY_M) {
+      return res.status(400).json({
+        error: `สัญญาณ GPS ยังไม่แม่นยำพอ (คลาดเคลื่อน ±${Math.round(accuracy)} ม. ต้องไม่เกิน ${CHECKIN_MAX_ACCURACY_M} ม.) กรุณาออกที่โล่ง เปิด GPS แบบความแม่นยำสูง แล้วลองใหม่`,
+      });
     }
 
     const { data: r, error } = await supabase.rpc("check_in_appointment", {

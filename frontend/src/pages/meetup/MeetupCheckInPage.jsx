@@ -1167,6 +1167,14 @@ export function MeetupCheckInPage() {
       if (!Number.isFinite(coordinates.lat) || !Number.isFinite(coordinates.lng)) {
         throw new Error('อ่านพิกัด GPS ไม่สำเร็จ กรุณาลองใหม่');
       }
+      const dist = Math.round(
+        haversineDistanceMeters(coordinates.lat, coordinates.lng, targetPoint.lat, targetPoint.lng)
+      );
+      if (dist > CHECKIN_RADIUS_M) {
+        throw new Error(
+          `คุณอยู่ไกลจากจุดนัดรับ ${dist.toLocaleString()} เมตร (ต้องอยู่ภายใน ${CHECKIN_RADIUS_M} เมตร) จึงเช็คอินไม่ได้`
+        );
+      }
       if (Number.isFinite(coordinates.accuracy) && coordinates.accuracy > CHECKIN_MAX_ACCURACY_M) {
         throw new Error(`สัญญาณ GPS ยังไม่แม่นพอ (คลาดเคลื่อน ±${Math.round(coordinates.accuracy)} ม. ต้องไม่เกิน ${CHECKIN_MAX_ACCURACY_M} ม.) กรุณาออกที่โล่ง เปิด GPS แบบความแม่นยำสูง แล้วลองใหม่`);
       }
@@ -1214,6 +1222,8 @@ export function MeetupCheckInPage() {
           'คุณยังอยู่นอกระยะเช็คอิน',
           `${distance ? `ตอนนี้อยู่ห่างประมาณ ${distance[1]} เมตร ` : ''}กรุณาเข้าใกล้จุดนัดรับให้อยู่ภายใน ${CHECKIN_RADIUS_M} เมตร แล้วลองเช็คอินอีกครั้ง`
         );
+      } else if (message.includes('ยังไม่แม่นพอ')) {
+        showFeedback('warning', 'สัญญาณ GPS ยังไม่แม่นพอ', message);
       } else if (/location|position|gps|พิกัด|ตำแหน่ง/i.test(message)) {
         showFeedback('warning', 'อ่านตำแหน่งไม่สำเร็จ', message);
       } else {
